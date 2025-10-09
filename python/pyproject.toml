@@ -29,6 +29,7 @@ dev = [
     "pytest-cov>=4.1.0",
     "ruff>=0.8.0",
     "mypy>=1.11.0",
+    "vulture>=2.11",
 ]
 
 [build-system]
@@ -46,13 +47,14 @@ target-version = "py38"
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
-    "F",   # pyflakes
+    "F",   # pyflakes (includes unused imports, variables)
     "I",   # isort
     "N",   # pep8-naming
     "UP",  # pyupgrade
     "B",   # flake8-bugbear
     "C4",  # flake8-comprehensions
     "SIM", # flake8-simplify
+    "ARG", # flake8-unused-arguments
 ]
 ignore = [
     "E501", # line too long (handled by formatter)
@@ -96,3 +98,9 @@ no_implicit_optional = false
 warn_redundant_casts = false
 warn_unused_ignores = false
 ignore_errors = true
+
+[tool.vulture]
+min_confidence = 80
+paths = ["src", "tests"]
+exclude = [".venv/", ".git/", "__pycache__/"]
+ignore_names = ["test_*", "Test*"]

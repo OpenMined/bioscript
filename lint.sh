@@ -13,4 +13,7 @@ uv run ruff check . --fix
 echo "Running mypy..."
 uv run mypy src/bioscript
 
+echo "Running vulture to detect dead code..."
+uv run vulture src tests --min-confidence 80
+
 echo "✓ All linting checks passed!"
