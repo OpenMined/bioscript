@@ -1,0 +1,67 @@
+name: Publish to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.1.0)'
+        required: true
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.8
+
+      - name: Update version in pyproject.toml
+        run: |
+          cd python
+          sed -i 's/version = ".*"/version = "${{ inputs.version }}"/' pyproject.toml
+
+      - name: Update version in __init__.py
+        run: |
+          cd python
+          sed -i 's/__version__ = ".*"/__version__ = "${{ inputs.version }}"/' src/bioscript/__init__.py
+
+      - name: Install dependencies
+        run: |
+          cd python
+          uv sync --all-extras
+
+      - name: Run tests
+        run: |
+          cd python
+          uv run pytest
+
+      - name: Build package
+        run: |
+          cd python
+          uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist/
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add python/pyproject.toml python/src/bioscript/__init__.py
+          git commit -m "Bump version to ${{ inputs.version }}"
+          git tag "v${{ inputs.version }}"
+          git push origin main --tags

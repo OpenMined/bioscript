@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import csv
-from typing import Iterator, List, Optional
+from collections.abc import Iterator
 
 from .types import VariantRow
 
@@ -7,7 +9,7 @@ REQUIRED = ("rsid", "chromosome", "position", "genotype")
 OPTIONAL = ("gs", "baf", "lrr")
 
 
-def _float_or_none(x: Optional[str]) -> Optional[float]:
+def _float_or_none(x: str | None) -> float | None:
     if x is None:
         return None
     x = x.strip()
@@ -19,7 +21,7 @@ def _float_or_none(x: Optional[str]) -> Optional[float]:
         return None
 
 
-def _int_or_none(x: Optional[str]) -> Optional[int]:
+def _int_or_none(x: str | None) -> int | None:
     if x is None:
         return None
     x = x.strip()
@@ -31,7 +33,7 @@ def _int_or_none(x: Optional[str]) -> Optional[int]:
         return None
 
 
-def _extract_header_and_data(lines: List[str]) -> (List[str], Iterator[str]):
+def _extract_header_and_data(lines: list[str]) -> (list[str], Iterator[str]):
     """
     Returns (header_fields, data_lines_iterator).
     Header is the last commented line starting with '#', or the first line if no commented header.
@@ -89,7 +91,7 @@ def load_variants_tsv(path: str) -> Iterator[VariantRow]:
       # rsid\tchromosome\tposition\tgenotype\tgs\tbaf\tlrr
     Ignores lines starting with '#'. Yields VariantRow objects.
     """
-    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+    with open(path, encoding="utf-8-sig", newline="") as f:
         all_lines = f.readlines()
 
     header, data_lines = _extract_header_and_data(all_lines)

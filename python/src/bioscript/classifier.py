@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 from enum import Enum
 
-from .types import MatchType, Tuple
+from .types import MatchType
 
 
 class GenotypeEnum(Enum):
@@ -25,9 +27,11 @@ class DiploidAll:
 
         for match in matches:
             for i, site in enumerate(self.sites):
-                if match.variant_call.rsid.matches(site.rsid):
-                    if match.match_type == MatchType.VARIANT_CALL:
-                        site_matches[i].append(match)
+                if (
+                    match.variant_call.rsid.matches(site.rsid)
+                    and match.match_type == MatchType.VARIANT_CALL
+                ):
+                    site_matches[i].append(match)
 
         # Check if all required sites have at least one variant call
         if not all(site_matches[i] for i in range(len(self.sites))):
@@ -78,21 +82,29 @@ class DiploidSite:
         seen_genotypes = set()
 
         for match in matches:
-            if match.variant_call.rsid.matches(self.site.rsid):
-                if match.match_type == MatchType.VARIANT_CALL:
-                    # Deduplicate: if we've seen this exact genotype for this site, skip it
-                    genotype_key = tuple(match.snp)
-                    if genotype_key not in seen_genotypes:
-                        site_matches.append(match)
-                        seen_genotypes.add(genotype_key)
-                    else:
-                        # Multiple rsID aliases for same variant
-                        print(f"Duplicate match for rsID aliases (genotype: {''.join(str(n.value) for n in match.snp)}) - using first match only", flush=True)
+            if (
+                match.variant_call.rsid.matches(self.site.rsid)
+                and match.match_type == MatchType.VARIANT_CALL
+            ):
+                # Deduplicate: if we've seen this exact genotype for this site, skip it
+                genotype_key = tuple(match.snp)
+                if genotype_key not in seen_genotypes:
+                    site_matches.append(match)
+                    seen_genotypes.add(genotype_key)
+                else:
+                    # Multiple rsID aliases for same variant
+                    print(
+                        f"Duplicate match for rsID aliases (genotype: {''.join(str(n.value) for n in match.snp)}) - using first match only",
+                        flush=True,
+                    )
 
         # Count alleles across deduplicated matches
         # Should only be one match after deduplication
         if len(site_matches) > 1:
-            print(f"WARNING: Multiple distinct genotypes found for site {self.site.rsid} - using first", flush=True)
+            print(
+                f"WARNING: Multiple distinct genotypes found for site {self.site.rsid} - using first",
+                flush=True,
+            )
 
         count = 0
         for match in site_matches[:1]:  # Take only first match
@@ -109,7 +121,7 @@ class DiploidSite:
 
 # 3) Switch/match classifier
 class Classifier:
-    def classify(self, matches) -> Tuple[GenotypeEnum, GenotypeEnum]:
+    def classify(self, matches) -> tuple[GenotypeEnum, GenotypeEnum]:
         raise NotImplementedError("Subclasses should implement this method.")
 
 
@@ -124,8 +136,8 @@ class DiploidResult:
         Displays the two genotypes in the format VAL1/VAL2.
         If both genotypes are the same, only display one.
         """
-        g1 = self.genotype1.value if hasattr(self.genotype1, 'value') else self.genotype1
-        g2 = self.genotype2.value if hasattr(self.genotype2, 'value') else self.genotype2
+        g1 = self.genotype1.value if hasattr(self.genotype1, "value") else self.genotype1
+        g2 = self.genotype2.value if hasattr(self.genotype2, "value") else self.genotype2
         return f"{g1}/{g2}"
 
     def __repr__(self):

@@ -4,12 +4,12 @@ BioScript Data Utilities
 Fetch and manage test genomic datasets for bioinformatics workflows.
 """
 
+from __future__ import annotations
+
 import os
 import zipfile
 from pathlib import Path
-from typing import Optional
 from urllib.request import urlretrieve
-
 
 # Sample data registry
 SAMPLES = {
@@ -21,11 +21,7 @@ SAMPLES = {
 }
 
 
-def fetch_sample(
-    sample_name: str,
-    output_dir: Optional[str] = None,
-    force: bool = False
-) -> Path:
+def fetch_sample(sample_name: str, output_dir: str | None = None, force: bool = False) -> Path:
     """
     Download and extract a sample genomic dataset.
 
@@ -50,9 +46,7 @@ def fetch_sample(
     """
     if sample_name not in SAMPLES:
         available = ", ".join(SAMPLES.keys())
-        raise ValueError(
-            f"Unknown sample '{sample_name}'. Available samples: {available}"
-        )
+        raise ValueError(f"Unknown sample '{sample_name}'. Available samples: {available}")
 
     sample = SAMPLES[sample_name]
 
@@ -81,11 +75,11 @@ def fetch_sample(
     if not extract_dir.exists() or force:
         print(f"📦 Extracting {zip_path.name}...")
 
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(extract_dir)
 
         # List extracted files
-        extracted_files = list(extract_dir.rglob('*'))
+        extracted_files = list(extract_dir.rglob("*"))
         file_count = len([f for f in extracted_files if f.is_file()])
         print(f"✅ Extracted {file_count} file(s) to: {extract_dir}")
 
@@ -103,7 +97,7 @@ def fetch_sample(
         return data_files[0]
 
     # Fallback: return any file in the directory
-    all_files = [f for f in extract_dir.rglob('*') if f.is_file()]
+    all_files = [f for f in extract_dir.rglob("*") if f.is_file()]
     if all_files:
         return all_files[0]
 
@@ -143,8 +137,6 @@ def get_sample_info(sample_name: str) -> dict:
     """
     if sample_name not in SAMPLES:
         available = ", ".join(SAMPLES.keys())
-        raise ValueError(
-            f"Unknown sample '{sample_name}'. Available samples: {available}"
-        )
+        raise ValueError(f"Unknown sample '{sample_name}'. Available samples: {available}")
 
     return SAMPLES[sample_name].copy()

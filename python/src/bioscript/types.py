@@ -1,6 +1,8 @@
+from __future__ import annotations
+
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterable, Optional, Tuple, Union
 
 
 class Nucleotide(str, Enum):
@@ -54,39 +56,29 @@ class AllelesMeta(type):
 
     @property
     def NOT_A(cls):
-        return Alleles(
-            {n for n in Nucleotide if n != Nucleotide.A and n != Nucleotide.MISSING}
-        )
+        return Alleles({n for n in Nucleotide if n != Nucleotide.A and n != Nucleotide.MISSING})
 
     @property
     def NOT_T(cls):
-        return Alleles(
-            {n for n in Nucleotide if n != Nucleotide.T and n != Nucleotide.MISSING}
-        )
+        return Alleles({n for n in Nucleotide if n != Nucleotide.T and n != Nucleotide.MISSING})
 
     @property
     def NOT_U(cls):
-        return Alleles(
-            {n for n in Nucleotide if n != Nucleotide.U and n != Nucleotide.MISSING}
-        )
+        return Alleles({n for n in Nucleotide if n != Nucleotide.U and n != Nucleotide.MISSING})
 
     @property
     def NOT_C(cls):
-        return Alleles(
-            {n for n in Nucleotide if n != Nucleotide.C and n != Nucleotide.MISSING}
-        )
+        return Alleles({n for n in Nucleotide if n != Nucleotide.C and n != Nucleotide.MISSING})
 
     @property
     def NOT_G(cls):
-        return Alleles(
-            {n for n in Nucleotide if n != Nucleotide.G and n != Nucleotide.MISSING}
-        )
+        return Alleles({n for n in Nucleotide if n != Nucleotide.G and n != Nucleotide.MISSING})
 
 
 class Alleles(metaclass=AllelesMeta):
     def __init__(
         self,
-        nucleotides: Union[Nucleotide, InDel, Tuple[Union[Nucleotide, InDel], ...]],
+        nucleotides: Nucleotide | InDel | tuple[Nucleotide | InDel, ...],
     ):
         if isinstance(nucleotides, (Nucleotide, InDel)):
             self.nucleotides = {nucleotides}
@@ -98,7 +90,7 @@ class Alleles(metaclass=AllelesMeta):
             return self.nucleotides == other.nucleotides
         return False
 
-    def __contains__(self, nucleotide: Union[Nucleotide, InDel]) -> bool:
+    def __contains__(self, nucleotide: Nucleotide | InDel) -> bool:
         return nucleotide in self.nucleotides
 
     def __len__(self) -> int:
@@ -107,10 +99,10 @@ class Alleles(metaclass=AllelesMeta):
     def __iter__(self):
         return iter(self.nucleotides)
 
-    def add(self, nucleotide: Union[Nucleotide, InDel]):
+    def add(self, nucleotide: Nucleotide | InDel):
         self.nucleotides.add(nucleotide)
 
-    def remove(self, nucleotide: Union[Nucleotide, InDel]):
+    def remove(self, nucleotide: Nucleotide | InDel):
         self.nucleotides.remove(nucleotide)
 
 
@@ -122,12 +114,12 @@ class SNP:
 class DiploidSNP(tuple):
     def __new__(
         cls,
-        nucleotide1: Union[Nucleotide, InDel],
-        nucleotide2: Union[Nucleotide, InDel],
+        nucleotide1: Nucleotide | InDel,
+        nucleotide2: Nucleotide | InDel,
     ):
         return super().__new__(cls, (nucleotide1, nucleotide2))
 
-    def count(self, nucleotide: Union[Nucleotide, InDel]) -> int:
+    def count(self, nucleotide: Nucleotide | InDel) -> int:
         return super().count(nucleotide)
 
     def is_homozygous(self) -> bool:
@@ -139,7 +131,7 @@ class DiploidSNP(tuple):
 
 @dataclass
 class VariantMatch:
-    variant_call: "VariantCall"
+    variant_call: VariantCall
     snp: DiploidSNP
     match_type: MatchType
 
@@ -161,7 +153,7 @@ class VariantMatch:
 class RSID:
     aliases: set
 
-    def __init__(self, *aliases: Union[str, "RSID"]):
+    def __init__(self, *aliases: str | RSID):
         self.aliases = set()
         for alias in aliases:
             if isinstance(alias, RSID):
@@ -169,7 +161,7 @@ class RSID:
             else:
                 self.aliases.add(alias)
 
-    def matches(self, rsid: Union[str, "RSID"]) -> bool:
+    def matches(self, rsid: str | RSID) -> bool:
         if isinstance(rsid, RSID):
             return not self.aliases.isdisjoint(rsid.aliases)
         return rsid in self.aliases
@@ -177,7 +169,7 @@ class RSID:
 
 @dataclass
 class VariantCall:
-    rsid: Union[RSID, str, Iterable]
+    rsid: RSID | str | Iterable
     ploidy: str = "diploid"
     ref: Alleles = field(default_factory=lambda: Alleles({Nucleotide.MISSING}))
     alt: Alleles = field(default_factory=lambda: Alleles({Nucleotide.MISSING}))
@@ -188,51 +180,58 @@ class VariantCall:
         elif isinstance(self.rsid, Iterable) and not isinstance(self.rsid, RSID):
             self.rsid = RSID(*self.rsid)
 
-    def filter_variant_row(self, variant_row: "VariantRow") -> Optional["VariantMatch"]:
+    def filter_variant_row(self, variant_row: VariantRow) -> VariantMatch | None:
         """
         Filters for matching VariantRow based on rsid.
         If rsids match, returns a VariantMatch object with a parsed DiploidSNP; otherwise, returns None.
         """
-        if self.rsid.matches(variant_row.rsid):
-            if isinstance(variant_row.genotype, str) and len(variant_row.genotype) == 2:
-                allele1 = None
-                allele2 = None
+        if (
+            self.rsid.matches(variant_row.rsid)
+            and isinstance(variant_row.genotype, str)
+            and len(variant_row.genotype) == 2
+        ):
+            allele1 = None
+            allele2 = None
 
-                # Try to parse first allele
+            # Try to parse first allele
+            try:
+                allele1 = Nucleotide(variant_row.genotype[0])
+            except ValueError:
                 try:
-                    allele1 = Nucleotide(variant_row.genotype[0])
+                    allele1 = InDel(variant_row.genotype[0])
                 except ValueError:
-                    try:
-                        allele1 = InDel(variant_row.genotype[0])
-                    except ValueError:
-                        print(f"Invalid allele value '{variant_row.genotype[0]}' cast as MISSING '.'", flush=True)
-                        allele1 = Nucleotide.MISSING
+                    print(
+                        f"Invalid allele value '{variant_row.genotype[0]}' cast as MISSING '.'",
+                        flush=True,
+                    )
+                    allele1 = Nucleotide.MISSING
 
-                # Try to parse second allele
+            # Try to parse second allele
+            try:
+                allele2 = Nucleotide(variant_row.genotype[1])
+            except ValueError:
                 try:
-                    allele2 = Nucleotide(variant_row.genotype[1])
+                    allele2 = InDel(variant_row.genotype[1])
                 except ValueError:
-                    try:
-                        allele2 = InDel(variant_row.genotype[1])
-                    except ValueError:
-                        print(f"Invalid allele value '{variant_row.genotype[1]}' cast as MISSING '.'", flush=True)
-                        allele2 = Nucleotide.MISSING
+                    print(
+                        f"Invalid allele value '{variant_row.genotype[1]}' cast as MISSING '.'",
+                        flush=True,
+                    )
+                    allele2 = Nucleotide.MISSING
 
-                diploid_snp = DiploidSNP(allele1, allele2)
+            diploid_snp = DiploidSNP(allele1, allele2)
 
-                if diploid_snp.is_homozygous() and diploid_snp[0] in self.ref:
-                    match_type = MatchType.REFERENCE_CALL
-                elif (
-                    diploid_snp.is_heterozygous()
-                    or diploid_snp[0] in self.alt
-                    or diploid_snp[1] in self.alt
-                ):
-                    match_type = MatchType.VARIANT_CALL
-                else:
-                    match_type = MatchType.NO_CALL
-                return VariantMatch(
-                    variant_call=self, snp=diploid_snp, match_type=match_type
-                )
+            if diploid_snp.is_homozygous() and diploid_snp[0] in self.ref:
+                match_type = MatchType.REFERENCE_CALL
+            elif (
+                diploid_snp.is_heterozygous()
+                or diploid_snp[0] in self.alt
+                or diploid_snp[1] in self.alt
+            ):
+                match_type = MatchType.VARIANT_CALL
+            else:
+                match_type = MatchType.NO_CALL
+            return VariantMatch(variant_call=self, snp=diploid_snp, match_type=match_type)
         return None
 
 
@@ -243,9 +242,9 @@ class VariantRow:
     position: int
     genotype: str  # Keep as str until needed
     ploidy: str = "diploid"
-    gs: Optional[float] = None
-    baf: Optional[float] = None
-    lrr: Optional[float] = None
+    gs: float | None = None
+    baf: float | None = None
+    lrr: float | None = None
 
     def __post_init__(self):
         # No need to parse genotype here; it will be parsed in VariantCall if needed
@@ -254,13 +253,13 @@ class VariantRow:
 
 @dataclass
 class MatchList:
-    variant_calls: Iterable["VariantCall"]
+    variant_calls: Iterable[VariantCall]
     reference_matches: list = field(default_factory=list)
     variant_matches: list = field(default_factory=list)
     no_call_matches: list = field(default_factory=list)
     all_matches: list = field(default_factory=list)
 
-    def match_rows(self, variant_rows: Iterable["VariantRow"]) -> "MatchList":
+    def match_rows(self, variant_rows: Iterable[VariantRow]) -> MatchList:
         """
         Iterates through the given variant rows, applies each variant call's filter_variant_row method,
         and collects the outputs into three buckets: reference calls, variant calls, and no calls.
