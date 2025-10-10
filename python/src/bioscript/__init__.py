@@ -7,7 +7,7 @@ from .reader import load_variants_tsv
 from .testing import VariantFixture, discover_tests, export_from_notebook, run_tests
 from .types import GRCh, MatchType, Nucleotide, VariantCall
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "AlleleCount",
