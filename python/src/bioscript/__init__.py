@@ -1,18 +1,19 @@
 """BioScript - A library for analyzing biological scripts and genetic data."""
 
-from .classifier import Classifier, DiploidResult, GenotypeEnum
+from .classifier import DiploidResult, GenotypeClassifier, GenotypeEnum
 from .counter import AlleleCount, AlleleCounter
 from .data import GenotypeGenerator, create_test_variants
 from .reader import load_variants_tsv
-from .types import MatchType, Nucleotide, VariantCall
+from .types import GRCh, MatchType, Nucleotide, VariantCall
 
 __version__ = "0.1.0"
 
 __all__ = [
     "AlleleCount",
     "AlleleCounter",
-    "Classifier",
     "DiploidResult",
+    "GRCh",
+    "GenotypeClassifier",
     "GenotypeEnum",
     "GenotypeGenerator",
     "MatchType",

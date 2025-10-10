@@ -11,7 +11,7 @@ def test_version():
 
 def test_imports():
     """Test that main classes can be imported."""
-    assert hasattr(bioscript, "Classifier")
+    assert hasattr(bioscript, "GenotypeClassifier")
     assert hasattr(bioscript, "DiploidResult")
     assert hasattr(bioscript, "GenotypeEnum")
     assert hasattr(bioscript, "VariantCall")

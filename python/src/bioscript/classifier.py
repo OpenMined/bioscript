@@ -7,9 +7,43 @@ class GenotypeEnum(Enum):
     pass
 
 
-class Classifier:
-    def classify(self, matches) -> tuple[GenotypeEnum, GenotypeEnum]:
-        raise NotImplementedError("Subclasses should implement this method.")
+class GenotypeClassifier:
+    """
+    Base classifier for genotype-based classification.
+
+    Designed for diploid genotype data, returns a DiploidResult
+    containing two genotype values (one per chromosome copy).
+
+    Standard interface for bioscript CLI:
+    - __call__(matches) -> str: Returns classification result as string
+    """
+
+    def classify(self, matches) -> DiploidResult:
+        """
+        Classify genotypes based on variant matches.
+
+        Args:
+            matches: MatchList containing variant matches
+
+        Returns:
+            DiploidResult with two genotype values
+        """
+        raise NotImplementedError("Subclasses must implement classify()")
+
+    def __call__(self, matches) -> str:
+        """
+        Standard callable interface for bioscript CLI.
+
+        Args:
+            matches: MatchList containing variant matches
+
+        Returns:
+            Classification result as string
+        """
+        result = self.classify(matches)
+        if hasattr(result, "sorted"):
+            result = result.sorted()
+        return str(result)
 
 
 class DiploidResult:

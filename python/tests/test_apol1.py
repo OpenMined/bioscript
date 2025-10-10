@@ -15,7 +15,7 @@ Classification Rules (count-based, no phase information):
 """
 
 from bioscript import AlleleCounter, GenotypeGenerator
-from bioscript.classifier import Classifier, DiploidResult, GenotypeEnum
+from bioscript.classifier import DiploidResult, GenotypeClassifier, GenotypeEnum
 from bioscript.types import Alleles, MatchList, VariantCall
 
 # Define APOL1 variant calls
@@ -42,7 +42,7 @@ class APOL1Genotypes(GenotypeEnum):
 MISSING = "G-"
 
 
-class APOL1Classifier(Classifier):
+class APOL1Classifier(GenotypeClassifier):
     """
     Classify APOL1 genotypes based on simple allele counting.
 

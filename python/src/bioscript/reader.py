@@ -89,7 +89,11 @@ def load_variants_tsv(path: str) -> Iterator[VariantRow]:
       optional: gs, baf, lrr
     Supports either a normal header line, or a commented header like:
       # rsid\tchromosome\tposition\tgenotype\tgs\tbaf\tlrr
+
     Ignores lines starting with '#'. Yields VariantRow objects.
+
+    Args:
+        path: Path to TSV file
     """
     with open(path, encoding="utf-8-sig", newline="") as f:
         all_lines = f.readlines()
@@ -124,6 +128,7 @@ def load_variants_tsv(path: str) -> Iterator[VariantRow]:
             chromosome=chrom,
             position=pos,
             genotype=genotype,
+            assembly=None,  # Always None - user must set when constructing VariantRow
             gs=gs,
             baf=baf,
             lrr=lrr,
