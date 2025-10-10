@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from .data import GenotypeGenerator, create_test_variants
+from .data import GenotypeGenerator
 from .types import GRCh, VariantRow
 
 
@@ -240,10 +240,7 @@ def export_from_notebook(
     if not notebook_path.exists():
         raise FileNotFoundError(f"Notebook not found: {notebook_path}")
 
-    if output_path is None:
-        output_path = notebook_path.with_suffix(".py")
-    else:
-        output_path = Path(output_path)
+    output_path = notebook_path.with_suffix(".py") if output_path is None else Path(output_path)
 
     # Load notebook
     with open(notebook_path) as f:

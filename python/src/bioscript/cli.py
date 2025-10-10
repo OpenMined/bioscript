@@ -77,9 +77,9 @@ def test_command(args):
             print(f"Error: Classifier script not found: {script_path}", file=sys.stderr)
             sys.exit(1)
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Testing: {script_path}")
-        print('='*60)
+        print("=" * 60)
 
         result = run_tests(script_path, verbose=True)
 
@@ -110,7 +110,7 @@ def export_command(args):
 
         # Run tests if requested
         if args.test and not args.no_tests:
-            print(f"\nRunning tests in exported file...")
+            print("\nRunning tests in exported file...")
             test_result = run_tests(result, verbose=True)
             if not test_result["success"]:
                 sys.exit(1)
@@ -258,9 +258,7 @@ Examples:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # Test command
-    test_parser = subparsers.add_parser(
-        "test", help="Run tests in classifier modules"
-    )
+    test_parser = subparsers.add_parser("test", help="Run tests in classifier modules")
     test_parser.add_argument(
         "classifiers",
         nargs="+",
@@ -268,15 +266,14 @@ Examples:
     )
 
     # Export command
-    export_parser = subparsers.add_parser(
-        "export", help="Export classifier from Jupyter notebook"
-    )
+    export_parser = subparsers.add_parser("export", help="Export classifier from Jupyter notebook")
     export_parser.add_argument(
         "notebook",
         help="Path to Jupyter notebook (.ipynb)",
     )
     export_parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         help="Output path for Python file (default: same name as notebook)",
     )
     export_parser.add_argument(
