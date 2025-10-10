@@ -10,6 +10,7 @@ import traceback
 from pathlib import Path
 
 from .reader import load_variants_tsv
+from .testing import export_from_notebook, run_tests
 from .types import MatchList
 
 
@@ -64,6 +65,60 @@ def load_classifier_module(script_path: Path):
         "variant_calls": config["variant_calls"],
         "classifier": config["classifier"],
     }
+
+
+def test_command(args):
+    """Run tests in classifier modules."""
+    all_passed = True
+
+    for script_path_str in args.classifiers:
+        script_path = Path(script_path_str)
+        if not script_path.exists():
+            print(f"Error: Classifier script not found: {script_path}", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"\n{'='*60}")
+        print(f"Testing: {script_path}")
+        print('='*60)
+
+        result = run_tests(script_path, verbose=True)
+
+        if not result["success"]:
+            all_passed = False
+
+    # Exit with error code if any tests failed
+    if not all_passed:
+        sys.exit(1)
+
+
+def export_command(args):
+    """Export classifier from Jupyter notebook."""
+    notebook_path = Path(args.notebook)
+    if not notebook_path.exists():
+        print(f"Error: Notebook not found: {args.notebook}", file=sys.stderr)
+        sys.exit(1)
+
+    output_path = args.output if args.output else None
+
+    try:
+        result = export_from_notebook(
+            notebook_path,
+            output_path=output_path,
+            include_tests=not args.no_tests,
+        )
+        print(f"✓ Exported to: {result}")
+
+        # Run tests if requested
+        if args.test and not args.no_tests:
+            print(f"\nRunning tests in exported file...")
+            test_result = run_tests(result, verbose=True)
+            if not test_result["success"]:
+                sys.exit(1)
+
+    except Exception as e:
+        print(f"Error exporting notebook: {e}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
+        sys.exit(1)
 
 
 def classify_command(args):
@@ -202,6 +257,39 @@ Examples:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # Test command
+    test_parser = subparsers.add_parser(
+        "test", help="Run tests in classifier modules"
+    )
+    test_parser.add_argument(
+        "classifiers",
+        nargs="+",
+        help="Paths to classifier scripts with test_* functions",
+    )
+
+    # Export command
+    export_parser = subparsers.add_parser(
+        "export", help="Export classifier from Jupyter notebook"
+    )
+    export_parser.add_argument(
+        "notebook",
+        help="Path to Jupyter notebook (.ipynb)",
+    )
+    export_parser.add_argument(
+        "-o", "--output",
+        help="Output path for Python file (default: same name as notebook)",
+    )
+    export_parser.add_argument(
+        "--no-tests",
+        action="store_true",
+        help="Exclude test functions from export",
+    )
+    export_parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Run tests after export",
+    )
+
     # Classify command
     classify_parser = subparsers.add_parser(
         "classify", help="Run variant classification on SNP file"
@@ -233,7 +321,11 @@ Examples:
     args = parser.parse_args()
 
     # Route to command handler
-    if args.command == "classify":
+    if args.command == "test":
+        test_command(args)
+    elif args.command == "export":
+        export_command(args)
+    elif args.command == "classify":
         classify_command(args)
     else:
         parser.print_help()

@@ -106,3 +106,76 @@ __bioscript__ = {
     "classifier": APOL1Classifier(),
     "name": "APOL1",  # Optional, defaults to script filename
 }
+
+
+# ==============================================================================
+# Tests (run with: bioscript test classify_apol1.py)
+# ==============================================================================
+
+from bioscript import VariantFixture
+from bioscript.types import MatchList
+
+# Create test fixture for APOL1 variants
+fixture = VariantFixture(
+    [
+        {"rsid": "rs73885319", "chromosome": "22", "position": 36265860},
+        {"rsid": "rs60910145", "chromosome": "22", "position": 36265988},
+        {"rsid": "rs71785313", "chromosome": "22", "position": 36266000},
+    ],
+    assembly="GRCh38",
+)
+
+
+def test_g0_homozygous():
+    """Test G0/G0 genotype (reference alleles)."""
+    variants = fixture(["AA", "TT", "II"])
+    matches = MatchList([rs73885319, rs60910145, rs71785313]).match_rows(variants)
+    classifier = APOL1Classifier()
+    result = classifier(matches)
+    assert result == "G0/G0"
+
+
+def test_g1_homozygous():
+    """Test G1/G1 genotype (both G1 sites homozygous variant)."""
+    variants = fixture(["GG", "CC", "II"])
+    matches = MatchList([rs73885319, rs60910145, rs71785313]).match_rows(variants)
+    classifier = APOL1Classifier()
+    result = classifier(matches)
+    assert result == "G1/G1"
+
+
+def test_g1_heterozygous():
+    """Test G1/G0 genotype (sorted as G1/G0)."""
+    variants = fixture(["AG", "TC", "II"])
+    matches = MatchList([rs73885319, rs60910145, rs71785313]).match_rows(variants)
+    classifier = APOL1Classifier()
+    result = classifier(matches)
+    assert result == "G1/G0"
+
+
+def test_g2_homozygous():
+    """Test G2/G2 genotype (homozygous deletion)."""
+    variants = fixture(["AA", "TT", "DD"])
+    matches = MatchList([rs73885319, rs60910145, rs71785313]).match_rows(variants)
+    classifier = APOL1Classifier()
+    result = classifier(matches)
+    assert result == "G2/G2"
+
+
+def test_g2_heterozygous():
+    """Test G2/G0 genotype (sorted as G2/G0)."""
+    variants = fixture(["AA", "TT", "ID"])
+    matches = MatchList([rs73885319, rs60910145, rs71785313]).match_rows(variants)
+    classifier = APOL1Classifier()
+    result = classifier(matches)
+    assert result == "G2/G0"
+
+
+def test_g1_g2_compound():
+    """Test G1/G2 compound heterozygous (sorted as G2/G1)."""
+    variants = fixture(["AG", "TC", "ID"])
+    matches = MatchList([rs73885319, rs60910145, rs71785313]).match_rows(variants)
+    classifier = APOL1Classifier()
+    result = classifier(matches)
+    assert result == "G2/G1"
+
