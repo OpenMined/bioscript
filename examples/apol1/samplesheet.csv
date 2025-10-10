@@ -1,0 +1,4 @@
+participant_id,snp_file
+P001,test_snps.txt
+P002,test_snps_p002.txt
+P003,test_snps_p003.txt

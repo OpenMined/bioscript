@@ -5,6 +5,66 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
+class GRCh(str, Enum):
+    """Genome Reference Consortium human genome builds."""
+
+    GRCH36 = "GRCh36"
+    GRCH37 = "GRCh37"
+    GRCH38 = "GRCh38"
+
+    @classmethod
+    def parse(cls, value: str | GRCh | None) -> GRCh | None:
+        """
+        Parse GRCh version from string (case-insensitive) or enum.
+
+        Args:
+            value: String like "GRCh38", "grch38", "38" or GRCh enum
+
+        Returns:
+            GRCh enum or None if value is None
+
+        Raises:
+            ValueError: If string doesn't match a valid GRCh version
+
+        Examples:
+            >>> GRCh.parse("GRCh38")
+            <GRCh.GRCH38: 'GRCh38'>
+            >>> GRCh.parse("grch38")
+            <GRCh.GRCH38: 'GRCh38'>
+            >>> GRCh.parse("38")
+            <GRCh.GRCH38: 'GRCh38'>
+            >>> GRCh.parse(GRCh.GRCH38)
+            <GRCh.GRCH38: 'GRCh38'>
+        """
+        if value is None:
+            return None
+
+        if isinstance(value, cls):
+            return value
+
+        if not isinstance(value, str):
+            raise ValueError(f"Expected str or GRCh, got {type(value)}")
+
+        # Normalize to uppercase
+        normalized = value.strip().upper()
+
+        # Try exact match first
+        for member in cls:
+            if member.value.upper() == normalized:
+                return member
+
+        # Try with "GRCH" prefix
+        if not normalized.startswith("GRCH"):
+            normalized = f"GRCH{normalized}"
+
+        for member in cls:
+            if member.value.upper() == normalized:
+                return member
+
+        valid = ", ".join(m.value for m in cls)
+        raise ValueError(f"Invalid GRCh version '{value}'. Valid: {valid} (case-insensitive)")
+
+
 class Nucleotide(str, Enum):
     A = "A"  # Adenine
     T = "T"  # Thymine (DNA only)
@@ -242,13 +302,17 @@ class VariantRow:
     position: int
     genotype: str  # Keep as str until needed
     ploidy: str = "diploid"
+    assembly: GRCh | str | None = None  # Genome reference build (e.g., GRCh37, GRCh38)
     gs: float | None = None
     baf: float | None = None
     lrr: float | None = None
 
     def __post_init__(self):
-        # No need to parse genotype here; it will be parsed in VariantCall if needed
-        pass
+        # Parse assembly to GRCh enum if it's a string
+        if isinstance(self.assembly, str):
+            self.assembly = GRCh.parse(self.assembly)
+        elif self.assembly is not None and not isinstance(self.assembly, GRCh):
+            raise ValueError(f"assembly must be str, GRCh enum, or None, got {type(self.assembly)}")
 
 
 @dataclass

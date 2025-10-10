@@ -12,7 +12,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from urllib.request import urlretrieve
 
-from .types import VariantRow
+from .types import GRCh, VariantRow
 
 # Sample data registry
 SAMPLES = {
@@ -148,6 +148,7 @@ def get_sample_info(sample_name: str) -> dict:
 def create_test_variants(
     variants: list[dict[str, str | int | float]],
     output_file: str | Path | None = None,
+    assembly: GRCh | str | None = None,
 ) -> Iterator[VariantRow] | Path:
     """
     Create test variant data for testing purposes.
@@ -158,11 +159,14 @@ def create_test_variants(
             - chromosome (required): Chromosome number/name (e.g., "1", "X")
             - position (required): Position on chromosome (int)
             - genotype (required): Genotype string (e.g., "AA", "AT")
+            - assembly (optional): Genome reference build (e.g., "GRCh37", "GRCh38")
             - gs (optional): GenCall score (float)
             - baf (optional): B Allele Frequency (float)
             - lrr (optional): Log R Ratio (float)
         output_file: If provided, write to this file path and return the path.
                     If None, return an iterator of VariantRow objects directly.
+        assembly: Genome reference build (GRCh enum or case-insensitive string like "grch38", "38").
+                  Overrides individual variant assembly values.
 
     Returns:
         If output_file is None: Iterator of VariantRow objects
@@ -197,6 +201,9 @@ def create_test_variants(
         if missing:
             raise ValueError(f"Variant at index {i} missing required fields: {', '.join(missing)}")
 
+    # Parse assembly to enum if string
+    assembly_parsed = GRCh.parse(assembly) if isinstance(assembly, str) else assembly
+
     if output_file is None:
         # Return iterator of VariantRow objects directly
         def variant_iterator():
@@ -206,6 +213,7 @@ def create_test_variants(
                     chromosome=str(v["chromosome"]),
                     position=int(v["position"]),
                     genotype=str(v["genotype"]),
+                    assembly=assembly_parsed or v.get("assembly"),
                     gs=float(v["gs"]) if "gs" in v else None,
                     baf=float(v["baf"]) if "baf" in v else None,
                     lrr=float(v["lrr"]) if "lrr" in v else None,
@@ -255,19 +263,21 @@ class GenotypeGenerator:
     Args:
         variant_templates: List of variant dictionaries WITHOUT genotype field.
                           Must include: rsid, chromosome, position
-                          Optional: gs, baf, lrr
+                          Optional: assembly, gs, baf, lrr
+        assembly: Genome reference build (GRCh enum or case-insensitive string like "grch38", "38").
+                  Applied to all generated variants.
 
     Examples:
-        >>> from bioscript import GenotypeGenerator
+        >>> from bioscript import GenotypeGenerator, GRCh
         >>> gen = GenotypeGenerator([
         ...     {"rsid": "rs123", "chromosome": "1", "position": 1000},
         ...     {"rsid": "rs456", "chromosome": "2", "position": 2000},
-        ... ])
+        ... ], assembly="GRCh38")  # or assembly=GRCh.GRCH38 or assembly="38"
         >>> # Generate variants with different genotypes
         >>> variants1 = gen(["AA", "TT"])  # First scenario
         >>> variants2 = gen(["AT", "TC"])  # Second scenario
         >>> for v in variants1:
-        ...     print(v.rsid, v.genotype)
+        ...     print(v.rsid, v.genotype, v.assembly)
 
         >>> # Can also write to file
         >>> test_file = gen(["AA", "TT"], output_file="test.txt")
@@ -276,7 +286,11 @@ class GenotypeGenerator:
         >>> gen.templates
     """
 
-    def __init__(self, variant_templates: list[dict[str, str | int | float]]):
+    def __init__(
+        self,
+        variant_templates: list[dict[str, str | int | float]],
+        assembly: GRCh | str | None = None,
+    ):
         """Initialize generator with variant templates (without genotypes)."""
         # Validate templates
         required_fields = {"rsid", "chromosome", "position"}
@@ -290,6 +304,8 @@ class GenotypeGenerator:
                 raise ValueError(f"Template at index {i} should not include 'genotype' field")
 
         self.templates = variant_templates
+        # Parse assembly to enum if string
+        self.assembly = GRCh.parse(assembly) if isinstance(assembly, str) else assembly
 
     def __call__(
         self, genotypes: list[str], output_file: str | Path | None = None
@@ -322,7 +338,7 @@ class GenotypeGenerator:
             variant["genotype"] = genotype
             variants.append(variant)
 
-        return create_test_variants(variants, output_file=output_file)
+        return create_test_variants(variants, output_file=output_file, assembly=self.assembly)
 
     def __len__(self) -> int:
         """Return number of variant templates."""
