@@ -14,7 +14,9 @@ docker pull ghcr.io/openmined/bioscript:0.1.0
 
 Images are automatically built and pushed on every commit to main and on releases.
 
-## Building Locally
+## Building
+
+### Local (single architecture)
 
 From the repository root:
 
@@ -22,12 +24,47 @@ From the repository root:
 docker build -f docker/Dockerfile -t bioscript:0.1.0 .
 ```
 
-Or use the build script:
+### Multi-architecture (amd64 + arm64)
+
+The build script runs Docker Buildx once to generate a multi-architecture manifest for both `linux/amd64` and `linux/arm64`.
 
 ```bash
-cd docker
-./build.sh
+./docker/build.sh 0.1.0
 ```
+
+By default the manifest is pushed to GitHub Container Registry. Switch to a local OCI archive by setting `OUTPUT_MODE=oci` (the archive is written to `docker/dist/bioscript-<version>.oci.tar` unless `OUTPUT_DEST` is provided):
+
+```bash
+OUTPUT_MODE=oci ./docker/build.sh 0.1.0
+```
+
+After building you can inspect the manifest to confirm both platforms are present:
+
+```bash
+docker buildx imagetools inspect ghcr.io/openmined/bioscript:0.1.0
+```
+
+Environment knobs:
+
+- `OUTPUT_MODE=push|oci` (default `push`)
+- `OUTPUT_DEST=path/to/archive.tar` when `OUTPUT_MODE=oci`
+- `LOAD_PLATFORM=linux/amd64|linux/arm64|none` (default `auto`, meaning match the host). The script always executes the multi-arch build first, then optionally loads one platform locally for quick testing.
+
+> **Note:** Run `docker login ghcr.io` before using `OUTPUT_MODE=push`.
+
+### Local architecture-specific tests
+
+To build and exercise the container for a single architecture without pushing to GHCR, use the helper scripts in the repository root:
+
+```bash
+# On x86_64 hosts
+./test_docker_amd64.sh
+
+# On arm64 hosts (including Apple Silicon)
+./test_docker_arm64.sh
+```
+
+These scripts perform the multi-arch build, load the host architecture locally, and exercise the classifier with `docker run --platform=<arch> ...`.
 
 ## Usage
 
