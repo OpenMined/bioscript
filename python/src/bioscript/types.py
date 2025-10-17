@@ -136,6 +136,38 @@ class AllelesMeta(type):
 
 
 class Alleles(metaclass=AllelesMeta):
+    @classmethod
+    def from_letter(cls, letter: str):
+        """Alternate constructor for a single nucleotide or indel letter."""
+        letter = letter.upper()
+        mapping = {
+            "A": Nucleotide.A,
+            "T": Nucleotide.T,
+            "C": Nucleotide.C,
+            "G": Nucleotide.G,
+            "U": Nucleotide.U,
+            "I": InDel.I,
+            "D": InDel.D,
+        }
+        if letter not in mapping:
+            raise ValueError(f"Invalid allele letter: {letter}")
+        return cls(mapping[letter])
+
+    @classmethod
+    def from_not_letter(cls, letter: str):
+        """Alternate constructor for complement sets, e.g. NOT_A."""
+        letter = letter.upper()
+        mapping = {
+            "A": Nucleotide.A,
+            "T": Nucleotide.T,
+            "C": Nucleotide.C,
+            "G": Nucleotide.G,
+            "U": Nucleotide.U,
+        }
+        if letter not in mapping:
+            raise ValueError(f"Invalid NOT_ allele letter: {letter}")
+        return cls({n for n in Nucleotide if n != mapping[letter] and n != Nucleotide.MISSING})
+
     def __init__(
         self,
         nucleotides: Nucleotide | InDel | tuple[Nucleotide | InDel, ...],
