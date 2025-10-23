@@ -60,3 +60,6 @@ uv.lock
 .ruff_cache/
 
 .claude/*
+notebooks/downloads/*
+notebooks/work/*
+**/*.ipynb_checkpoints

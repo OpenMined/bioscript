@@ -232,10 +232,21 @@ class VariantMatch:
         Provides a pretty-printed string representation of the VariantMatch for easy reading.
         Displays relevant details of the match.
         """
-        rsid = self.variant_call.rsid
+        call = self.variant_call
         genotype = "".join(nuc.value for nuc in self.snp)
         match_type = self.match_type.name
-        return f"{match_type}: {rsid} ref={self.snp[0].value} genotype: {genotype}"
+
+        if call.rsid:
+            if isinstance(call.rsid, RSID):
+                rsid_repr = "/".join(sorted(call.rsid.aliases))
+            else:
+                rsid_repr = str(call.rsid)
+        elif call.chromosome and call.position is not None:
+            rsid_repr = f"chr{call.chromosome}:{call.position}"
+        else:
+            rsid_repr = "?"
+
+        return f"{match_type}: {rsid_repr} ref={self.snp[0].value} genotype: {genotype}"
 
     def __repr__(self):
         return self.__str__()
@@ -261,10 +272,13 @@ class RSID:
 
 @dataclass
 class VariantCall:
-    rsid: RSID | str | Iterable
+    rsid: RSID | str | Iterable | None = None
     ploidy: str = "diploid"
     ref: Alleles = field(default_factory=lambda: Alleles({Nucleotide.MISSING}))
     alt: Alleles = field(default_factory=lambda: Alleles({Nucleotide.MISSING}))
+    chromosome: str | None = None
+    position: int | None = None
+    assembly: GRCh | str | None = None
 
     def __post_init__(self):
         if isinstance(self.rsid, str):
@@ -272,59 +286,141 @@ class VariantCall:
         elif isinstance(self.rsid, Iterable) and not isinstance(self.rsid, RSID):
             self.rsid = RSID(*self.rsid)
 
+        if isinstance(self.assembly, str):
+            self.assembly = GRCh.parse(self.assembly)
+        elif self.assembly is not None and not isinstance(self.assembly, GRCh):
+            raise ValueError(f"assembly must be str, GRCh enum, or None, got {type(self.assembly)}")
+
+        if isinstance(self.chromosome, str):
+            self.chromosome = self.chromosome.strip()
+
+    @staticmethod
+    def _normalize_chromosome(value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        if not normalized:
+            return None
+
+        lower = normalized.lower()
+        if lower.startswith("chr"):
+            normalized = normalized[3:]
+
+        return normalized
+
+    def _matches_rsid(self, rsid: str | RSID | None) -> bool:
+        if self.rsid is None:
+            return False
+        if rsid is None:
+            return False
+        if isinstance(rsid, RSID):
+            return self.rsid.matches(rsid)
+
+        token = str(rsid).strip()
+        if not token:
+            return False
+
+        upper_token = token.upper()
+        if upper_token in {".", "<NA>", "NA", "N/A"}:
+            return False
+
+        return self.rsid.matches(token)
+
+    def _matches_coordinates(
+        self,
+        chromosome: str | None,
+        position: int | None,
+        assembly: GRCh | str | None,
+    ) -> bool:
+        if self.chromosome is None or self.position is None:
+            return False
+        if chromosome is None or position is None:
+            return False
+
+        if isinstance(assembly, str):
+            try:
+                assembly = GRCh.parse(assembly)
+            except ValueError:
+                return False
+
+        self_chrom = self._normalize_chromosome(self.chromosome)
+        other_chrom = self._normalize_chromosome(chromosome)
+
+        if self_chrom is None or other_chrom is None:
+            return False
+
+        same_chromosome = self_chrom.lower() == other_chrom.lower()
+        if not same_chromosome:
+            return False
+
+        if int(self.position) != int(position):
+            return False
+
+        if self.assembly is None or assembly is None:
+            return True
+
+        return self.assembly == assembly
+
+    def matches_variant_call(self, other: VariantCall) -> bool:
+        if self.rsid and other.rsid and self.rsid.matches(other.rsid):
+            return True
+
+        if self._matches_coordinates(other.chromosome, other.position, other.assembly):
+            return True
+
+        return other._matches_coordinates(self.chromosome, self.position, self.assembly)
+
     def filter_variant_row(self, variant_row: VariantRow) -> VariantMatch | None:
         """
-        Filters for matching VariantRow based on rsid.
-        If rsids match, returns a VariantMatch object with a parsed DiploidSNP; otherwise, returns None.
+        Filters for matching VariantRow based on rsid and/or genomic coordinates.
         """
-        if (
-            self.rsid.matches(variant_row.rsid)
-            and isinstance(variant_row.genotype, str)
-            and len(variant_row.genotype) == 2
+
+        if not (
+            self._matches_rsid(variant_row.rsid)
+            or self._matches_coordinates(
+                variant_row.chromosome, variant_row.position, variant_row.assembly
+            )
         ):
-            allele1 = None
-            allele2 = None
+            return None
 
-            # Try to parse first allele
+        if not (isinstance(variant_row.genotype, str) and len(variant_row.genotype) == 2):
+            return None
+
+        def parse_allele(raw: str) -> Nucleotide | InDel:
+            """Best-effort parsing of a genotype allele, falling back to missing."""
+
+            normalized = raw.strip()
+            if normalized == "-":
+                return Nucleotide.MISSING
+
             try:
-                allele1 = Nucleotide(variant_row.genotype[0])
+                return Nucleotide(normalized)
             except ValueError:
                 try:
-                    allele1 = InDel(variant_row.genotype[0])
+                    return InDel(normalized)
                 except ValueError:
                     print(
-                        f"Invalid allele value '{variant_row.genotype[0]}' cast as MISSING '.'",
+                        f"Invalid allele value '{raw}' cast as MISSING '.'",
                         flush=True,
                     )
-                    allele1 = Nucleotide.MISSING
+                    return Nucleotide.MISSING
 
-            # Try to parse second allele
-            try:
-                allele2 = Nucleotide(variant_row.genotype[1])
-            except ValueError:
-                try:
-                    allele2 = InDel(variant_row.genotype[1])
-                except ValueError:
-                    print(
-                        f"Invalid allele value '{variant_row.genotype[1]}' cast as MISSING '.'",
-                        flush=True,
-                    )
-                    allele2 = Nucleotide.MISSING
+        allele1 = parse_allele(variant_row.genotype[0])
+        allele2 = parse_allele(variant_row.genotype[1])
 
-            diploid_snp = DiploidSNP(allele1, allele2)
+        diploid_snp = DiploidSNP(allele1, allele2)
 
-            if diploid_snp.is_homozygous() and diploid_snp[0] in self.ref:
-                match_type = MatchType.REFERENCE_CALL
-            elif (
-                diploid_snp.is_heterozygous()
-                or diploid_snp[0] in self.alt
-                or diploid_snp[1] in self.alt
-            ):
-                match_type = MatchType.VARIANT_CALL
-            else:
-                match_type = MatchType.NO_CALL
-            return VariantMatch(variant_call=self, snp=diploid_snp, match_type=match_type)
-        return None
+        if diploid_snp.is_homozygous() and diploid_snp[0] in self.ref:
+            match_type = MatchType.REFERENCE_CALL
+        elif (
+            diploid_snp.is_heterozygous()
+            or diploid_snp[0] in self.alt
+            or diploid_snp[1] in self.alt
+        ):
+            match_type = MatchType.VARIANT_CALL
+        else:
+            match_type = MatchType.NO_CALL
+        return VariantMatch(variant_call=self, snp=diploid_snp, match_type=match_type)
 
 
 @dataclass

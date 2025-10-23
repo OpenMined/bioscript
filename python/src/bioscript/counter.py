@@ -120,7 +120,7 @@ class AlleleCounter:
         """
         # Find the first match for this rsID (any match type)
         for match in matches.all_matches:
-            if match.variant_call.rsid.matches(self.variant_call.rsid):
+            if match.variant_call.matches_variant_call(self.variant_call):
                 return AlleleCount(match=match, variant_call=self.variant_call)
 
         # No match found
