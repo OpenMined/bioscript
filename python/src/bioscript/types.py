@@ -226,6 +226,7 @@ class VariantMatch:
     variant_call: VariantCall
     snp: DiploidSNP
     match_type: MatchType
+    source_row: VariantRow | None = None
 
     def __str__(self):
         """
@@ -250,6 +251,93 @@ class VariantMatch:
 
     def __repr__(self):
         return self.__str__()
+
+    @property
+    def genotype(self) -> DiploidSNP:
+        """Return the diploid genotype tuple."""
+
+        return self.snp
+
+    @property
+    def genotype_string(self) -> str:
+        """Return genotype as joined string (e.g., AG)."""
+
+        return "".join(nuc.value for nuc in self.snp)
+
+    @property
+    def genotype_sorted(self) -> str:
+        """Return genotype letters sorted alphabetically."""
+
+        return "".join(sorted(nuc.value for nuc in self.snp))
+
+    def count(self, allele: Nucleotide | InDel) -> int:
+        """Count specific allele occurrences within the genotype."""
+
+        return self.snp.count(allele)
+
+    @property
+    def ref_count(self) -> int:
+        """Number of reference alleles present."""
+
+        return sum(1 for allele in self.snp if allele in self.variant_call.ref)
+
+    @property
+    def alt_count(self) -> int:
+        """Number of alternate alleles present."""
+
+        return sum(1 for allele in self.snp if allele in self.variant_call.alt)
+
+    @property
+    def has_variant(self) -> bool:
+        """Return True if any alternate allele is present."""
+
+        return self.alt_count > 0
+
+    @property
+    def is_homozygous_variant(self) -> bool:
+        """Return True if both alleles are alternate alleles."""
+
+        return self.alt_count == 2
+
+    @property
+    def is_homozygous_reference(self) -> bool:
+        """Return True if both alleles are reference alleles."""
+
+        return self.ref_count == 2
+
+    @property
+    def is_heterozygous(self) -> bool:
+        """Return True if genotype contains one ref and one alt allele."""
+
+        return self.ref_count == 1 and self.alt_count == 1
+
+    @property
+    def has_missing(self) -> bool:
+        """Return True if genotype contains any missing allele."""
+
+        return any(allele == Nucleotide.MISSING for allele in self.snp)
+
+    @property
+    def raw_line(self) -> str | None:
+        """Original TSV line for the matched variant, if available."""
+
+        return self.source_row.raw_line if self.source_row else None
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a lightweight summary dictionary for reporting."""
+
+        return {
+            "rsid": self.variant_call.rsid.aliases
+            if isinstance(self.variant_call.rsid, RSID)
+            else self.variant_call.rsid,
+            "chromosome": self.variant_call.chromosome,
+            "position": self.variant_call.position,
+            "genotype": self.genotype_string,
+            "genotype_sorted": self.genotype_sorted,
+            "ref_count": self.ref_count,
+            "alt_count": self.alt_count,
+            "raw_line": self.raw_line,
+        }
 
 
 @dataclass
@@ -420,7 +508,12 @@ class VariantCall:
             match_type = MatchType.VARIANT_CALL
         else:
             match_type = MatchType.NO_CALL
-        return VariantMatch(variant_call=self, snp=diploid_snp, match_type=match_type)
+        return VariantMatch(
+            variant_call=self,
+            snp=diploid_snp,
+            match_type=match_type,
+            source_row=variant_row,
+        )
 
 
 @dataclass
@@ -434,6 +527,7 @@ class VariantRow:
     gs: float | None = None
     baf: float | None = None
     lrr: float | None = None
+    raw_line: str | None = None
 
     def __post_init__(self):
         # Parse assembly to GRCh enum if it's a string
@@ -450,24 +544,92 @@ class MatchList:
     variant_matches: list = field(default_factory=list)
     no_call_matches: list = field(default_factory=list)
     all_matches: list = field(default_factory=list)
+    match_lookup: dict[str, VariantMatch] = field(init=False, default_factory=dict, repr=False)
+    _variant_call_index: dict[str, list[VariantCall]] = field(
+        init=False, default_factory=dict, repr=False
+    )
+    _variant_call_order: dict[int, int] = field(init=False, default_factory=dict, repr=False)
+
+    def __post_init__(self):
+        self.variant_calls = list(self.variant_calls)
+        self.match_lookup = {}
+        self._variant_call_index = {}
+        self._variant_call_order = {id(call): idx for idx, call in enumerate(self.variant_calls)}
+
+        for call in self.variant_calls:
+            for key in self._keys_for_variant_call(call):
+                normalized = key.strip().lower()
+                if not normalized:
+                    continue
+                self._variant_call_index.setdefault(normalized, []).append(call)
 
     def match_rows(self, variant_rows: Iterable[VariantRow]) -> MatchList:
-        """
-        Iterates through the given variant rows, applies each variant call's filter_variant_row method,
-        and collects the outputs into three buckets: reference calls, variant calls, and no calls.
-        Also maintains a list of all matches in the order they were added.
-        """
+        """Match rows against configured VariantCall objects with position-aware grouping."""
+
+        self.reference_matches = []
+        self.variant_matches = []
+        self.no_call_matches = []
+        self.all_matches = []
+        self.match_lookup = {}
+
+        # Group variants by position for better reporting
+        position_matches = {}  # (chrom, pos) -> list of (variant_call, match)
+
         for variant_row in variant_rows:
-            for variant_call in self.variant_calls:
+            position_key = (str(variant_row.chromosome), int(variant_row.position))
+
+            # Get all candidate variant calls for this row
+            candidate_calls = self._candidate_calls_for_row(variant_row)
+
+            # Try to match against each candidate
+            matches_at_position = []
+            for variant_call in candidate_calls:
                 match = variant_call.filter_variant_row(variant_row)
                 if match is not None:
+                    matches_at_position.append((variant_call, match))
+
+            if matches_at_position:
+                # Store all matches at this position for later filtering
+                if position_key not in position_matches:
+                    position_matches[position_key] = []
+                position_matches[position_key].extend(matches_at_position)
+
+        # Process matches by position
+        for _position_key, matches in position_matches.items():
+            # Check if we have any real matches (not NO_CALLs) at this position
+            real_matches = [
+                (vc, m)
+                for vc, m in matches
+                if m.match_type in (MatchType.REFERENCE_CALL, MatchType.VARIANT_CALL)
+            ]
+            no_call_matches = [(vc, m) for vc, m in matches if m.match_type == MatchType.NO_CALL]
+
+            if real_matches:
+                # We have real matches - only report the best real match
+                # Priority: VARIANT_CALL > REFERENCE_CALL
+                best_match = None
+                for _variant_call, match in real_matches:
+                    if match.match_type == MatchType.VARIANT_CALL:
+                        best_match = match
+                        break  # Variant call is highest priority
+                    elif best_match is None or match.match_type == MatchType.REFERENCE_CALL:
+                        best_match = match
+
+                if best_match:
+                    self.all_matches.append(best_match)
+                    if best_match.match_type == MatchType.REFERENCE_CALL:
+                        self.reference_matches.append(best_match)
+                    elif best_match.match_type == MatchType.VARIANT_CALL:
+                        self.variant_matches.append(best_match)
+                    self._register_match(best_match)
+
+            elif no_call_matches:
+                # Only NO_CALLs at this position - report all of them to show
+                # that multiple variants were tested but none matched
+                for _variant_call, match in no_call_matches:
                     self.all_matches.append(match)
-                    if match.match_type == MatchType.REFERENCE_CALL:
-                        self.reference_matches.append(match)
-                    elif match.match_type == MatchType.VARIANT_CALL:
-                        self.variant_matches.append(match)
-                    elif match.match_type == MatchType.NO_CALL:
-                        self.no_call_matches.append(match)
+                    self.no_call_matches.append(match)
+                    self._register_match(match)
 
         return self
 
@@ -486,6 +648,52 @@ class MatchList:
     def iter_no_call(self):
         return iter(self.no_call_matches)
 
+    def get_position_summary(self) -> dict:
+        """Get a summary of matches grouped by position."""
+        from collections import defaultdict
+
+        position_groups = defaultdict(list)
+        for match in self.all_matches:
+            call = match.variant_call
+            if call.chromosome and call.position:
+                key = (call.chromosome, call.position)
+                position_groups[key].append(match)
+
+        # Create summary
+        summary = {
+            "total_positions": len(position_groups),
+            "positions_with_multiple_variants": 0,
+            "details": [],
+        }
+
+        for (chrom, pos), matches in position_groups.items():
+            if len(matches) > 1:
+                summary["positions_with_multiple_variants"] += 1
+
+            position_info = {
+                "chromosome": chrom,
+                "position": pos,
+                "match_count": len(matches),
+                "matches": [],
+            }
+
+            for match in matches:
+                call = match.variant_call
+                match_info = {
+                    "rsid": str(call.rsid) if call.rsid else None,
+                    "ref": getattr(call, "ref_label", str(call.ref)),
+                    "alt": getattr(call, "alt_label", str(call.alt)),
+                    "match_type": match.match_type.name,
+                    "genotype": "".join(
+                        n.value if hasattr(n, "value") else str(n) for n in match.snp
+                    ),
+                }
+                position_info["matches"].append(match_info)
+
+            summary["details"].append(position_info)
+
+        return summary
+
     def __str__(self):
         """
         Provides a pretty-printed string representation of the MatchList for easy reading.
@@ -495,3 +703,134 @@ class MatchList:
 
     def __repr__(self):
         return self.__str__()
+
+    def _register_match(self, match: VariantMatch) -> None:
+        """Index match by rsID aliases and coordinates for fast lookup."""
+
+        keys: set[str] = set()
+
+        rsid = match.variant_call.rsid
+        if isinstance(rsid, RSID):
+            keys.update(rsid.aliases)
+        elif rsid:
+            keys.add(str(rsid))
+
+        chrom = match.variant_call.chromosome
+        pos = match.variant_call.position
+        if chrom and pos is not None:
+            normalized_chrom = match.variant_call._normalize_chromosome(chrom)
+            if normalized_chrom:
+                keys.add(f"chr{normalized_chrom}:{pos}")
+                keys.add(f"{normalized_chrom}:{pos}")
+
+        for key in keys:
+            normalized = str(key).strip().lower()
+            if normalized and normalized not in self.match_lookup:
+                self.match_lookup[normalized] = match
+
+    def find_match(self, variant_call: VariantCall):
+        """Return the first match corresponding to the VariantCall, if any."""
+
+        for key in self._keys_for_variant_call(variant_call):
+            normalized = key.strip().lower()
+            if not normalized:
+                continue
+            match = self.match_lookup.get(normalized)
+            if match is not None:
+                return match
+        return None
+
+    def get(self, identifier, default=None):
+        """Lookup a match by VariantCall, rsID alias, or coordinate string."""
+
+        if isinstance(identifier, VariantCall):
+            match = self.find_match(identifier)
+            return match if match is not None else default
+
+        if isinstance(identifier, RSID):
+            for alias in sorted(identifier.aliases):
+                match = self.get(alias)
+                if match is not None:
+                    return match
+            return default
+
+        if identifier is None:
+            return default
+
+        key = str(identifier).strip().lower()
+        if not key:
+            return default
+
+        return self.match_lookup.get(key, default)
+
+    def __getattr__(self, item: str):
+        if item.startswith("__"):
+            raise AttributeError(f"MatchList has no attribute '{item}'")
+
+        match = self.get(item)
+        if match is not None:
+            return match
+        raise AttributeError(f"MatchList has no attribute '{item}'")
+
+    def _keys_for_variant_call(self, call: VariantCall) -> set[str]:
+        keys: set[str] = set()
+
+        rsid = call.rsid
+        if isinstance(rsid, RSID):
+            keys.update(str(alias) for alias in rsid.aliases)
+        elif rsid:
+            keys.add(str(rsid))
+
+        chrom = call.chromosome
+        pos = call.position
+        if chrom and pos is not None:
+            normalized = VariantCall._normalize_chromosome(chrom)
+            if normalized:
+                keys.add(f"{normalized}:{pos}")
+                keys.add(f"chr{normalized}:{pos}")
+
+        return keys
+
+    def _keys_for_variant_row(self, variant_row: VariantRow) -> set[str]:
+        keys: set[str] = set()
+
+        rsid = (variant_row.rsid or "").strip()
+        if rsid:
+            upper = rsid.upper()
+            if upper not in {".", "<NA>", "NA", "N/A"}:
+                keys.add(rsid.lower())
+
+        chrom = VariantCall._normalize_chromosome(variant_row.chromosome)
+        if chrom and variant_row.position is not None:
+            pos = int(variant_row.position)
+            keys.add(f"{chrom}:{pos}".lower())
+            keys.add(f"chr{chrom}:{pos}".lower())
+
+        return keys
+
+    def _candidate_calls_for_row(self, variant_row: VariantRow) -> list[VariantCall]:
+        keys = self._keys_for_variant_row(variant_row)
+        if not keys:
+            # No keys means we can't index this row - return empty list
+            # Only check if variant calls have no indexable keys either
+            return [] if self._variant_call_index else self.variant_calls
+
+        candidate_ids: set[int] = set()
+        for key in keys:
+            candidate_ids.update(id(call) for call in self._variant_call_index.get(key, []))
+
+        if not candidate_ids:
+            # No matches found in the index - return empty list
+            return []
+
+        ordered_calls: list[VariantCall] = []
+        remaining = set(candidate_ids)
+        for call in self.variant_calls:
+            ident = id(call)
+            if ident in remaining:
+                ordered_calls.append(call)
+                remaining.remove(ident)
+                if not remaining:
+                    break
+
+        return ordered_calls

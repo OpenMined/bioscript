@@ -14,6 +14,24 @@ from .testing import export_from_notebook, run_tests
 from .types import MatchList
 
 
+def _merge_classifier_result(results: dict, name: str, result) -> None:
+    """Merge classifier output into results with namespaced columns.
+
+    Convention:
+    - If result is a single value (str, int, etc): {name}_result
+    - If result is a dict: {name}_{key} for each key-value pair
+    """
+
+    if isinstance(result, dict):
+        # Dict result: use {name}_{key} for each key
+        for key, value in result.items():
+            column_name = f"{name}_{key}"
+            results[column_name] = value
+    else:
+        # Single value result: use {name}_result
+        results[f"{name}_result"] = result
+
+
 def load_classifier_module(script_path: Path):
     """
     Dynamically load a classifier script.
@@ -197,7 +215,7 @@ def classify_command(args):
 
                     # Call classifier (uses __call__ interface)
                     result = classifier(matches)
-                    results[name] = result
+                    _merge_classifier_result(results, name, result)
 
                 except Exception as e:
                     print(

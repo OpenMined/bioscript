@@ -1,132 +1,112 @@
-"""Tests for allele counting utilities."""
+"""Tests for VariantMatch helper properties and MatchList lookup ergonomics."""
 
-from bioscript import AlleleCounter, GenotypeGenerator
+from bioscript import GenotypeGenerator, load_variants_tsv
 from bioscript.types import Alleles, MatchList, Nucleotide, VariantCall
 
 
-def test_allele_counter_heterozygous():
-    """Test counting heterozygous genotype."""
-    # A>G variant
-    call = VariantCall(rsid="rs123", ref=Alleles.A, alt=Alleles.G)
-    counter = AlleleCounter(call)
+def _build_matches(call: VariantCall, genotype: str) -> MatchList:
+    rsid_value = sorted(call.rsid.aliases)[0] if hasattr(call.rsid, "aliases") else call.rsid
 
-    # Create AG genotype
-    gen = GenotypeGenerator([{"rsid": "rs123", "chromosome": "1", "position": 1000}])
-    variants = gen(["AG"])
-
-    matches = MatchList(variant_calls=[call])
-    matches.match_rows(variants)
-
-    result = counter.count(matches)
-
-    assert result.ref_count == 1
-    assert result.alt_count == 1
-    assert result.has_variant()
-    assert result.is_heterozygous()
-    assert not result.is_homozygous_variant()
-    assert not result.is_homozygous_reference()
-    assert result.count(Nucleotide.A) == 1
-    assert result.count(Nucleotide.G) == 1
-
-
-def test_allele_counter_homozygous_variant():
-    """Test counting homozygous variant genotype."""
-    call = VariantCall(rsid="rs123", ref=Alleles.A, alt=Alleles.G)
-    counter = AlleleCounter(call)
-
-    gen = GenotypeGenerator([{"rsid": "rs123", "chromosome": "1", "position": 1000}])
-    variants = gen(["GG"])
+    templates = [
+        {"rsid": rsid_value, "chromosome": "1", "position": 1000},
+    ]
+    gen = GenotypeGenerator(templates)
+    variants = gen([genotype])
 
     matches = MatchList(variant_calls=[call])
     matches.match_rows(variants)
-
-    result = counter.count(matches)
-
-    assert result.ref_count == 0
-    assert result.alt_count == 2
-    assert result.has_variant()
-    assert result.is_homozygous_variant()
-    assert not result.is_heterozygous()
-    assert result.count(Nucleotide.G) == 2
+    return matches
 
 
-def test_allele_counter_homozygous_reference():
-    """Test counting homozygous reference genotype."""
+def test_variant_match_counts_heterozygous():
     call = VariantCall(rsid="rs123", ref=Alleles.A, alt=Alleles.G)
-    counter = AlleleCounter(call)
 
-    gen = GenotypeGenerator([{"rsid": "rs123", "chromosome": "1", "position": 1000}])
-    variants = gen(["AA"])
+    matches = _build_matches(call, "AG")
+    match = matches.get(call)
 
-    matches = MatchList(variant_calls=[call])
-    matches.match_rows(variants)
+    assert match is not None
+    assert match.ref_count == 1
+    assert match.alt_count == 1
+    assert match.has_variant
+    assert match.is_heterozygous
+    assert not match.is_homozygous_variant
+    assert not match.is_homozygous_reference
+    assert match.count(Nucleotide.A) == 1
+    assert match.count(Nucleotide.G) == 1
+    assert match.genotype_sorted == "AG"
+    assert match.raw_line is None
 
-    result = counter.count(matches)
 
-    assert result.ref_count == 2
-    assert result.alt_count == 0
-    assert not result.has_variant()
-    assert result.is_homozygous_reference()
-    assert not result.is_heterozygous()
-    assert result.count(Nucleotide.A) == 2
-
-
-def test_allele_counter_no_match():
-    """Test counter when variant not found."""
+def test_variant_match_counts_homozygous_variant():
     call = VariantCall(rsid="rs123", ref=Alleles.A, alt=Alleles.G)
-    counter = AlleleCounter(call)
+    matches = _build_matches(call, "GG")
 
-    # Different rsID
-    gen = GenotypeGenerator([{"rsid": "rs999", "chromosome": "1", "position": 1000}])
-    variants = gen(["AG"])
+    match = matches.rs123
 
-    matches = MatchList(variant_calls=[call])
-    matches.match_rows(variants)
-
-    result = counter.count(matches)
-
-    assert result.ref_count == 0
-    assert result.alt_count == 0
-    assert not result.has_variant()
-    assert result.genotype is None
+    assert match.ref_count == 0
+    assert match.alt_count == 2
+    assert match.has_variant
+    assert match.is_homozygous_variant
+    assert not match.is_heterozygous
+    assert match.count(Nucleotide.G) == 2
 
 
-def test_allele_counter_multiple_alt_alleles():
-    """Test with multiple possible alternate alleles."""
-    # A can be anything but A
+def test_variant_match_counts_homozygous_reference():
+    call = VariantCall(rsid="rs123", ref=Alleles.A, alt=Alleles.G)
+    matches = _build_matches(call, "AA")
+
+    match = matches.get("rs123")
+    assert match.ref_count == 2
+    assert match.alt_count == 0
+    assert not match.has_variant
+    assert match.is_homozygous_reference
+    assert not match.is_heterozygous
+    assert match.count(Nucleotide.A) == 2
+
+
+def test_match_lookup_missing_returns_none():
+    call = VariantCall(rsid="rs123", ref=Alleles.A, alt=Alleles.G)
+    matches = _build_matches(call, "AA")
+
+    assert matches.get("rs999") is None
+
+
+def test_variant_match_multiple_alt_alleles():
     call = VariantCall(rsid="rs123", ref=Alleles.A, alt=Alleles.NOT_A)
-    counter = AlleleCounter(call)
+    matches = _build_matches(call, "TC")
 
-    gen = GenotypeGenerator([{"rsid": "rs123", "chromosome": "1", "position": 1000}])
-    variants = gen(["TC"])  # Both are NOT_A
-
-    matches = MatchList(variant_calls=[call])
-    matches.match_rows(variants)
-
-    result = counter.count(matches)
-
-    assert result.ref_count == 0
-    assert result.alt_count == 2
-    assert result.is_homozygous_variant()
-    assert result.count(Nucleotide.T) == 1
-    assert result.count(Nucleotide.C) == 1
+    match = matches.get(call)
+    assert match.ref_count == 0
+    assert match.alt_count == 2
+    assert match.is_homozygous_variant
+    assert match.count(Nucleotide.T) == 1
+    assert match.count(Nucleotide.C) == 1
 
 
-def test_allele_counter_repr():
-    """Test string representations."""
+def test_match_lookup_uses_coordinate_aliases():
+    call = VariantCall(
+        rsid="rs123",
+        ref=Alleles.A,
+        alt=Alleles.G,
+        chromosome="1",
+        position=1000,
+    )
+    matches = _build_matches(call, "AG")
+
+    assert matches.get("chr1:1000").genotype_sorted == "AG"
+    assert matches.get("1:1000").genotype_sorted == "AG"
+
+
+def test_variant_match_raw_line(tmp_path):
     call = VariantCall(rsid="rs123", ref=Alleles.A, alt=Alleles.G)
-    counter = AlleleCounter(call)
 
-    assert "rs123" in repr(counter)
+    path = tmp_path / "variants.tsv"
+    path.write_text("# rsid\tchromosome\tposition\tgenotype\nrs123\t1\t1000\tAG\n")
 
-    gen = GenotypeGenerator([{"rsid": "rs123", "chromosome": "1", "position": 1000}])
-    variants = gen(["AG"])
+    variants = list(load_variants_tsv(str(path)))
+    matches = MatchList(variant_calls=[call]).match_rows(variants)
 
-    matches = MatchList(variant_calls=[call])
-    matches.match_rows(variants)
-
-    result = counter.count(matches)
-
-    assert "AG" in repr(result)
-    assert "ref=1" in repr(result)
-    assert "alt=1" in repr(result)
+    match = matches.get(call)
+    assert match is not None
+    assert match.genotype_sorted == "AG"
+    assert match.raw_line == "rs123\t1\t1000\tAG"

@@ -38,9 +38,11 @@ class GenotypeClassifier:
             matches: MatchList containing variant matches
 
         Returns:
-            Classification result as string
+            Classification result as string or field mapping
         """
         result = self.classify(matches)
+        if isinstance(result, dict):
+            return result
         if hasattr(result, "sorted"):
             result = result.sorted()
         return str(result)

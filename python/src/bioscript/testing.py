@@ -22,10 +22,20 @@ class VariantFixture:
     ):
         """Initialize fixture with variant templates."""
         self.gen = GenotypeGenerator(variant_templates, assembly=assembly)
+        self.templates = variant_templates
 
     def variants(self, genotypes: list[str]) -> Iterator[VariantRow]:
         """Generate variants with given genotypes."""
-        return self.gen(genotypes)
+        # Get the base variants from the generator
+        base_variants = self.gen(genotypes)
+
+        # Add raw_line to each variant
+        for variant, genotype, template in zip(base_variants, genotypes, self.templates):
+            # Construct raw_line in TSV format
+            variant.raw_line = (
+                f"{template['rsid']}\t{template['chromosome']}\t{template['position']}\t{genotype}"
+            )
+            yield variant
 
     def __call__(self, genotypes: list[str]) -> Iterator[VariantRow]:
         """Shorthand for variants()."""

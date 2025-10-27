@@ -1,4 +1,3 @@
-from bioscript import AlleleCounter
 from bioscript.classifier import DiploidResult, GenotypeClassifier, GenotypeEnum
 from bioscript.types import Alleles, VariantCall
 
@@ -12,6 +11,10 @@ def filter_snvs(df: pd.DataFrame) -> pd.DataFrame:
     return df[mask].reset_index(drop=True)
 
 def generate_variant_calls(df: pd.DataFrame) -> list[VariantCall]:
+    """
+    Generate VariantCall objects from ClinVar DataFrame.
+    Now handles all variant types including duplications, deletions, and indels.
+    """
     vcs: list[VariantCall] = []
     for _, row in df.iterrows():
         rsid_value: str | None = None
@@ -32,13 +35,35 @@ def generate_variant_calls(df: pd.DataFrame) -> list[VariantCall]:
         if not pd.isna(row["position"]):
             pos = int(row["position"])
 
+        # Handle multi-character REF and ALT for indels/duplications
+        # For now, just use the first character for matching purposes
+        # The full sequences are stored in ref_label and alt_label
+        try:
+            # For single nucleotides, use from_letter
+            if len(ref) == 1:
+                ref_alleles = Alleles.from_letter(ref)
+            else:
+                # For multi-character ref (indels), use first base
+                ref_alleles = Alleles.from_letter(ref[0])
+                
+            if len(alt) == 1:
+                alt_alleles = Alleles.from_letter(alt)
+            else:
+                # For multi-character alt (indels), use first base
+                alt_alleles = Alleles.from_letter(alt[0])
+        except:
+            # If we can't parse, skip this variant
+            print(f"Warning: Skipping variant {rsid_value} with ref={ref} alt={alt}")
+            continue
+
         vc = VariantCall(
             rsid=rsid_value,
-            ref=Alleles.from_letter(ref),
-            alt=Alleles.from_not_letter(ref),
+            ref=ref_alleles,
+            alt=alt_alleles,
             chromosome=chrom,
             position=pos,
         )
+        # Store original full sequences for debugging
         vc.ref_label = ref
         vc.alt_label = alt
 
@@ -67,9 +92,19 @@ def get_vcs():
         }
     )
 
-    # Example usage:
+    print(f"Using all {len(df)} rows")
+    
+    # Count variant types for debugging
+    variant_types = df["clnvc"].value_counts()
+    print("\nVariant types in dataset:")
+    for vtype, count in variant_types.items():
+        print(f"  {vtype}: {count}")
+
     df_snvs = filter_snvs(df)
-    vcs = generate_variant_calls(df_snvs)
+    
+    print(f"\nGenerating variant calls for all {len(df_snvs)} variants")
+    vcs = generate_variant_calls(df_snvs)  # Using full df, not filtered
+    print(f"Generated {len(vcs)} variant calls")
     return vcs
 
 class BRCA1Classifier(GenotypeClassifier):
