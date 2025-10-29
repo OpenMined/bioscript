@@ -65,3 +65,6 @@ notebooks/work/*
 **/*.ipynb_checkpoints
 examples/herc2/herc2_*.tsv
 examples/herc2/classify_herc2_*.py
+
+examples/**/work/*
+examples/**/.nextflow*
