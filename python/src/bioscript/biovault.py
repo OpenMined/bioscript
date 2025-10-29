@@ -304,10 +304,11 @@ class BioVaultProject:
             "version": self.version,
         }
 
-        if self.docker_image:
-            data["docker_image"] = self.docker_image
-        if self.docker_platform:
-            data["docker_platform"] = self.docker_platform
+        # Docker image and platform are hardcoded in workflow generation, not exposed in YAML
+        # if self.docker_image:
+        #     data["docker_image"] = self.docker_image
+        # if self.docker_platform:
+        #     data["docker_platform"] = self.docker_platform
 
         if self.assets:
             data["assets"] = self.assets
@@ -440,6 +441,113 @@ class BioVaultProject:
         self.docker_platform = platform
         return self
 
+    def _generate_participant_workflow_nf(self, entrypoint: Optional[str] = None) -> str:
+        """Generate workflow for List[GenotypeRecord] with participant iteration and aggregation."""
+
+        primary_process = self.processes[0]
+        container_image = primary_process.container or self.docker_image or _default_docker_image()
+        workflow_script_asset = entrypoint or self._entrypoint or primary_process.script
+
+        # Determine output pattern from outputs
+        individual_pattern = None
+        aggregated_path = None
+        classifier_name = None
+
+        for output_spec in self.outputs:
+            if output_spec.path:
+                if "{participant_id}" in output_spec.path:
+                    individual_pattern = output_spec.path.replace("{participant_id}", "*")
+                else:
+                    aggregated_path = output_spec.path
+                    # Extract classifier name from aggregated path (e.g., result_HERC2.tsv -> HERC2)
+                    if aggregated_path.startswith("result_") and aggregated_path.endswith(".tsv"):
+                        classifier_name = aggregated_path[7:-4]  # Remove "result_" and ".tsv"
+
+        if not classifier_name:
+            classifier_name = self.name.upper().replace("-", "_").replace(" ", "_")
+
+        if not individual_pattern:
+            individual_pattern = f"result_{classifier_name}_*.tsv"
+        if not aggregated_path:
+            aggregated_path = f"result_{classifier_name}.tsv"
+
+        # Generate workflow
+        workflow = f'''nextflow.enable.dsl=2
+
+workflow USER {{
+    take:
+        context
+        participants  // Channel emitting GenotypeRecord maps
+
+    main:
+        def assetsDir = file(context.params.assets_dir)
+        def workflowScript = file("${{assetsDir}}/{workflow_script_asset}")
+
+        // Extract (participant_id, genotype_file) tuples from the records channel
+        def participant_tuples = participants.map {{ record ->
+            tuple(
+                record.participant_id,
+                file(record.genotype_file)
+            )
+        }}
+
+        // Process each participant
+        def per_participant_results = {primary_process.name}(
+            workflowScript,
+            participant_tuples
+        )
+
+        // Aggregate all results into single file
+        def aggregated = aggregate_results(
+            per_participant_results.collect()
+        )
+
+    emit:
+        {self.outputs[0].name if self.outputs else "classification_result"} = aggregated
+}}
+
+process {primary_process.name} {{
+    container '{container_image}'
+    publishDir params.results_dir, mode: 'copy', overwrite: true, pattern: '{individual_pattern}'
+    tag {{ participant_id }}
+
+    input:
+        path script
+        tuple val(participant_id), path(genotype_file)
+
+    output:
+        path "result_{classifier_name}_${{participant_id}}.tsv"
+
+    script:
+    """
+    bioscript classify "${{script}}" --file "${{genotype_file}}" --participant_id "${{participant_id}}"
+    """
+}}
+
+process aggregate_results {{
+    container '{container_image}'
+    publishDir params.results_dir, mode: 'copy', overwrite: true
+
+    input:
+        path individual_results
+
+    output:
+        path "{aggregated_path}"
+
+    script:
+    """
+    # Extract header from first file
+    head -n 1 ${{individual_results[0]}} > {aggregated_path}
+
+    # Append all data rows (skip headers)
+    for file in ${{individual_results}}; do
+        tail -n +2 "\\$file" >> {aggregated_path}
+    done
+    """
+}}
+'''
+        return workflow
+
     def generate_workflow_nf(self, entrypoint: Optional[str] = None) -> str:
         """Generate a Nextflow workflow file for this workflow."""
 
@@ -462,6 +570,14 @@ class BioVaultProject:
             ]
             if not self._entrypoint:
                 self._entrypoint = script_candidate
+
+        # Check if using List[GenotypeRecord] - requires different workflow pattern
+        uses_genotype_list = any(
+            inp.type.startswith("List[GenotypeRecord") for inp in self.inputs
+        )
+
+        if uses_genotype_list:
+            return self._generate_participant_workflow_nf(entrypoint)
 
         if len(self.processes) > 1:
             raise NotImplementedError("Multiple processes per workflow are not supported yet")
