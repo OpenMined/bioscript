@@ -8,16 +8,16 @@ docker_platform: linux/amd64
 assets:
 - classify_herc2.py
 inputs:
-- name: genotype_file
-  type: File
-  description: Participant genotype TSV
-  format: tsv
-- name: data_dir
-  type: Directory
-  description: Base directory containing sample files
+- name: participants
+  type: List[GenotypeRecord]
+  description: CSV/TSV with participant_id and genotype_file columns
+  format: csv
+  mapping:
+    participant_id: participant_id
+    genotype_file: genotype_file
 outputs:
 - name: classification_result
   type: File
-  description: HERC2 eye color classification
+  description: HERC2 eye color classification (aggregated)
   format: tsv
-  path: result_HERC2_{participant_id}.tsv
+  path: result_HERC2.tsv
