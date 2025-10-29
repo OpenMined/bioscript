@@ -107,8 +107,9 @@ def load_variants_tsv(path: str) -> Iterator[VariantRow]:
 
     has_opt = {col: (col in header) for col in OPTIONAL}
 
-    reader = csv.DictReader(data_lines, fieldnames=header, delimiter="\t")
-    for row in reader:
+    for raw_line in data_lines:
+        values = next(csv.reader([raw_line], delimiter="\t"))
+        row = dict(zip(header, values))
         # Required fields
         rsid = (row.get("rsid") or "").strip()
         chrom = (row.get("chromosome") or "").strip()
@@ -132,4 +133,5 @@ def load_variants_tsv(path: str) -> Iterator[VariantRow]:
             gs=gs,
             baf=baf,
             lrr=lrr,
+            raw_line=raw_line,
         )

@@ -17,7 +17,6 @@ MISSING = "G-"
 
 class APOL1Classifier(GenotypeClassifier):
     def classify(self, matches) -> DiploidResult:
-                        
         g2_match = matches.get(rs71785313)
         site1_match = matches.get(rs73885319)
         site2_match = matches.get(rs60910145)
@@ -50,7 +49,7 @@ class APOL1Classifier(GenotypeClassifier):
 
 __bioscript__ = {
     "variant_calls": [rs73885319, rs60910145, rs71785313],
-    "classifier": APOL1Classifier,
+    "classifier": APOL1Classifier(),
     "name": "APOL1",
 }
 

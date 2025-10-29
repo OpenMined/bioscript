@@ -13,7 +13,8 @@ cd "$SCRIPT_DIR/.."
 PLATFORMS=${PLATFORMS:-linux/amd64,linux/arm64}
 BUILDER_NAME=${BUILDER_NAME:-bioscript-builder}
 REMOTE_IMAGE=${REMOTE_IMAGE:-ghcr.io/openmined/bioscript}
-OUTPUT_MODE=${OUTPUT_MODE:-push} # push|oci
+# By default, produce a multi-arch OCI archive instead of pushing
+OUTPUT_MODE=${OUTPUT_MODE:-oci} # oci|push
 OUTPUT_DEST="${OUTPUT_DEST:-}"
 LOAD_PLATFORM=${LOAD_PLATFORM:-auto} # auto|none|<platform>
 VERIFY_MANIFEST=${VERIFY_MANIFEST:-0}
@@ -66,7 +67,7 @@ case "$OUTPUT_MODE" in
         BUILD_CMD+=( --output "type=oci,dest=${OUTPUT_DEST}" )
         ;;
     *)
-        echo "Unsupported OUTPUT_MODE: $OUTPUT_MODE" >&2
+        echo "Unsupported OUTPUT_MODE: $OUTPUT_MODE (expected 'oci' or 'push')" >&2
         exit 1
         ;;
 esac

@@ -14,6 +14,33 @@ from .testing import export_from_notebook, run_tests
 from .types import MatchList
 
 
+def _merge_classifier_result(results: dict, name: str, result) -> None:
+    """Merge classifier output into results with namespaced columns.
+
+    Convention:
+    - If result is None: skip (classifier wrote results to files)
+    - If result is a list: store both count and data (data for JSON output)
+    - If result is a dict: {name}_{key} for each key-value pair
+    - If result is a single value (str, int, etc): {name}_result
+    """
+
+    if result is None:
+        # No result - classifier wrote output to files
+        return
+    elif isinstance(result, list):
+        # List result: store count for simple output, data for JSON output
+        results[f"{name}_count"] = len(result)
+        results[f"{name}_data"] = result
+    elif isinstance(result, dict):
+        # Dict result: use {name}_{key} for each key
+        for key, value in result.items():
+            column_name = f"{name}_{key}"
+            results[column_name] = value
+    else:
+        # Single value result: use {name}_result
+        results[f"{name}_result"] = result
+
+
 def load_classifier_module(script_path: Path):
     """
     Dynamically load a classifier script.
@@ -30,6 +57,11 @@ def load_classifier_module(script_path: Path):
     Returns:
         Dictionary with 'name' and either 'handler' or 'config'
     """
+    # Add script directory to sys.path so it can import local modules
+    script_dir = str(script_path.parent.absolute())
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+
     spec = importlib.util.spec_from_file_location(script_path.stem, script_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load module from {script_path}")
@@ -186,18 +218,59 @@ def classify_command(args):
 
             else:
                 # Auto mode - load variants and classify
-                variant_calls = module_config["variant_calls"]
-                classifier = module_config["classifier"]
+                variant_calls_ref = module_config["variant_calls"]
+                classifier_class = module_config["classifier"]
+
+                # Call variant_calls if it's a function
+                if callable(variant_calls_ref):
+                    variant_calls = variant_calls_ref()
+                else:
+                    variant_calls = variant_calls_ref
+
+                # Build kwargs for classifier initialization
+                classifier_kwargs = {
+                    "name": name,
+                    "filename": str(snp_file_path.name),
+                }
+                if args.participant_id:
+                    classifier_kwargs["participant_id"] = args.participant_id
+                if getattr(args, "debug", False):
+                    classifier_kwargs["debug"] = True
+
+                # Initialize classifier
+                classifier = classifier_class(**classifier_kwargs)
 
                 try:
                     # Load and match variants
                     variants = load_variants_tsv(snp_file_path)
-                    calls = MatchList(variant_calls=variant_calls)
-                    matches = calls.match_rows(variants)
+
+                    multi_variant_mode = getattr(classifier, "multi_variant_mode", None)
+                    if multi_variant_mode is None:
+                        calls = MatchList(variant_calls=variant_calls)
+                        matches = calls.match_rows(variants)
+                    else:
+                        calls = MatchList(
+                            variant_calls=variant_calls,
+                            enable_position_clustering=bool(multi_variant_mode),
+                        )
+                        matches = calls.match_rows(
+                            variants,
+                            enable_multi_variant=bool(multi_variant_mode),
+                        )
 
                     # Call classifier (uses __call__ interface)
                     result = classifier(matches)
-                    results[name] = result
+                    _merge_classifier_result(results, name, result)
+
+                    if getattr(args, "debug", False) and hasattr(classifier, "debug_dump"):
+                        debug_path = Path(f"{script_path.stem}_debug.csv")
+                        try:
+                            classifier.debug_dump(matches, debug_path)
+                        except Exception as dump_error:
+                            print(
+                                f"Warning: failed to write debug CSV for {name}: {dump_error}",
+                                file=sys.stderr,
+                            )
 
                 except Exception as e:
                     print(
@@ -215,17 +288,20 @@ def classify_command(args):
     # Output based on format
     try:
         if args.out == "tsv":
-            writer = csv.DictWriter(sys.stdout, fieldnames=results.keys(), delimiter="\t")
+            # Filter out _data fields for TSV (just show counts)
+            tsv_results = {k: v for k, v in results.items() if not k.endswith("_data")}
+            writer = csv.DictWriter(sys.stdout, fieldnames=tsv_results.keys(), delimiter="\t")
             writer.writeheader()
-            writer.writerow(results)
+            writer.writerow(tsv_results)
         elif args.out == "json":
             import json
 
             print(json.dumps(results, indent=2))
         else:
-            # Simple key=value output
+            # Simple key=value output - filter out _data fields
             for key, value in results.items():
-                print(f"{key}={value}")
+                if not key.endswith("_data"):
+                    print(f"{key}={value}")
     except Exception as e:
         print(f"Error writing output: {e}", file=sys.stderr)
         print(traceback.format_exc(), file=sys.stderr)
@@ -313,6 +389,11 @@ Examples:
         "--participant_col",
         default="participant_id",
         help="Column name for participant ID in output (default: participant_id)",
+    )
+    classify_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Write detailed match diagnostics to CSV beside classifier script",
     )
 
     args = parser.parse_args()

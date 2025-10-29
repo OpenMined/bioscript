@@ -70,6 +70,7 @@ def test_create_test_variants_to_file():
         assert len(variants) == 2
         assert variants[0].rsid == "rs123"
         assert variants[1].rsid == "rs456"
+        assert variants[0].raw_line == "rs123\t1\t1000\tAA"
     finally:
         Path(temp_path).unlink(missing_ok=True)
 

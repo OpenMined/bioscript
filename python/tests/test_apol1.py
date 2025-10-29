@@ -14,7 +14,7 @@ Classification Rules (count-based, no phase information):
 - Counts are simply allele counts (0-4 total for G1)
 """
 
-from bioscript import AlleleCounter, GenotypeGenerator
+from bioscript import GenotypeGenerator
 from bioscript.classifier import DiploidResult, GenotypeClassifier, GenotypeEnum
 from bioscript.types import Alleles, MatchList, VariantCall
 
@@ -53,30 +53,21 @@ class APOL1Classifier(GenotypeClassifier):
     """
 
     def classify(self, matches) -> DiploidResult:
-        # Create counters for each position
-        g2_counter = AlleleCounter(rs71785313)
-        g1_site1_counter = AlleleCounter(rs73885319)
-        g1_site2_counter = AlleleCounter(rs60910145)
-
-        # Count variant alleles
-        g2_result = g2_counter.count(matches)
-        site1_result = g1_site1_counter.count(matches)
-        site2_result = g1_site2_counter.count(matches)
+        # Retrieve variant matches directly from match list
+        g2_match = matches.get(rs71785313)
+        site1_match = matches.get(rs73885319)
+        site2_match = matches.get(rs60910145)
 
         # Check if we have any APOL1 data
-        has_data = (
-            g2_result.genotype is not None
-            or site1_result.genotype is not None
-            or site2_result.genotype is not None
-        )
+        has_data = any(match is not None for match in (g2_match, site1_match, site2_match))
         if not has_data:
             return DiploidResult(MISSING, MISSING)
 
-        d_count = g2_result.alt_count  # D alleles (0, 1, or 2)
+        d_count = g2_match.alt_count if g2_match else 0  # D alleles (0, 1, or 2)
 
         # G1 requires variants at BOTH positions
-        site1_variants = site1_result.alt_count  # 0, 1, or 2
-        site2_variants = site2_result.alt_count  # 0, 1, or 2
+        site1_variants = site1_match.alt_count if site1_match else 0  # 0, 1, or 2
+        site2_variants = site2_match.alt_count if site2_match else 0  # 0, 1, or 2
 
         # Only count as G1 if both sites have at least one variant
         has_g1 = site1_variants > 0 and site2_variants > 0
