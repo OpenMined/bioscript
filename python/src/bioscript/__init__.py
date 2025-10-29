@@ -4,6 +4,7 @@
 from .biovault import (
     BioVaultProject,
     create_bioscript_project,
+    export_bioscript_workflow,
     export_notebook_as_project,
     export_workflow,
     load_project,
@@ -41,6 +42,7 @@ __all__ = [
     # BioVault integration
     "BioVaultProject",
     "create_bioscript_project",
+    "export_bioscript_workflow",
     "export_notebook_as_project",
     "export_workflow",
     "load_project",

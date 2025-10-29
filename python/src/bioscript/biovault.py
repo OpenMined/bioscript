@@ -168,6 +168,63 @@ class Output:
 
 
 @dataclass
+class ProcessDefinition:
+    """Definition of a workflow process."""
+
+    name: str
+    script: str
+    container: Optional[str] = None
+    kind: str = "bioscript"
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = {
+            "name": self.name,
+            "script": self.script,
+        }
+        if self.container:
+            data["container"] = self.container
+        if self.kind and self.kind != "bioscript":
+            data["kind"] = self.kind
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> ProcessDefinition:
+        return cls(
+            name=data["name"],
+            script=data["script"],
+            container=data.get("container"),
+            kind=data.get("kind", "bioscript"),
+        )
+
+
+def _get_local_bioscript_version() -> Optional[str]:
+    """Return the version of the locally imported bioscript package, if available."""
+
+    try:
+        import bioscript  # type: ignore
+
+        version = getattr(bioscript, "__version__", None)
+        if not version:
+            return None
+        version_str = str(version).strip()
+        if version_str.startswith("v"):
+            version_str = version_str[1:]
+        return version_str or None
+    except Exception:
+        return None
+
+
+def _default_docker_image(version_hint: Optional[str] = None) -> str:
+    """Construct the default BioScript container image tag."""
+
+    version = (version_hint or _get_local_bioscript_version() or "latest").strip()
+    if version.startswith("v"):
+        version = version[1:]
+    version = version or "latest"
+    return f"ghcr.io/openmined/bioscript:{version}"
+
+
+@dataclass
 class BioVaultProject:
     """
     A BioVault project configuration.
@@ -185,15 +242,22 @@ class BioVaultProject:
     parameters: List[Parameter] = field(default_factory=list)
     inputs: List[Input] = field(default_factory=list)
     outputs: List[Output] = field(default_factory=list)
+    processes: List[ProcessDefinition] = field(default_factory=list)
 
     # Docker configuration
-    docker_image: str = "ghcr.io/openmined/bioscript:latest"
+    docker_image: Optional[str] = None
     docker_platform: str = "linux/amd64"
 
     # Runtime metadata (not saved to YAML)
     _project_dir: Optional[Path] = field(default=None, init=False, repr=False)
     _asset_sources: Dict[str, Path] = field(default_factory=dict, init=False, repr=False)
     _entrypoint: Optional[str] = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.docker_image:
+            self.docker_image = _default_docker_image()
+        if not self.docker_platform:
+            self.docker_platform = "linux/amd64"
 
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> BioVaultProject:
@@ -214,7 +278,17 @@ class BioVaultProject:
             parameters=[Parameter.from_dict(p) for p in data.get("parameters", [])],
             inputs=[Input.from_dict(i) for i in data.get("inputs", [])],
             outputs=[Output.from_dict(o) for o in data.get("outputs", [])],
+            processes=[ProcessDefinition.from_dict(p) for p in data.get("processes", [])],
         )
+
+        docker_image = data.get("docker_image")
+        docker_platform = data.get("docker_platform", "linux/amd64")
+        project.set_docker_image(docker_image or _default_docker_image(), docker_platform)
+
+        if project.processes:
+            project._entrypoint = project.processes[0].script
+        elif project.assets and not project._entrypoint:
+            project._entrypoint = project.assets[0]
 
         # Store the project directory for later use
         project._project_dir = yaml_path.parent
@@ -229,6 +303,11 @@ class BioVaultProject:
             "template": self.template.value,
             "version": self.version,
         }
+
+        if self.docker_image:
+            data["docker_image"] = self.docker_image
+        if self.docker_platform:
+            data["docker_platform"] = self.docker_platform
 
         if self.assets:
             data["assets"] = self.assets
@@ -352,17 +431,55 @@ class BioVaultProject:
         self._entrypoint = asset_path
         return self
 
-    def set_docker_image(self, image: str, platform: str = "linux/amd64") -> BioVaultProject:
+    def set_docker_image(
+        self, image: Optional[str], platform: str = "linux/amd64"
+    ) -> BioVaultProject:
         """Set the Docker image for the project."""
-        self.docker_image = image
+        resolved_image = image or _default_docker_image()
+        self.docker_image = resolved_image
         self.docker_platform = platform
         return self
 
     def generate_workflow_nf(self, entrypoint: Optional[str] = None) -> str:
         """Generate a Nextflow workflow file for this workflow."""
 
-        if not self.assets:
-            raise ValueError("Cannot generate workflow.nf without at least one asset")
+        if not self.processes:
+            script_candidate = entrypoint or self._entrypoint
+            if not script_candidate and self.assets:
+                script_candidate = self.assets[0]
+            if not script_candidate:
+                raise ValueError(
+                    "BioVaultProject requires at least one asset to generate the workflow"
+                )
+            container_candidate = self.docker_image or _default_docker_image()
+            default_name = (self.name or "process").replace(" ", "_")
+            self.processes = [
+                ProcessDefinition(
+                    name=default_name,
+                    script=script_candidate,
+                    container=container_candidate,
+                )
+            ]
+            if not self._entrypoint:
+                self._entrypoint = script_candidate
+
+        if len(self.processes) > 1:
+            raise NotImplementedError("Multiple processes per workflow are not supported yet")
+
+        primary_process = self.processes[0]
+        if primary_process.kind != "bioscript":
+            raise NotImplementedError(
+                f"Unsupported process kind '{primary_process.kind}' for workflow generation"
+            )
+
+        if primary_process.script not in self.assets:
+            raise ValueError(
+                f"Primary process script '{primary_process.script}' is not registered as an asset"
+            )
+
+        entrypoint_asset = entrypoint or self._entrypoint or primary_process.script
+        if entrypoint_asset not in self.assets:
+            raise ValueError(f"Entrypoint asset '{entrypoint_asset}' is not registered as an asset")
 
         def _identifier(name: str) -> str:
             sanitized = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in name)
@@ -370,8 +487,7 @@ class BioVaultProject:
                 sanitized = f"_{sanitized}"
             return sanitized or "value"
 
-        entrypoint_asset = entrypoint or self._entrypoint or self.assets[0]
-        process_symbol = _identifier(self.name or "workflow").upper()
+        process_symbol = _identifier(primary_process.name or self.name or "process")
 
         workflow_inputs = [("context", "context")]
         for input_spec in self.inputs:
@@ -380,8 +496,8 @@ class BioVaultProject:
         take_section = "\n".join(f"        {nf_name}" for _, nf_name in workflow_inputs)
         process_args = ["script_ch"] + [nf_name for _, nf_name in workflow_inputs[1:]]
 
-        output_channels = []
-        emit_lines = []
+        output_channels: List[str] = []
+        emit_lines: List[str] = []
         for output_spec in self.outputs:
             sanitized_name = _identifier(output_spec.name)
             channel_name = f"{sanitized_name}_ch"
@@ -397,7 +513,7 @@ class BioVaultProject:
             process_assignment = f"        def ({tuple_vars}) = {process_symbol}(\n"
 
         input_specs = ["        path script"]
-        cli_lines = []
+        cli_lines: List[str] = []
         for idx, input_spec in enumerate(self.inputs):
             nf_name = _identifier(input_spec.name)
             input_type = input_spec.type.lower()
@@ -411,7 +527,7 @@ class BioVaultProject:
             )
             cli_lines.append(f'        {flag} "${{{nf_name}}}"')
 
-        output_specs = []
+        output_specs: List[str] = []
         for idx, output_spec in enumerate(self.outputs):
             output_path = output_spec.path or f"{output_spec.name}.txt"
             emit_target = _identifier(output_spec.name)
@@ -428,23 +544,29 @@ class BioVaultProject:
 
         emit_section = "\n".join(emit_lines)
 
-        workflow_lines = [
+        container_image = primary_process.container or self.docker_image or _default_docker_image()
+        primary_process.container = container_image
+        workflow_script_asset = primary_process.script
+
+        workflow_lines: List[str] = [
             "nextflow.enable.dsl=2\n\n",
             "workflow USER {\n",
             "    take:\n",
             take_section + "\n\n",
             "    main:\n",
             "        def assetsDir = file(context.params.assets_dir)\n",
-            f'        def workflowScript = file("${{assetsDir}}/{entrypoint_asset}")\n',
+            f'        def workflowScript = file("${{assetsDir}}/{workflow_script_asset}")\n',
             "        def script_ch = Channel.value(workflowScript)\n",
         ]
 
+        args_block = ",\n            ".join(process_args)
+
         if process_assignment:
             workflow_lines.append(process_assignment)
-            workflow_lines.append(",\n            ".join(process_args) + "\n        )\n")
+            workflow_lines.append(f"            {args_block}\n        )\n")
         elif process_args:
             workflow_lines.append(f"        {process_symbol}(\n")
-            workflow_lines.append(",\n            ".join(process_args) + "\n        )\n")
+            workflow_lines.append(f"            {args_block}\n        )\n")
         else:
             workflow_lines.append(f"        {process_symbol}(script_ch)\n")
 
@@ -454,7 +576,7 @@ class BioVaultProject:
 
         workflow_lines.append("}\n\n")
         workflow_lines.append(f"process {process_symbol} {{\n")
-        workflow_lines.append(f"    container '{self.docker_image}'\n")
+        workflow_lines.append(f"    container '{container_image}'\n")
         workflow_lines.append(
             "    publishDir params.results_dir, mode: 'copy', overwrite: true\n\n"
         )
@@ -492,6 +614,28 @@ class BioVaultProject:
         """
         target = Path(target_dir)
         target.mkdir(parents=True, exist_ok=True)
+
+        if not self.processes:
+            script_candidate = self._entrypoint or (self.assets[0] if self.assets else None)
+            if not script_candidate:
+                raise ValueError(
+                    "Cannot export workflow without at least one asset to use as entrypoint"
+                )
+            container_candidate = self.docker_image or _default_docker_image()
+            self.processes = [
+                ProcessDefinition(
+                    name=(self.name or "process").replace(" ", "_"),
+                    script=script_candidate,
+                    container=container_candidate,
+                )
+            ]
+            self._entrypoint = script_candidate
+
+        if not self._entrypoint and self.processes:
+            self._entrypoint = self.processes[0].script
+
+        if not self.docker_image:
+            self.set_docker_image(_default_docker_image(), self.docker_platform)
 
         # Save project.yaml
         self.save(target)
@@ -600,7 +744,7 @@ def create_bioscript_project(
     name: str,
     author: str,
     description: str = "",
-    docker_image: str = "ghcr.io/openmined/bioscript:latest",
+    docker_image: Optional[str] = None,
 ) -> BioVaultProject:
     """
     Create a new BioVault project configured for BioScript classifiers.
@@ -621,7 +765,7 @@ def create_bioscript_project(
     )
 
     # Set Docker image
-    project.set_docker_image(docker_image)
+    project.set_docker_image(docker_image or _default_docker_image())
 
     # Add standard BioScript inputs
     project.add_input(
@@ -669,22 +813,34 @@ def _coerce_output(value: Union[Output, Dict[str, Any]]) -> Output:
     return Output.from_dict(value)
 
 
+def _coerce_process(value: Union[ProcessDefinition, Dict[str, Any]]) -> ProcessDefinition:
+    if isinstance(value, ProcessDefinition):
+        return value
+    if not isinstance(value, dict):
+        raise TypeError(
+            f"Process definition must be a dict or ProcessDefinition, got {type(value)}"
+        )
+    return ProcessDefinition.from_dict(value)
+
+
 def export_workflow(
-    workflow_script: Union[str, Path],
     workflow_name: str,
     author: str,
     target_dir: Union[str, Path],
     *,
+    processes: Sequence[Union[ProcessDefinition, Dict[str, Any]]],
     assets: Optional[Mapping[str, Union[str, Path]]] = None,
     inputs: Optional[Sequence[Union[Input, Dict[str, Any]]]] = None,
     outputs: Optional[Sequence[Union[Output, Dict[str, Any]]]] = None,
     parameters: Optional[Sequence[Union[Parameter, Dict[str, Any]]]] = None,
     version: str = "0.1.0",
-    docker_image: str = "ghcr.io/openmined/bioscript:latest",
+    docker_image: Optional[str] = None,
 ) -> BioVaultProject:
-    """Export a Python-based BioScript workflow with supporting assets."""
+    """Export a BioScript workflow with explicit process definitions."""
 
-    script_path = Path(workflow_script).resolve()
+    if not processes:
+        raise ValueError("export_workflow requires at least one process definition")
+
     workflow_root = Path(target_dir) / workflow_name
 
     project = BioVaultProject(
@@ -702,21 +858,14 @@ def export_workflow(
     project.assets = []
     project._asset_sources.clear()
     project._entrypoint = None
+    project.processes = []
 
-    # Add entrypoint script first so it appears at the top of assets
-    entrypoint_name = script_path.name
-    project.add_asset(entrypoint_name, source=script_path)
-    project.set_entrypoint(entrypoint_name)
-
-    # Include any additional assets mapped to their source paths
     if assets:
         for dest, src in assets.items():
             dest_name = str(dest)
-            if dest_name == entrypoint_name:
-                continue
             src_path = Path(src)
             if not src_path.is_absolute():
-                src_path = (script_path.parent / src_path).resolve()
+                src_path = src_path.resolve()
             project.add_asset(dest_name, source=src_path)
 
     if parameters:
@@ -728,8 +877,68 @@ def export_workflow(
     if outputs:
         project.outputs = [_coerce_output(o) for o in outputs]
 
+    project.processes = [_coerce_process(p) for p in processes]
+    if not project.processes:
+        raise ValueError("export_workflow requires at least one process definition")
+
+    for proc in project.processes:
+        if proc.script not in project.assets:
+            raise ValueError(f"Process script '{proc.script}' is not present in registered assets")
+        if not proc.container:
+            proc.container = project.docker_image
+
+    primary_process = project.processes[0]
+    project.set_entrypoint(primary_process.script)
+
     project.export(workflow_root)
     return project
+
+
+def export_bioscript_workflow(
+    script_path: Union[str, Path],
+    workflow_name: str,
+    author: str,
+    target_dir: Union[str, Path],
+    *,
+    assets: Optional[Mapping[str, Union[str, Path]]] = None,
+    inputs: Optional[Sequence[Union[Input, Dict[str, Any]]]] = None,
+    outputs: Optional[Sequence[Union[Output, Dict[str, Any]]]] = None,
+    parameters: Optional[Sequence[Union[Parameter, Dict[str, Any]]]] = None,
+    version: str = "0.1.0",
+    docker_image: Optional[str] = None,
+) -> BioVaultProject:
+    """Convenience helper to export a single-script BioScript workflow."""
+
+    script_path = Path(script_path).resolve()
+    base_dir = script_path.parent
+
+    combined_assets: Dict[str, Union[str, Path]] = {script_path.name: script_path}
+    if assets:
+        for dest, src in assets.items():
+            dest_name = str(dest)
+            src_path = Path(src)
+            if not src_path.is_absolute():
+                src_path = (base_dir / src_path).resolve()
+            if dest_name == script_path.name:
+                continue
+            combined_assets[dest_name] = src_path
+
+    process_name = workflow_name.replace("-", "_")
+    container = docker_image if docker_image else None
+    process = ProcessDefinition(name=process_name, script=script_path.name, container=container)
+
+    return export_workflow(
+        workflow_name=workflow_name,
+        author=author,
+        target_dir=target_dir,
+        processes=[process],
+        assets=combined_assets,
+        inputs=inputs,
+        outputs=outputs,
+        parameters=parameters,
+        version=version,
+        docker_image=docker_image,
+    )
 
 
 def export_notebook_as_project(
@@ -738,7 +947,7 @@ def export_notebook_as_project(
     author: str,
     target_dir: Union[str, Path],
     description: str = "",
-    docker_image: str = "ghcr.io/openmined/bioscript:latest",
+    docker_image: Optional[str] = None,
 ) -> BioVaultProject:
     """
     Export a Jupyter notebook as a packaged BioVault workflow.
@@ -773,6 +982,15 @@ def export_notebook_as_project(
     classifier_script = notebook_path.stem + "_classifier.py"
     project.add_asset(classifier_script)
     project.set_entrypoint(classifier_script)
+
+    process_name = project_name.replace("-", "_")
+    project.processes = [
+        ProcessDefinition(
+            name=process_name,
+            script=classifier_script,
+            container=project.docker_image,
+        )
+    ]
 
     # Add BioScript library files as assets
     bioscript_assets = [

@@ -5,17 +5,21 @@ from pathlib import Path
 
 import yaml
 
+from bioscript import __version__ as bioscript_version
 from bioscript.biovault import (
     BioVaultProject,
     Input,
     Output,
     Parameter,
+    ProcessDefinition,
     TemplateType,
     TypeExpr,
     create_bioscript_project,
     load_project,
     new_project,
 )
+
+DEFAULT_IMAGE = f"ghcr.io/openmined/bioscript:{bioscript_version}"
 
 
 def test_template_type_enum():
@@ -90,7 +94,7 @@ def test_biovault_project_creation():
     assert project.workflow == "workflow.nf"
     assert project.template == TemplateType.DYNAMIC_NEXTFLOW
     assert project.version == "0.1.0"
-    assert project.docker_image == "ghcr.io/openmined/bioscript:latest"
+    assert project.docker_image == DEFAULT_IMAGE
 
 
 def test_project_add_methods():
@@ -182,14 +186,22 @@ def test_workflow_generation():
         author="test@example.com",
     )
     project.add_asset("classifier.py")
+    project.processes = [
+        ProcessDefinition(
+            name="test_classifier",
+            script="classifier.py",
+            container=project.docker_image,
+        )
+    ]
+    project.set_entrypoint("classifier.py")
 
     workflow = project.generate_workflow_nf()
 
     # Check key elements
     assert "nextflow.enable.dsl=2" in workflow
     assert "workflow USER {" in workflow
-    assert "process TEST_CLASSIFIER {" in workflow
-    assert "container 'ghcr.io/openmined/bioscript:latest'" in workflow  # Default container
+    assert "process test_classifier {" in workflow
+    assert f"container '{DEFAULT_IMAGE}'" in workflow  # Default container
     assert "classifier.py" in workflow
 
 
@@ -224,6 +236,14 @@ def test_project_export():
             author="test@example.com",
         )
         project.add_asset("test_classifier.py")
+        project.processes = [
+            ProcessDefinition(
+                name="test_process",
+                script="test_classifier.py",
+                container=project.docker_image,
+            )
+        ]
+        project.set_entrypoint("test_classifier.py")
 
         export_path = project.export(tmppath / "exported")
 
@@ -256,7 +276,7 @@ def test_docker_configuration():
     project = new_project("test", "test@example.com")
 
     # Default Docker settings
-    assert project.docker_image == "ghcr.io/openmined/bioscript:latest"
+    assert project.docker_image == DEFAULT_IMAGE
     assert project.docker_platform == "linux/amd64"
 
     # Set custom Docker image
