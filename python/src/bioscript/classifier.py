@@ -18,7 +18,25 @@ class GenotypeClassifier:
     - __call__(matches) -> str: Returns classification result as string
     """
 
-    def classify(self, matches) -> DiploidResult:
+    def __init__(self, *_args, **kwargs):
+        """Initialize classifier with optional parameters.
+
+        Common kwargs:
+            participant_id: Optional participant/sample ID
+            debug: Optional debug flag
+            name: Optional classifier name for output files
+            filename: Optional input filename
+        """
+        self.participant_id = kwargs.get("participant_id")
+        self.debug = kwargs.get("debug", False)
+        self.name = kwargs.get("name", "result")
+        self.filename = kwargs.get("filename")
+
+        # Generate base output filename (without extension)
+        participant_part = f"_{self.participant_id}" if self.participant_id else ""
+        self.output_basename = f"result_{self.name}{participant_part}"
+
+    def classify(self, matches):
         """
         Classify genotypes based on variant matches.
 
@@ -26,11 +44,31 @@ class GenotypeClassifier:
             matches: MatchList containing variant matches
 
         Returns:
-            DiploidResult with two genotype values
+            Can return different types depending on classifier needs:
+            - DiploidResult: For single-value genotype classification (e.g., APOL1)
+            - dict: For multiple summary values (creates namespaced columns)
+            - list: For detailed variant data (writes to files, CLI shows count)
+            - None: For file-based output only (no CLI output)
+            - str/other: Converted to string for output
+
+        Examples:
+            # Single value classification
+            return DiploidResult(G0, G1)  # → "G0/G1"
+
+            # Multiple summary values
+            return {"variant_count": 2, "status": "complete"}  # → BRCA_variant_count, BRCA_status
+
+            # Detailed variant data (for testing and file output)
+            write_tsv(f"{self.output_basename}.tsv", variant_data)
+            return variant_data  # → CLI shows BRCA_count=2
+
+            # File-based output only (no CLI column)
+            write_tsv(f"{self.output_basename}.tsv", variant_data)
+            return None  # No CLI output
         """
         raise NotImplementedError("Subclasses must implement classify()")
 
-    def __call__(self, matches) -> str:
+    def __call__(self, matches):
         """
         Standard callable interface for bioscript CLI.
 
@@ -38,10 +76,12 @@ class GenotypeClassifier:
             matches: MatchList containing variant matches
 
         Returns:
-            Classification result as string or field mapping
+            Classification result as string, dict, list, or None
         """
         result = self.classify(matches)
-        if isinstance(result, dict):
+        if result is None:
+            return None
+        if isinstance(result, (dict, list)):
             return result
         if hasattr(result, "sorted"):
             result = result.sorted()
@@ -80,7 +120,8 @@ class DiploidResult:
 
         # Sort the genotypes
         sorted_genotypes = sorted(
-            [self.genotype1, self.genotype2], key=lambda g: enum_order.get(g, float("inf"))
+            [self.genotype1, self.genotype2],
+            key=lambda g: enum_order.get(g, float("inf")),
         )
 
         return DiploidResult(sorted_genotypes[0], sorted_genotypes[1])

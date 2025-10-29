@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 
 class GRCh(str, Enum):
@@ -71,7 +72,7 @@ class Nucleotide(str, Enum):
     U = "U"  # Uracil (RNA only)
     C = "C"  # Cytosine
     G = "G"  # Guanine
-    MISSING = "."
+    MISSING = "-"
 
 
 class InDel(str, Enum):
@@ -83,6 +84,16 @@ class MatchType(Enum):
     REFERENCE_CALL = "Reference call"
     VARIANT_CALL = "Variant call"
     NO_CALL = "No call"
+
+
+class VariantType(str, Enum):
+    """Type of genetic variant based on ref/alt sequences."""
+
+    SNV = "snv"  # Single nucleotide variant (ref=1, alt=1)
+    INSERTION = "insertion"  # ref=1, alt>1 (e.g., A→AG)
+    DELETION = "deletion"  # ref>1, alt=1 (e.g., AG→A)
+    INDEL = "indel"  # ref>1, alt>1, same length (e.g., AC→CT)
+    MNV = "mnv"  # Multi-nucleotide variant (different lengths)
 
 
 class AllelesMeta(type):
@@ -227,6 +238,7 @@ class VariantMatch:
     snp: DiploidSNP
     match_type: MatchType
     source_row: VariantRow | None = None
+    context: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self):
         """
@@ -326,17 +338,88 @@ class VariantMatch:
     def as_dict(self) -> dict[str, object]:
         """Return a lightweight summary dictionary for reporting."""
 
+        # Format rsid as a string - use first alias if multiple exist
+        rsid_value = None
+        if isinstance(self.variant_call.rsid, RSID) and self.variant_call.rsid.aliases:
+            rsid_value = sorted(self.variant_call.rsid.aliases)[0]
+        elif self.variant_call.rsid:
+            rsid_value = str(self.variant_call.rsid)
+
         return {
-            "rsid": self.variant_call.rsid.aliases
-            if isinstance(self.variant_call.rsid, RSID)
-            else self.variant_call.rsid,
+            "rsid": rsid_value,
             "chromosome": self.variant_call.chromosome,
             "position": self.variant_call.position,
             "genotype": self.genotype_string,
             "genotype_sorted": self.genotype_sorted,
             "ref_count": self.ref_count,
             "alt_count": self.alt_count,
+            "gene": self.variant_call.gene,
             "raw_line": self.raw_line,
+        }
+
+    def to_report_row(
+        self, participant_id: str | None = None, filename: str | None = None
+    ) -> dict[str, object]:
+        """Convert VariantMatch to a flat dictionary for TSV reporting.
+
+        Args:
+            participant_id: Optional participant/sample ID
+            filename: Optional input filename
+
+        Returns:
+            Dictionary with all fields formatted for reporting
+        """
+        vc = self.variant_call
+
+        # Format rsid as string
+        rsid = None
+        if vc.rsid and hasattr(vc.rsid, "aliases"):
+            rsid = sorted(vc.rsid.aliases)[0] if vc.rsid.aliases else None
+        elif vc.rsid:
+            rsid = str(vc.rsid)
+
+        # Format variant_type
+        variant_type = (
+            vc.variant_type.value
+            if hasattr(vc.variant_type, "value")
+            else str(vc.variant_type)
+            if vc.variant_type
+            else None
+        )
+
+        # Format match_type
+        match_type = (
+            self.match_type.name if hasattr(self.match_type, "name") else str(self.match_type)
+        )
+
+        # Format ref and alt
+        ref = (
+            vc.ref
+            if isinstance(vc.ref, str)
+            else ",".join(sorted(vc.ref))
+            if hasattr(vc.ref, "__iter__")
+            else str(vc.ref)
+        )
+        alt = (
+            vc.alt
+            if isinstance(vc.alt, str)
+            else ",".join(sorted(vc.alt))
+            if hasattr(vc.alt, "__iter__")
+            else str(vc.alt)
+        )
+
+        return {
+            "participant_id": participant_id,
+            "gene": vc.gene,
+            "rsid": rsid,
+            "chromosome": vc.chromosome,
+            "position": vc.position,
+            "genotype": self.genotype_sorted,
+            "ref": ref,
+            "alt": alt,
+            "variant_type": variant_type,
+            "match_type": match_type,
+            "filename": filename,
         }
 
 
@@ -362,11 +445,13 @@ class RSID:
 class VariantCall:
     rsid: RSID | str | Iterable | None = None
     ploidy: str = "diploid"
-    ref: Alleles = field(default_factory=lambda: Alleles({Nucleotide.MISSING}))
-    alt: Alleles = field(default_factory=lambda: Alleles({Nucleotide.MISSING}))
+    ref: str | set[str] | Alleles = "-"
+    alt: str | set[str] | Alleles = "-"
     chromosome: str | None = None
     position: int | None = None
     assembly: GRCh | str | None = None
+    variant_type: VariantType | None = None
+    gene: str | None = None
 
     def __post_init__(self):
         if isinstance(self.rsid, str):
@@ -381,6 +466,22 @@ class VariantCall:
 
         if isinstance(self.chromosome, str):
             self.chromosome = self.chromosome.strip()
+
+        # Auto-detect variant type only for simple string cases
+        if self.variant_type is None and isinstance(self.ref, str) and isinstance(self.alt, str):
+            ref_len = len(self.ref)
+            alt_len = len(self.alt)
+
+            if ref_len == 1 and alt_len == 1:
+                self.variant_type = VariantType.SNV
+            elif ref_len == 1 and alt_len > 1:
+                self.variant_type = VariantType.INSERTION
+            elif ref_len > 1 and alt_len == 1:
+                self.variant_type = VariantType.DELETION
+            elif ref_len == alt_len:
+                self.variant_type = VariantType.INDEL
+            else:
+                self.variant_type = VariantType.MNV
 
     @staticmethod
     def _normalize_chromosome(value: str | None) -> str | None:
@@ -458,6 +559,138 @@ class VariantCall:
 
         return other._matches_coordinates(self.chromosome, self.position, self.assembly)
 
+    def _matches_allele(self, nucleotide: str | None, allele: str | set[str] | Alleles) -> bool:
+        """
+        Check if a nucleotide matches an allele specification.
+
+        Handles three types of allele specifications:
+        - str: Single nucleotide ("A") or multi-char sequence ("CTGC")
+        - set[str]: Multiple possible alleles ({"C", "G"})
+        - Alleles: Set-based allele spec (Alleles.NOT_T, etc.)
+        """
+        if nucleotide is None:
+            return False
+
+        if isinstance(allele, Alleles):
+            # Convert string nucleotide to Nucleotide enum for Alleles check
+            try:
+                nuc_enum = Nucleotide[nucleotide.upper()]
+                return nuc_enum in allele
+            except (KeyError, AttributeError):
+                return False
+        elif isinstance(allele, str):
+            if len(allele) == 1:
+                # Single nucleotide: exact match
+                return nucleotide == allele
+            else:
+                # Multi-char sequence: check if nucleotide appears in sequence
+                return nucleotide in allele
+        elif isinstance(allele, set):
+            # Set of possible alleles
+            return nucleotide in allele
+
+        return False
+
+    def _match_snv(self, diploid_snp: DiploidSNP) -> MatchType:
+        """Match logic for single nucleotide variants - handles str, set[str], and Alleles."""
+        # Convert nucleotides to strings for matching
+        nuc0_str = diploid_snp[0].value if isinstance(diploid_snp[0], Nucleotide) else None
+        nuc1_str = diploid_snp[1].value if isinstance(diploid_snp[1], Nucleotide) else None
+
+        # Check homozygous reference
+        if (
+            nuc0_str
+            and nuc1_str
+            and nuc0_str == nuc1_str
+            and self._matches_allele(nuc0_str, self.ref)
+        ):
+            return MatchType.REFERENCE_CALL
+
+        # Check if either allele matches alt
+        if self._matches_allele(nuc0_str, self.alt) or self._matches_allele(nuc1_str, self.alt):
+            return MatchType.VARIANT_CALL
+
+        return MatchType.NO_CALL
+
+    def _match_insertion(self, diploid_snp: DiploidSNP) -> MatchType:
+        """
+        Match logic for insertions (ref=A, alt=AG).
+        - I alleles = pathogenic (has insertion)
+        - D alleles = reference (no insertion)
+        """
+        if InDel.I in diploid_snp:
+            return MatchType.VARIANT_CALL
+        elif InDel.D in diploid_snp:
+            return MatchType.REFERENCE_CALL
+        else:
+            return MatchType.NO_CALL
+
+    def _match_deletion(self, diploid_snp: DiploidSNP) -> MatchType:
+        """
+        Match logic for deletions (ref=AG, alt=A).
+        - D alleles = pathogenic (has deletion)
+        - I alleles = reference (no deletion)
+        """
+        if InDel.D in diploid_snp:
+            return MatchType.VARIANT_CALL
+        elif InDel.I in diploid_snp:
+            return MatchType.REFERENCE_CALL
+        else:
+            return MatchType.NO_CALL
+
+    def _match_complex(self, diploid_snp: DiploidSNP) -> MatchType:
+        """
+        Match logic for indels/MNVs (ref=AC, alt=CT or ref=CTGC, alt=TTTA).
+        Check if genotype nucleotides appear in ref or alt using _matches_allele().
+
+        Example: rs397509270 ref="AC" alt="CT", genotype=AA
+        - A appears in ref (AC) → REFERENCE_CALL
+
+        Example: rs397508883 ref="CTGC", alt="TTTA", genotype=AA
+        - A appears only in alt (TTTA) → VARIANT_CALL
+
+        If nucleotide appears in both or neither → NO_CALL
+        """
+        # Get actual nucleotides (filter out I/D/missing)
+        nucs = [a for a in diploid_snp if isinstance(a, Nucleotide) and a != Nucleotide.MISSING]
+
+        if not nucs:
+            # Only I/D or missing alleles
+            return MatchType.NO_CALL
+
+        # Check if each nucleotide matches ref or alt using the helper
+        in_ref_list = [self._matches_allele(nuc.value, self.ref) for nuc in nucs]
+        in_alt_list = [self._matches_allele(nuc.value, self.alt) for nuc in nucs]
+
+        all_in_ref = all(in_ref_list)
+        all_in_alt = all(in_alt_list)
+        any_in_ref = any(in_ref_list)
+        any_in_alt = any(in_alt_list)
+
+        if all_in_alt and not any_in_ref:
+            # All nucleotides only in alt → pathogenic
+            return MatchType.VARIANT_CALL
+        elif all_in_ref and not any_in_alt:
+            # All nucleotides only in ref → reference
+            return MatchType.REFERENCE_CALL
+        else:
+            # Ambiguous: nucleotides in both, neither, or mixed → NO_CALL
+            return MatchType.NO_CALL
+
+    def _determine_match_type(self, diploid_snp: DiploidSNP) -> MatchType:
+        """Determine match type based on variant type."""
+        if self.variant_type == VariantType.SNV or self.variant_type is None:
+            return self._match_snv(diploid_snp)
+        elif self.variant_type == VariantType.INSERTION:
+            return self._match_insertion(diploid_snp)
+        elif self.variant_type == VariantType.DELETION:
+            return self._match_deletion(diploid_snp)
+        elif self.variant_type in (VariantType.INDEL, VariantType.MNV):
+            return self._match_complex(diploid_snp)
+        else:
+            # Fallback to SNV logic
+            return self._match_snv(diploid_snp)
+
     def filter_variant_row(self, variant_row: VariantRow) -> VariantMatch | None:
         """
         Filters for matching VariantRow based on rsid and/or genomic coordinates.
@@ -488,7 +721,7 @@ class VariantCall:
                     return InDel(normalized)
                 except ValueError:
                     print(
-                        f"Invalid allele value '{raw}' cast as MISSING '.'",
+                        f"Invalid allele value '{raw}' cast as MISSING '-'",
                         flush=True,
                     )
                     return Nucleotide.MISSING
@@ -498,16 +731,8 @@ class VariantCall:
 
         diploid_snp = DiploidSNP(allele1, allele2)
 
-        if diploid_snp.is_homozygous() and diploid_snp[0] in self.ref:
-            match_type = MatchType.REFERENCE_CALL
-        elif (
-            diploid_snp.is_heterozygous()
-            or diploid_snp[0] in self.alt
-            or diploid_snp[1] in self.alt
-        ):
-            match_type = MatchType.VARIANT_CALL
-        else:
-            match_type = MatchType.NO_CALL
+        # Use type-specific matching logic
+        match_type = self._determine_match_type(diploid_snp)
         return VariantMatch(
             variant_call=self,
             snp=diploid_snp,
@@ -540,6 +765,7 @@ class VariantRow:
 @dataclass
 class MatchList:
     variant_calls: Iterable[VariantCall]
+    enable_position_clustering: bool = True
     reference_matches: list = field(default_factory=list)
     variant_matches: list = field(default_factory=list)
     no_call_matches: list = field(default_factory=list)
@@ -549,12 +775,18 @@ class MatchList:
         init=False, default_factory=dict, repr=False
     )
     _variant_call_order: dict[int, int] = field(init=False, default_factory=dict, repr=False)
+    _position_clusters: dict[tuple[str, int], list[dict[str, Any]]] = field(
+        init=False,
+        default_factory=dict,
+        repr=False,
+    )
 
     def __post_init__(self):
         self.variant_calls = list(self.variant_calls)
         self.match_lookup = {}
         self._variant_call_index = {}
         self._variant_call_order = {id(call): idx for idx, call in enumerate(self.variant_calls)}
+        self._position_clusters = {}
 
         for call in self.variant_calls:
             for key in self._keys_for_variant_call(call):
@@ -563,7 +795,12 @@ class MatchList:
                     continue
                 self._variant_call_index.setdefault(normalized, []).append(call)
 
-    def match_rows(self, variant_rows: Iterable[VariantRow]) -> MatchList:
+    def match_rows(
+        self,
+        variant_rows: Iterable[VariantRow],
+        *,
+        enable_multi_variant: bool | None = None,
+    ) -> MatchList:
         """Match rows against configured VariantCall objects with position-aware grouping."""
 
         self.reference_matches = []
@@ -571,6 +808,13 @@ class MatchList:
         self.no_call_matches = []
         self.all_matches = []
         self.match_lookup = {}
+        self._position_clusters = {}
+
+        if enable_multi_variant is None:
+            clustering_enabled = self.enable_position_clustering
+        else:
+            clustering_enabled = bool(enable_multi_variant)
+            self.enable_position_clustering = clustering_enabled
 
         # Group variants by position for better reporting
         position_matches = {}  # (chrom, pos) -> list of (variant_call, match)
@@ -589,13 +833,16 @@ class MatchList:
                     matches_at_position.append((variant_call, match))
 
             if matches_at_position:
-                # Store all matches at this position for later filtering
+                # Store all matches at this position for later prioritization
                 if position_key not in position_matches:
                     position_matches[position_key] = []
                 position_matches[position_key].extend(matches_at_position)
 
         # Process matches by position
-        for _position_key, matches in position_matches.items():
+        for position_key, matches in position_matches.items():
+            chrom_key = str(position_key[0])
+            pos_key = int(position_key[1])
+
             # Check if we have any real matches (not NO_CALLs) at this position
             real_matches = [
                 (vc, m)
@@ -604,18 +851,121 @@ class MatchList:
             ]
             no_call_matches = [(vc, m) for vc, m in matches if m.match_type == MatchType.NO_CALL]
 
+            def compute_priority_components(
+                item: tuple[VariantCall, VariantMatch],
+            ) -> dict[str, bool]:
+                variant_call, match = item
+                has_rsid = variant_call.rsid is not None
+                has_coordinates = (
+                    variant_call.chromosome is not None and variant_call.position is not None
+                )
+
+                exact_coordinate = False
+                exact_rsid = False
+
+                if match.source_row is not None:
+                    row = match.source_row
+                    if row.chromosome and row.position is not None and has_coordinates:
+                        row_chrom = VariantCall._normalize_chromosome(row.chromosome)
+                        call_chrom = VariantCall._normalize_chromosome(variant_call.chromosome)
+                        if (
+                            row_chrom
+                            and call_chrom
+                            and row_chrom.lower() == call_chrom.lower()
+                            and int(row.position) == int(variant_call.position)
+                        ):
+                            exact_coordinate = True
+
+                    if has_rsid and row.rsid:
+                        rsid_token = row.rsid.strip()
+                        if (
+                            rsid_token
+                            and rsid_token.upper() not in {".", "<NA>", "NA", "N/A"}
+                            and variant_call._matches_rsid(rsid_token)
+                        ):
+                            exact_rsid = True
+
+                return {
+                    "has_rsid": has_rsid,
+                    "has_coordinates": has_coordinates,
+                    "exact_rsid": exact_rsid,
+                    "exact_coordinate": exact_coordinate,
+                }
+
             if real_matches:
+                # Sort matches to prioritize exact rsID + coordinate matches
+
+                def match_priority(item: tuple[VariantCall, VariantMatch]) -> tuple[int, int, int]:
+                    components = compute_priority_components(item)
+                    exact_rsid = int(components["exact_rsid"])
+                    exact_coordinate = int(components["exact_coordinate"])
+                    has_rsid = int(components["has_rsid"])
+                    has_coordinates = int(components["has_coordinates"])
+
+                    # Priority tuple: higher values should sort first, so negative for descending order
+                    return (
+                        -(exact_rsid and exact_coordinate),
+                        -exact_rsid,
+                        -exact_coordinate,
+                        -has_rsid,
+                        -has_coordinates,
+                    )
+
+                real_matches.sort(key=match_priority)
+
                 # We have real matches - only report the best real match
                 # Priority: VARIANT_CALL > REFERENCE_CALL
-                best_match = None
-                for _variant_call, match in real_matches:
-                    if match.match_type == MatchType.VARIANT_CALL:
-                        best_match = match
-                        break  # Variant call is highest priority
-                    elif best_match is None or match.match_type == MatchType.REFERENCE_CALL:
-                        best_match = match
+                best_pair = real_matches[0]
+                best_match = best_pair[1]
+                if best_match.match_type != MatchType.VARIANT_CALL:
+                    for pair in real_matches:
+                        if pair[1].match_type == MatchType.VARIANT_CALL:
+                            best_pair = pair
+                            best_match = pair[1]
+                            break
 
                 if best_match:
+                    if clustering_enabled:
+                        # Reorder cluster entries to put higher-priority matches first
+                        ordered_matches = real_matches + [
+                            item for item in matches if item not in real_matches
+                        ]
+                        priority_components = {
+                            id(match): compute_priority_components((variant_call, match))
+                            for variant_call, match in ordered_matches
+                        }
+                        cluster_entries = self._build_position_cluster(
+                            ordered_matches, best_match, priority_components
+                        )
+                        self._position_clusters[(chrom_key, pos_key)] = cluster_entries
+
+                        alternative_count = sum(
+                            1 for entry in cluster_entries if not entry["is_selected"]
+                        )
+                        same_rsid_alternatives = sum(
+                            1
+                            for entry in cluster_entries
+                            if entry["shares_rsid_with_selected"] and not entry["is_selected"]
+                        )
+
+                        best_match.context = {
+                            "position_cluster": cluster_entries,
+                            "ambiguity": {
+                                "position_key": {
+                                    "chromosome": chrom_key,
+                                    "position": pos_key,
+                                },
+                                "has_alternatives": alternative_count > 0,
+                                "alternative_count": alternative_count,
+                                "same_rsid_alternative_count": same_rsid_alternatives,
+                            },
+                            "priority": priority_components.get(id(best_match)),
+                        }
+                    else:
+                        best_match.context = {
+                            "priority": compute_priority_components(best_pair),
+                        }
+
                     self.all_matches.append(best_match)
                     if best_match.match_type == MatchType.REFERENCE_CALL:
                         self.reference_matches.append(best_match)
@@ -626,12 +976,137 @@ class MatchList:
             elif no_call_matches:
                 # Only NO_CALLs at this position - report all of them to show
                 # that multiple variants were tested but none matched
+                priority_components_all = {
+                    id(match): compute_priority_components((variant_call, match))
+                    for variant_call, match in matches
+                }
+                if clustering_enabled:
+                    self._position_clusters[(chrom_key, pos_key)] = self._build_position_cluster(
+                        matches,
+                        None,
+                        priority_components_all,
+                    )
                 for _variant_call, match in no_call_matches:
+                    if clustering_enabled:
+                        cluster_entries = self._build_position_cluster(
+                            matches, match, priority_components_all
+                        )
+                        alternative_count = sum(
+                            1 for entry in cluster_entries if not entry["is_selected"]
+                        )
+                        same_rsid_alternatives = sum(
+                            1
+                            for entry in cluster_entries
+                            if entry["shares_rsid_with_selected"] and not entry["is_selected"]
+                        )
+
+                        match.context = {
+                            "position_cluster": cluster_entries,
+                            "ambiguity": {
+                                "position_key": {
+                                    "chromosome": chrom_key,
+                                    "position": pos_key,
+                                },
+                                "has_alternatives": alternative_count > 0,
+                                "alternative_count": alternative_count,
+                                "same_rsid_alternative_count": same_rsid_alternatives,
+                            },
+                            "priority": priority_components_all.get(id(match)),
+                        }
+                    else:
+                        match.context = {
+                            "priority": priority_components_all.get(id(match)),
+                        }
+
                     self.all_matches.append(match)
                     self.no_call_matches.append(match)
                     self._register_match(match)
 
         return self
+
+    def _rsid_alias_set(self, rsid: RSID | str | None) -> set[str]:
+        if isinstance(rsid, RSID):
+            return {str(alias) for alias in rsid.aliases}
+        if rsid:
+            return {str(rsid)}
+        return set()
+
+    def _format_allele_for_context(self, allele: str | set[str] | Alleles) -> str:
+        if isinstance(allele, str):
+            return allele
+        if isinstance(allele, set):
+            return "/".join(sorted(str(a) for a in allele))
+        if isinstance(allele, Alleles):
+            values: list[str] = []
+            for token in allele.nucleotides:
+                if hasattr(token, "value"):
+                    values.append(str(token.value))
+                else:
+                    values.append(str(token))
+            return "/".join(sorted(values))
+        return str(allele)
+
+    def _format_genotype_for_context(self, snp: DiploidSNP) -> str:
+        symbols: list[str] = []
+        for allele in snp:
+            if hasattr(allele, "value"):
+                symbols.append(str(allele.value))
+            else:
+                symbols.append(str(allele))
+        return "".join(symbols)
+
+    def _format_variant_type(self, variant_call: VariantCall) -> str | None:
+        vtype = getattr(variant_call, "variant_type", None)
+        if vtype is None:
+            return None
+        if hasattr(vtype, "value"):
+            return str(vtype.value)
+        return str(vtype)
+
+    def _build_position_cluster(
+        self,
+        matches: list[tuple[VariantCall, VariantMatch]],
+        selected_match: VariantMatch | None,
+        priority_components: dict[int, dict[str, bool]] | None = None,
+    ) -> list[dict[str, Any]]:
+        selected_aliases = (
+            self._rsid_alias_set(selected_match.variant_call.rsid)
+            if selected_match and selected_match.variant_call
+            else set()
+        )
+
+        cluster: list[dict[str, Any]] = []
+        for variant_call, match in matches:
+            aliases = self._rsid_alias_set(variant_call.rsid)
+            alias_list = sorted(aliases)
+
+            chrom = variant_call.chromosome
+            pos = variant_call.position
+            if chrom is None and match.source_row is not None:
+                chrom = match.source_row.chromosome
+            if pos is None and match.source_row is not None:
+                pos = match.source_row.position
+
+            entry = {
+                "is_selected": match is selected_match,
+                "match_type": match.match_type.name,
+                "rsids": alias_list,
+                "rsid_display": "/".join(alias_list) if alias_list else None,
+                "chromosome": str(chrom) if chrom is not None else None,
+                "position": int(pos) if pos is not None else None,
+                "ref": self._format_allele_for_context(variant_call.ref),
+                "alt": self._format_allele_for_context(variant_call.alt),
+                "genotype": self._format_genotype_for_context(match.snp),
+                "variant_type": self._format_variant_type(variant_call),
+                "raw_line": match.source_row.raw_line if match.source_row else None,
+                "shares_rsid_with_selected": bool(selected_aliases & aliases)
+                if selected_aliases
+                else False,
+                "priority": priority_components.get(id(match)) if priority_components else None,
+            }
+            cluster.append(entry)
+
+        return cluster
 
     def __iter__(self):
         return iter(self.all_matches)
@@ -648,6 +1123,27 @@ class MatchList:
     def iter_no_call(self):
         return iter(self.no_call_matches)
 
+    def categorize_matches(self) -> tuple[list, list, list]:
+        """Return matches categorized as (reference_calls, variant_calls, no_calls)."""
+        return (self.reference_matches, self.variant_matches, self.no_call_matches)
+
+    def categorize_report_rows(
+        self, participant_id: str | None = None, filename: str | None = None
+    ) -> tuple[list[dict], list[dict], list[dict]]:
+        """Return matches categorized and converted to report rows ready for TSV output.
+
+        Args:
+            participant_id: Optional participant/sample ID to include in each row
+            filename: Optional filename to include in each row
+
+        Returns:
+            Tuple of (reference_rows, variant_rows, no_call_rows) where each is a list of dicts
+        """
+        ref_rows = [m.to_report_row(participant_id, filename) for m in self.reference_matches]
+        var_rows = [m.to_report_row(participant_id, filename) for m in self.variant_matches]
+        no_rows = [m.to_report_row(participant_id, filename) for m in self.no_call_matches]
+        return (ref_rows, var_rows, no_rows)
+
     def get_position_summary(self) -> dict:
         """Get a summary of matches grouped by position."""
         from collections import defaultdict
@@ -655,8 +1151,10 @@ class MatchList:
         position_groups = defaultdict(list)
         for match in self.all_matches:
             call = match.variant_call
-            if call.chromosome and call.position:
-                key = (call.chromosome, call.position)
+            if call.chromosome and call.position is not None:
+                chrom_key = str(call.chromosome)
+                pos_key = int(call.position)
+                key = (chrom_key, pos_key)
                 position_groups[key].append(match)
 
         # Create summary
@@ -677,6 +1175,18 @@ class MatchList:
                 "matches": [],
             }
 
+            cluster = self._position_clusters.get((str(chrom), int(pos)))
+            if cluster:
+                position_info["cluster_size"] = len(cluster)
+                position_info["alternative_count"] = sum(
+                    1 for entry in cluster if not entry.get("is_selected")
+                )
+                position_info["same_rsid_alternative_count"] = sum(
+                    1
+                    for entry in cluster
+                    if entry.get("shares_rsid_with_selected") and not entry.get("is_selected")
+                )
+
             for match in matches:
                 call = match.variant_call
                 match_info = {
@@ -687,10 +1197,11 @@ class MatchList:
                     "genotype": "".join(
                         n.value if hasattr(n, "value") else str(n) for n in match.snp
                     ),
+                    "variant_type": self._format_variant_type(call),
                 }
                 position_info["matches"].append(match_info)
 
-            summary["details"].append(position_info)
+        summary["details"].append(position_info)
 
         return summary
 
