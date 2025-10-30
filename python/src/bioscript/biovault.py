@@ -197,6 +197,125 @@ class ProcessDefinition:
         )
 
 
+@dataclass
+class SQLStore:
+    """Configuration for storing results in a SQL table."""
+
+    source: str
+    table_name: str
+    destination: str = "SQL()"
+    key_column: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {
+            "kind": "sql",
+            "destination": self.destination,
+            "source": self.source,
+            "table_name": self.table_name,
+        }
+        if self.key_column:
+            data["key_column"] = self.key_column
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> SQLStore:
+        return cls(
+            source=data["source"],
+            table_name=data["table_name"],
+            destination=data.get("destination", "SQL()"),
+            key_column=data.get("key_column"),
+        )
+
+
+StoreConfig = Union[SQLStore, Dict[str, Any]]
+
+
+def _store_to_dict(store: StoreConfig) -> Dict[str, Any]:
+    if isinstance(store, SQLStore):
+        return store.to_dict()
+    if isinstance(store, dict):
+        return store
+    raise TypeError(f"Unsupported store configuration type: {type(store)!r}")
+
+
+def _store_from_dict(data: Dict[str, Any]) -> StoreConfig:
+    if data.get("kind") == "sql":
+        return SQLStore.from_dict(data)
+    return data
+
+
+@dataclass
+class PipelineStep:
+    """A single step within a BioVault pipeline."""
+
+    step_id: str
+    uses: str
+    with_args: Optional[Mapping[str, str]] = None
+    publish: Optional[Mapping[str, str]] = None
+    store: Optional[Mapping[str, StoreConfig]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {
+            "id": self.step_id,
+            "uses": self.uses,
+        }
+        if self.with_args:
+            data["with"] = dict(self.with_args)
+        if self.publish:
+            data["publish"] = dict(self.publish)
+        if self.store:
+            data["store"] = {name: _store_to_dict(config) for name, config in self.store.items()}
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> PipelineStep:
+        store_data = data.get("store")
+        store: Optional[Dict[str, StoreConfig]] = None
+        if store_data:
+            store = {name: _store_from_dict(cfg) for name, cfg in store_data.items()}
+        return cls(
+            step_id=data["id"],
+            uses=data["uses"],
+            with_args=data.get("with"),
+            publish=data.get("publish"),
+            store=store,
+        )
+
+
+def _coerce_pipeline_step(value: Union[PipelineStep, Dict[str, Any]]) -> PipelineStep:
+    if isinstance(value, PipelineStep):
+        return value
+    if isinstance(value, dict):
+        return PipelineStep.from_dict(value)
+    raise TypeError(f"Pipeline step must be a dict or PipelineStep, got {type(value)!r}")
+
+
+@dataclass
+class BioVaultPipeline:
+    """Representation of a BioVault pipeline.yaml."""
+
+    name: str
+    inputs: Dict[str, str] = field(default_factory=dict)
+    steps: List[PipelineStep] = field(default_factory=list)
+
+    _pipeline_dir: Optional[Path] = field(default=None, init=False, repr=False)
+
+    def to_yaml(self) -> str:
+        data: Dict[str, Any] = {"name": self.name}
+        if self.inputs:
+            data["inputs"] = self.inputs
+        data["steps"] = [step.to_dict() for step in self.steps]
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+
+    def save(self, path: Union[str, Path]) -> Path:
+        target_dir = Path(path)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        yaml_path = target_dir / "pipeline.yaml"
+        yaml_path.write_text(self.to_yaml())
+        self._pipeline_dir = target_dir
+        return yaml_path
+
+
 def _get_local_bioscript_version() -> Optional[str]:
     """Return the version of the locally imported bioscript package, if available."""
 
@@ -572,9 +691,7 @@ process aggregate_results {{
                 self._entrypoint = script_candidate
 
         # Check if using List[GenotypeRecord] - requires different workflow pattern
-        uses_genotype_list = any(
-            inp.type.startswith("List[GenotypeRecord") for inp in self.inputs
-        )
+        uses_genotype_list = any(inp.type.startswith("List[GenotypeRecord") for inp in self.inputs)
 
         if uses_genotype_list:
             return self._generate_participant_workflow_nf(entrypoint)
@@ -1016,7 +1133,9 @@ def export_bioscript_workflow(
     author: str,
     target_dir: Union[str, Path],
     *,
-    assets: Optional[Mapping[str, Union[str, Path]]] = None,
+    assets: Optional[
+        Union[Mapping[str, Union[str, Path]], Sequence[Union[str, Path]], str, Path]
+    ] = None,
     inputs: Optional[Sequence[Union[Input, Dict[str, Any]]]] = None,
     outputs: Optional[Sequence[Union[Output, Dict[str, Any]]]] = None,
     parameters: Optional[Sequence[Union[Parameter, Dict[str, Any]]]] = None,
@@ -1030,7 +1149,16 @@ def export_bioscript_workflow(
 
     combined_assets: Dict[str, Union[str, Path]] = {script_path.name: script_path}
     if assets:
-        for dest, src in assets.items():
+        if isinstance(assets, Mapping):
+            items = assets.items()
+        else:
+            if isinstance(assets, (str, Path)):
+                asset_iterable: Sequence[Union[str, Path]] = [assets]
+            else:
+                asset_iterable = list(assets)
+            items = ((Path(src).name, src) for src in asset_iterable)
+
+        for dest, src in items:
             dest_name = str(dest)
             src_path = Path(src)
             if not src_path.is_absolute():
@@ -1055,6 +1183,28 @@ def export_bioscript_workflow(
         version=version,
         docker_image=docker_image,
     )
+
+
+def export_bioscript_pipeline(
+    pipeline_name: str,
+    target_dir: Union[str, Path],
+    *,
+    inputs: Optional[Mapping[str, str]] = None,
+    steps: Sequence[Union[PipelineStep, Dict[str, Any]]],
+) -> BioVaultPipeline:
+    """Export a BioVault pipeline.yaml file."""
+
+    if not steps:
+        raise ValueError("export_bioscript_pipeline requires at least one step definition")
+
+    pipeline_steps = [_coerce_pipeline_step(step) for step in steps]
+    pipeline = BioVaultPipeline(
+        name=pipeline_name,
+        inputs=dict(inputs or {}),
+        steps=list(pipeline_steps),
+    )
+    pipeline.save(target_dir)
+    return pipeline
 
 
 def export_notebook_as_project(

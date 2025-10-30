@@ -1,0 +1,17 @@
+name: apol1-classifier
+inputs:
+  samplesheet: List[GenotypeRecord]
+steps:
+- id: apol1
+  uses: ./
+  with:
+    participants: inputs.samplesheet
+  publish:
+    classification_result: File(result_APOL1.tsv)
+  store:
+    counts_sql:
+      kind: sql
+      destination: SQL()
+      source: classification_result
+      table_name: apol1_{run_id}
+      key_column: participant_id
