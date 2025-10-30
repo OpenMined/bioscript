@@ -66,11 +66,9 @@ jobs:
           echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
           echo "New version: ${NEW_VERSION}"
 
-      - name: Update version in __init__.py
+      - name: Bump version across repository
         run: |
-          cd python
-          sed -i 's/__version__ = ".*"/__version__ = "${{ steps.new.outputs.version }}"/' src/bioscript/__init__.py
-          grep '__version__' src/bioscript/__init__.py
+          ./bump_version.sh "${{ steps.new.outputs.version }}"
 
       - name: Install dependencies
         run: |
@@ -97,7 +95,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add python/src/bioscript/__init__.py
+          git add -A
           git commit -m "Bump version to ${{ steps.new.outputs.version }}"
           git tag "v${{ steps.new.outputs.version }}"
           git push origin main --tags
