@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Bump version in __init__.py
+# Bump version across the entire repository
 # Usage: ./bump_version.sh <major|minor|patch|version>
 #
 # Examples:
@@ -12,6 +12,7 @@ set -e
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT_FILE="$REPO_ROOT/python/src/bioscript/__init__.py"
+BUILD_SCRIPT="$REPO_ROOT/docker/build.sh"
 
 if [ $# -ne 1 ]; then
     echo "Usage: $0 <major|minor|patch|version>"
@@ -47,11 +48,32 @@ echo "New version: $NEW_VERSION"
 # Update __init__.py
 sed -i.bak "s/__version__ = .*/__version__ = \"${NEW_VERSION}\"/" "$INIT_FILE"
 rm "${INIT_FILE}.bak"
-
 echo "✓ Updated $INIT_FILE"
+
+# Update all workflow.nf files
+echo "Updating workflow.nf files..."
+find "$REPO_ROOT/examples" -name "workflow.nf" -type f | while read -r file; do
+    sed -i.bak "s|ghcr.io/openmined/bioscript:[0-9]\+\.[0-9]\+\.[0-9]\+|ghcr.io/openmined/bioscript:${NEW_VERSION}|g" "$file"
+    rm "${file}.bak"
+    echo "  ✓ Updated $file"
+done
+
+# Update docker/build.sh
+echo "Updating docker/build.sh..."
+sed -i.bak "s|\${REMOTE_IMAGE}:[0-9]\+\.[0-9]\+\.[0-9]\+|\${REMOTE_IMAGE}:${NEW_VERSION}|g" "$BUILD_SCRIPT"
+rm "${BUILD_SCRIPT}.bak"
+echo "  ✓ Updated $BUILD_SCRIPT"
+
+echo ""
+echo "✓ Version bump complete!"
+echo ""
+echo "Updated files:"
+echo "  - python/src/bioscript/__init__.py"
+echo "  - All examples/*/workflow.nf files"
+echo "  - docker/build.sh"
 echo ""
 echo "Next steps:"
-echo "  git add python/src/bioscript/__init__.py"
+echo "  git add -A"
 echo "  git commit -m \"Bump version to ${NEW_VERSION}\""
 echo "  git tag v${NEW_VERSION}"
 echo "  git push origin main --tags"
