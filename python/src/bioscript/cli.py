@@ -156,9 +156,31 @@ def export_command(args):
 def classify_command(args):
     """Run classification on SNP file with multiple classifiers."""
     # Load SNP file
+    cwd = Path.cwd()
     snp_file_path = Path(args.file)
+    try:
+        resolved_path = snp_file_path.resolve(strict=False)
+    except Exception:
+        resolved_path = snp_file_path
+
+    try:
+        cwd_listing = ", ".join(sorted(str(p.name) for p in cwd.iterdir()))
+    except Exception:
+        cwd_listing = "<unavailable>"
+
+    print(f"[bioscript] Current working directory: {cwd}", file=sys.stderr)
+    print(f"[bioscript] Provided SNP file argument: {args.file}", file=sys.stderr)
+    print(f"[bioscript] Provided path absolute? {snp_file_path.is_absolute()}", file=sys.stderr)
+    print(f"[bioscript] Resolved SNP path: {resolved_path}", file=sys.stderr)
+    print(f"[bioscript] Resolved exists? {resolved_path.exists()}", file=sys.stderr)
+    print(f"[bioscript] CWD contents: {cwd_listing}", file=sys.stderr)
+
+    if not snp_file_path.is_absolute() and resolved_path.exists():
+        snp_file_path = resolved_path
+        print(f"[bioscript] Using resolved SNP path: {snp_file_path}", file=sys.stderr)
+
     if not snp_file_path.exists():
-        print(f"Error: File not found: {args.file}", file=sys.stderr)
+        print(f"[bioscript] Error: File not found: {args.file}", file=sys.stderr)
         sys.exit(1)
 
     # Results dictionary - only add participant_id if provided

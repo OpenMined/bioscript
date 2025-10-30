@@ -49,7 +49,11 @@ def write_csv(
                 raise ValueError(f"Cannot write match of type {type(match)}")
 
 
-def write_tsv(filename: str | Path, matches: list, headers: list[str] | None = None):
+def write_tsv(
+    filename: str | Path,
+    matches: list,
+    headers: list[str] | None = None,
+):
     """Write matches to a TSV file (convenience wrapper for write_csv with tab delimiter).
 
     Args:

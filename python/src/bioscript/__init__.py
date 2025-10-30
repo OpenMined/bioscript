@@ -19,7 +19,7 @@ from .data import GenotypeGenerator, create_test_variants
 from .reader import load_variants_tsv
 from .testing import VariantFixture, discover_tests, export_from_notebook, run_tests
 from .types import GRCh, MatchType, Nucleotide, VariantCall
-from .utils import optional_int, optional_str
+from .utils import assets_dir, optional_int, optional_str
 from .writer import write_csv, write_tsv
 
 __version__ = "0.1.1"
@@ -38,6 +38,7 @@ __all__ = [
     "discover_tests",
     "export_from_notebook",
     "load_variants_tsv",
+    "assets_dir",
     "optional_int",
     "optional_str",
     "run_tests",

@@ -14,4 +14,4 @@ steps:
       destination: SQL()
       source: classification_result
       table_name: brca_{run_id}
-      key_column: participant_id
+      participant_column: participant_id

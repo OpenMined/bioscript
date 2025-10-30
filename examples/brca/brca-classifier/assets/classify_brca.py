@@ -2,6 +2,22 @@ import pandas as pd
 from bioscript import optional_int, optional_str, write_tsv
 from bioscript.classifier import GenotypeClassifier
 from bioscript.types import VariantCall
+from bioscript import assets_dir
+
+ASSETS_DIR = assets_dir()
+RESULT_HEADERS = [
+    "participant_id",
+    "filename",
+    "gene",
+    "rsid",
+    "chromosome",
+    "position",
+    "genotype",
+    "ref",
+    "alt",
+    "variant_type",
+    "match_type",
+]
 
 def generate_variant_calls(df: pd.DataFrame) -> list[VariantCall]:
     """Generate VariantCall objects from ClinVar DataFrame."""
@@ -21,7 +37,8 @@ def generate_variant_calls(df: pd.DataFrame) -> list[VariantCall]:
 
 def get_vcs() -> list[VariantCall]:
     """Load BRCA1 and BRCA2 variant calls from ClinVar TSV files."""
-    dfs = [pd.read_csv(f, sep="\t") for f in ["brca1_clinvar.tsv", "brca2_clinvar.tsv"]]
+    data_files = [ASSETS_DIR / name for name in ["brca1_clinvar.tsv", "brca2_clinvar.tsv"]]
+    dfs = [pd.read_csv(f, sep="\t") for f in data_files]
     df = pd.concat(dfs, ignore_index=True)
     print(f"Loaded {len(df)} variants from BRCA1 and BRCA2")
     return generate_variant_calls(df)
@@ -41,7 +58,7 @@ class BRCAClassifier(GenotypeClassifier):
             write_tsv(f"{self.output_basename}_ref.tsv", ref_rows)
             write_tsv(f"{self.output_basename}_no.tsv", no_rows)
 
-        write_tsv(f"{self.output_basename}.tsv", var_rows)
+        write_tsv(f"{self.output_basename}.tsv", var_rows, headers=RESULT_HEADERS)
         
         # Return variant rows for testing
         return var_rows

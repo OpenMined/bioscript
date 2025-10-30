@@ -1,6 +1,9 @@
-"""Utility functions for working with pandas DataFrames and optional values."""
+"""Utility helpers shared across BioScript classifiers."""
 
 from __future__ import annotations
+
+import inspect
+from pathlib import Path
 
 import pandas as pd
 
@@ -31,3 +34,22 @@ def optional_int(value) -> int | None:
         None if value is NaN, otherwise int
     """
     return None if pd.isna(value) else int(value)
+
+
+def assets_dir(module_file: str | Path | None = None) -> Path:
+    """Return the directory containing the calling classifier module.
+
+    When ``module_file`` is provided (e.g. ``__file__``) the path is resolved
+    relative to it. Otherwise the caller's module file is inferred from the
+    stack, falling back to the current working directory.
+    """
+
+    if module_file is not None:
+        return Path(module_file).resolve().parent
+
+    frame_info = inspect.stack()[1]
+    module = inspect.getmodule(frame_info.frame)
+    if module and hasattr(module, "__file__"):
+        return Path(module.__file__).resolve().parent
+
+    return Path.cwd()

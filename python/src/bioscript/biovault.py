@@ -204,7 +204,12 @@ class SQLStore:
     source: str
     table_name: str
     destination: str = "SQL()"
-    key_column: Optional[str] = None
+    participant_column: Optional[str] = None
+    key_column: Optional[str] = None  # backwards compatibility
+
+    def __post_init__(self) -> None:
+        if self.participant_column is None and self.key_column is not None:
+            self.participant_column = self.key_column
 
     def to_dict(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {
@@ -213,8 +218,8 @@ class SQLStore:
             "source": self.source,
             "table_name": self.table_name,
         }
-        if self.key_column:
-            data["key_column"] = self.key_column
+        if self.participant_column:
+            data["participant_column"] = self.participant_column
         return data
 
     @classmethod
@@ -223,7 +228,9 @@ class SQLStore:
             source=data["source"],
             table_name=data["table_name"],
             destination=data.get("destination", "SQL()"),
-            key_column=data.get("key_column"),
+            participant_column=data.get("participant_column")
+            or data.get("participant_id_column")
+            or data.get("key_column"),
         )
 
 
@@ -599,12 +606,16 @@ workflow USER {{
         participants  // Channel emitting GenotypeRecord maps
 
     main:
-        def assetsDir = file(context.params.assets_dir)
-        def workflowScript = file("${{assetsDir}}/{workflow_script_asset}")
+        def assetsDir = context.assets_dir
+        if (!assetsDir) {{
+            throw new IllegalStateException("Missing assets directory in context")
+        }}
+        def assetsDirPath = file(assetsDir)
 
-        // Extract (participant_id, genotype_file) tuples from the records channel
-        def participant_tuples = participants.map {{ record ->
+        // Pair the assets directory with each (participant_id, genotype_file) tuple
+        def participant_work_items = participants.map {{ record ->
             tuple(
+                assetsDirPath,
                 record.participant_id,
                 file(record.genotype_file)
             )
@@ -612,8 +623,7 @@ workflow USER {{
 
         // Process each participant
         def per_participant_results = {primary_process.name}(
-            workflowScript,
-            participant_tuples
+            participant_work_items
         )
 
         // Aggregate all results into single file
@@ -631,15 +641,14 @@ process {primary_process.name} {{
     tag {{ participant_id }}
 
     input:
-        path script
-        tuple val(participant_id), path(genotype_file)
+        tuple path(assets_dir), val(participant_id), path(genotype_file)
 
     output:
         path "result_{classifier_name}_${{participant_id}}.tsv"
 
     script:
     """
-    bioscript classify "${{script}}" --file "${{genotype_file}}" --participant_id "${{participant_id}}"
+    bioscript classify "${{assets_dir}}/{workflow_script_asset}" --file "${{genotype_file}}" --participant_id "${{participant_id}}"
     """
 }}
 

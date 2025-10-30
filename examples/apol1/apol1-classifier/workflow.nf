@@ -6,12 +6,16 @@ workflow USER {
         participants  // Channel emitting GenotypeRecord maps
 
     main:
-        def assetsDir = file(context.params.assets_dir)
-        def workflowScript = file("${assetsDir}/classify_apol1.py")
+        def assetsDir = context.assets_dir
+        if (!assetsDir) {
+            throw new IllegalStateException("Missing assets directory in context")
+        }
+        def assetsDirPath = file(assetsDir)
 
-        // Extract (participant_id, genotype_file) tuples from the records channel
-        def participant_tuples = participants.map { record ->
+        // Pair the assets directory with each (participant_id, genotype_file) tuple
+        def participant_work_items = participants.map { record ->
             tuple(
+                assetsDirPath,
                 record.participant_id,
                 file(record.genotype_file)
             )
@@ -19,8 +23,7 @@ workflow USER {
 
         // Process each participant
         def per_participant_results = apol1_classifier(
-            workflowScript,
-            participant_tuples
+            participant_work_items
         )
 
         // Aggregate all results into single file
@@ -38,15 +41,14 @@ process apol1_classifier {
     tag { participant_id }
 
     input:
-        path script
-        tuple val(participant_id), path(genotype_file)
+        tuple path(assets_dir), val(participant_id), path(genotype_file)
 
     output:
         path "result_APOL1_${participant_id}.tsv"
 
     script:
     """
-    bioscript classify "${script}" --file "${genotype_file}" --participant_id "${participant_id}"
+    bioscript classify "${assets_dir}/classify_apol1.py" --file "${genotype_file}" --participant_id "${participant_id}"
     """
 }
 
