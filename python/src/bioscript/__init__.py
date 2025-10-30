@@ -2,8 +2,12 @@
 
 # BioVault integration
 from .biovault import (
+    BioVaultPipeline,
     BioVaultProject,
+    PipelineStep,
+    SQLStore,
     create_bioscript_project,
+    export_bioscript_pipeline,
     export_bioscript_workflow,
     export_notebook_as_project,
     export_workflow,
@@ -40,8 +44,12 @@ __all__ = [
     "write_csv",
     "write_tsv",
     # BioVault integration
+    "BioVaultPipeline",
     "BioVaultProject",
+    "PipelineStep",
+    "SQLStore",
     "create_bioscript_project",
+    "export_bioscript_pipeline",
     "export_bioscript_workflow",
     "export_notebook_as_project",
     "export_workflow",
