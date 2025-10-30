@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import sys
 from collections.abc import Iterator
 from typing import Iterable
 
@@ -124,11 +125,12 @@ def _strip_inline_comment(value: str) -> str:
 def _normalize_genotype_value(value: str) -> str:
     """
     Normalize genotype strings, accepting formats like 'A/G' or 'TTATAA/-'.
-    If a deletion marker ('-') is present alongside another allele, return 'ID'.
+    Treat '#N/A' and empty values as '--'.
+    Return 'ID' when a deletion marker ('-') appears alongside another allele.
     """
     cleaned = (value or "").strip()
-    if not cleaned:
-        return ""
+    if not cleaned or cleaned.upper() in {"NA", "N/A", "#N/A", "NONE"}:
+        return "--"
 
     cleaned = cleaned.replace(" ", "").upper()
     if "/" in cleaned:
@@ -248,8 +250,15 @@ def load_variants_tsv(path: str) -> Iterator[VariantRow]:
 
         genotype = _normalize_genotype_value(genotype)
 
-        if not rsid or not chrom or pos is None or not genotype:
-            raise ValueError(f"Invalid row (required fields empty/bad): {row_map}")
+        if not rsid or not chrom or pos is None:
+            print(
+                f"[bioscript] Skipping row with missing required fields: {row_map}",
+                file=sys.stderr,
+            )
+            continue
+
+        if not genotype:
+            genotype = "--"
 
         gs = _float_or_none(_lookup(row_map, "gs"))
         baf = _float_or_none(_lookup(row_map, "baf"))
