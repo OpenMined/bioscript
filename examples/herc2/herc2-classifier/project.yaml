@@ -2,7 +2,7 @@ name: herc2-classifier
 author: madhava@openmined.org
 workflow: workflow.nf
 template: dynamic-nextflow
-version: 0.1.1
+version: 0.1.0
 assets:
 - classify_herc2.py
 inputs:
