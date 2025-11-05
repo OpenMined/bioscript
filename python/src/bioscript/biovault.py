@@ -647,8 +647,10 @@ process {primary_process.name} {{
         path "result_{classifier_name}_${{participant_id}}.tsv"
 
     script:
+    def genoFileName = genotype_file.getName()
     """
-    bioscript classify "${{assets_dir}}/{workflow_script_asset}" --file "${{genotype_file}}" --participant_id "${{participant_id}}"
+    GENO_FILE=$(printf '%q' "${{genoFileName}}")
+    bioscript classify "${{assets_dir}}/{workflow_script_asset}" --file $GENO_FILE --participant_id "${{participant_id}}"
     """
 }}
 
