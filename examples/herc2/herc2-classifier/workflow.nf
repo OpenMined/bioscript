@@ -47,8 +47,10 @@ process herc2_classifier {
         path "result_HERC2_${participant_id}.tsv"
 
     script:
+    def genoFileName = genotype_file.getName()
     """
-    bioscript classify "${assets_dir}/classify_herc2.py" --file "${genotype_file}" --participant_id "${participant_id}"
+    GENO_FILE=$(printf '%q' "${{genoFileName}}")
+    bioscript classify "${{assets_dir}}/classify_herc2.py" --file $GENO_FILE --participant_id "${{participant_id}}"
     """
 }
 
