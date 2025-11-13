@@ -22,7 +22,7 @@ from .types import GRCh, MatchType, Nucleotide, VariantCall
 from .utils import assets_dir, optional_int, optional_str
 from .writer import write_csv, write_tsv
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 __all__ = [
     "DiploidResult",
