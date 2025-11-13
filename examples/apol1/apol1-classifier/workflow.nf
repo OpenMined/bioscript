@@ -1,3 +1,5 @@
+// BioVault workflow export v0.1.1
+
 nextflow.enable.dsl=2
 
 workflow USER {
@@ -39,6 +41,8 @@ process apol1_classifier {
     container 'ghcr.io/openmined/bioscript:0.1.4'
     publishDir params.results_dir, mode: 'copy', overwrite: true, pattern: 'result_APOL1_*.tsv'
     tag { participant_id }
+    errorStrategy { params.nextflow.error_strategy }
+    maxRetries { params.nextflow.max_retries }
 
     input:
         tuple path(assets_dir), val(participant_id), path(genotype_file)
@@ -47,9 +51,10 @@ process apol1_classifier {
         path "result_APOL1_${participant_id}.tsv"
 
     script:
-    def filename = genotype_file.name
+    def genoFileName = genotype_file.getName()
     """
-    bioscript classify "${{assets_dir}}/classify_apol1.py" --file "${filename}" --participant_id "${{participant_id}}"
+    GENO_FILE=\$(printf '%q' "${genoFileName}")
+    bioscript classify "${assets_dir}/classify_apol1.py" --file \$GENO_FILE --participant_id "${participant_id}"
     """
 }
 
@@ -64,13 +69,9 @@ process aggregate_results {
         path "result_APOL1.tsv"
 
     script:
+    def manifestContent = individual_results.collect { it.toString() }.join('\n') + '\n'
     """
-    # Extract header from first file
-    head -n 1 ${individual_results[0]} > result_APOL1.tsv
-
-    # Append all data rows (skip headers)
-    for file in ${individual_results}; do
-        tail -n +2 "\$file" >> result_APOL1.tsv
-    done
+    cat <<'EOF' > results.list\n${manifestContent}EOF
+    bioscript combine --list results.list --output result_APOL1.tsv
     """
 }

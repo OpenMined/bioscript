@@ -304,15 +304,22 @@ class BioVaultPipeline:
     name: str
     inputs: Dict[str, str] = field(default_factory=dict)
     steps: List[PipelineStep] = field(default_factory=list)
+    version: str = "0.1.0"
 
     _pipeline_dir: Optional[Path] = field(default=None, init=False, repr=False)
 
     def to_yaml(self) -> str:
-        data: Dict[str, Any] = {"name": self.name}
+        data: Dict[str, Any] = {"name": self.name, "version": self.version}
         if self.inputs:
             data["inputs"] = self.inputs
         data["steps"] = [step.to_dict() for step in self.steps]
-        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+        return yaml.dump(
+            data,
+            default_flow_style=False,
+            sort_keys=False,
+            width=4096,
+            allow_unicode=True,
+        )
 
     def save(self, path: Union[str, Path]) -> Path:
         target_dir = Path(path)
@@ -362,6 +369,7 @@ class BioVaultProject:
     name: str
     author: str
     workflow: str = "workflow.nf"
+    description: str = ""
     template: TemplateType = TemplateType.DYNAMIC_NEXTFLOW
     version: str = "0.1.0"
     assets: List[str] = field(default_factory=list)
@@ -398,6 +406,7 @@ class BioVaultProject:
             name=data["name"],
             author=data["author"],
             workflow=data.get("workflow", "workflow.nf"),
+            description=data.get("description", ""),
             template=TemplateType.DYNAMIC_NEXTFLOW,  # Only dynamic-nextflow supported
             version=data.get("version", "0.1.0"),
             assets=data.get("assets", []),
@@ -439,6 +448,9 @@ class BioVaultProject:
         if self.assets:
             data["assets"] = self.assets
 
+        if self.description:
+            data["description"] = self.description
+
         if self.parameters:
             data["parameters"] = [p.to_dict() for p in self.parameters]
 
@@ -448,7 +460,13 @@ class BioVaultProject:
         if self.outputs:
             data["outputs"] = [o.to_dict() for o in self.outputs]
 
-        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+        return yaml.dump(
+            data,
+            default_flow_style=False,
+            sort_keys=False,
+            width=4096,
+            allow_unicode=True,
+        )
 
     def save(self, path: Optional[Union[str, Path]] = None) -> Path:
         """
@@ -597,8 +615,9 @@ class BioVaultProject:
         if not aggregated_path:
             aggregated_path = f"result_{classifier_name}.tsv"
 
-        # Generate workflow
-        workflow = f'''nextflow.enable.dsl=2
+        header_comment = f"// BioVault workflow export v{self.version}\n\n"
+
+        workflow = f'''{header_comment}nextflow.enable.dsl=2
 
 workflow USER {{
     take:
@@ -639,6 +658,8 @@ process {primary_process.name} {{
     container '{container_image}'
     publishDir params.results_dir, mode: 'copy', overwrite: true, pattern: '{individual_pattern}'
     tag {{ participant_id }}
+    errorStrategy {{ params.nextflow.error_strategy }}
+    maxRetries {{ params.nextflow.max_retries }}
 
     input:
         tuple path(assets_dir), val(participant_id), path(genotype_file)
@@ -649,8 +670,8 @@ process {primary_process.name} {{
     script:
     def genoFileName = genotype_file.getName()
     """
-    GENO_FILE=\$(printf '%q' "${{genoFileName}}")
-    bioscript classify "${{assets_dir}}/{workflow_script_asset}" --file \$GENO_FILE --participant_id "${{participant_id}}"
+    GENO_FILE=\\$(printf '%q' "${{genoFileName}}")
+    bioscript classify "${{assets_dir}}/{workflow_script_asset}" --file \\$GENO_FILE --participant_id "${{participant_id}}"
     """
 }}
 
@@ -665,14 +686,10 @@ process aggregate_results {{
         path "{aggregated_path}"
 
     script:
+    def manifestContent = individual_results.collect {{ it.toString() }}.join('\\n') + '\\n'
     """
-    # Extract header from first file
-    head -n 1 ${{individual_results[0]}} > {aggregated_path}
-
-    # Append all data rows (skip headers)
-    for file in ${{individual_results}}; do
-        tail -n +2 "\\$file" >> {aggregated_path}
-    done
+    cat <<'EOF' > results.list\\n${{manifestContent}}EOF
+    bioscript combine --list results.list --output {aggregated_path}
     """
 }}
 '''
@@ -793,6 +810,7 @@ process aggregate_results {{
         workflow_script_asset = primary_process.script
 
         workflow_lines: List[str] = [
+            f"// BioVault workflow export v{self.version}\n\n",
             "nextflow.enable.dsl=2\n\n",
             "workflow USER {\n",
             "    take:\n",
@@ -1006,6 +1024,7 @@ def create_bioscript_project(
         name=name,
         author=author,
         template=TemplateType.DYNAMIC_NEXTFLOW,
+        description=description,
     )
 
     # Set Docker image
@@ -1078,6 +1097,7 @@ def export_workflow(
     outputs: Optional[Sequence[Union[Output, Dict[str, Any]]]] = None,
     parameters: Optional[Sequence[Union[Parameter, Dict[str, Any]]]] = None,
     version: str = "0.1.0",
+    description: str = "",
     docker_image: Optional[str] = None,
 ) -> BioVaultProject:
     """Export a BioScript workflow with explicit process definitions."""
@@ -1092,6 +1112,7 @@ def export_workflow(
         author=author,
         template=TemplateType.DYNAMIC_NEXTFLOW,
         version=version,
+        description=description,
     )
     project.set_docker_image(docker_image)
 
@@ -1151,6 +1172,7 @@ def export_bioscript_workflow(
     outputs: Optional[Sequence[Union[Output, Dict[str, Any]]]] = None,
     parameters: Optional[Sequence[Union[Parameter, Dict[str, Any]]]] = None,
     version: str = "0.1.0",
+    description: str = "",
     docker_image: Optional[str] = None,
 ) -> BioVaultProject:
     """Convenience helper to export a single-script BioScript workflow."""
@@ -1192,6 +1214,7 @@ def export_bioscript_workflow(
         outputs=outputs,
         parameters=parameters,
         version=version,
+        description=description,
         docker_image=docker_image,
     )
 
@@ -1202,6 +1225,7 @@ def export_bioscript_pipeline(
     *,
     inputs: Optional[Mapping[str, str]] = None,
     steps: Sequence[Union[PipelineStep, Dict[str, Any]]],
+    version: str = "0.1.0",
 ) -> BioVaultPipeline:
     """Export a BioVault pipeline.yaml file."""
 
@@ -1213,6 +1237,7 @@ def export_bioscript_pipeline(
         name=pipeline_name,
         inputs=dict(inputs or {}),
         steps=list(pipeline_steps),
+        version=version,
     )
     pipeline.save(target_dir)
     return pipeline

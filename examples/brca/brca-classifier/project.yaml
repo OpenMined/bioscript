@@ -7,6 +7,7 @@ assets:
 - classify_brca.py
 - brca2_clinvar.tsv
 - brca1_clinvar.tsv
+description: Classification of BRCA variants using ClinVar reference data for hereditary cancer risk.
 inputs:
 - name: participants
   type: List[GenotypeRecord]

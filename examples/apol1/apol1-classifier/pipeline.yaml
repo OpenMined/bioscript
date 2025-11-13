@@ -1,5 +1,5 @@
 name: apol1-classifier
-description: Classification of APOL1 genotypes (G0, G1, G2) for kidney disease risk assessment.
+version: 0.1.1
 inputs:
   samplesheet: List[GenotypeRecord]
 steps:
