@@ -5,6 +5,7 @@ template: dynamic-nextflow
 version: 0.1.1
 assets:
 - classify_apol1.py
+description: Classification of APOL1 genotypes (G0, G1, G2) for kidney disease risk assessment.
 inputs:
 - name: participants
   type: List[GenotypeRecord]

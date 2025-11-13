@@ -330,6 +330,75 @@ def classify_command(args):
         sys.exit(1)
 
 
+def combine_command(args):
+    """Combine per-participant TSV outputs into a single table."""
+    if not args.files and not args.list:
+        print("Error: provide either --list or one or more input files", file=sys.stderr)
+        sys.exit(1)
+
+    chosen_files = []
+    if args.list:
+        list_path = Path(args.list)
+        if not list_path.exists():
+            print(f"Error: manifest file not found: {list_path}", file=sys.stderr)
+            sys.exit(1)
+        with list_path.open("r", encoding="utf-8") as manifest:
+            for line in manifest:
+                line = line.strip()
+                if line:
+                    chosen_files.append(line)
+    chosen_files.extend(args.files)
+
+    if not chosen_files:
+        print("Error: manifest and positional inputs were empty", file=sys.stderr)
+        sys.exit(1)
+
+    output_path = Path(args.output)
+    combined_any = False
+
+    try:
+        with output_path.open("w", encoding="utf-8") as out_fh:
+            for file_arg in chosen_files:
+                src = Path(file_arg)
+                if not src.exists():
+                    print(f"[bioscript] combine: skipping missing file {src}", file=sys.stderr)
+                    continue
+                if src.is_dir():
+                    print(f"[bioscript] combine: skipping directory {src}", file=sys.stderr)
+                    continue
+
+                try:
+                    lines = src.read_text(encoding="utf-8").splitlines(keepends=True)
+                except Exception as read_err:
+                    print(
+                        f"[bioscript] combine: failed to read {src}: {read_err}",
+                        file=sys.stderr,
+                    )
+                    continue
+
+                if not lines:
+                    print(f"[bioscript] combine: skipping empty file {src}", file=sys.stderr)
+                    continue
+
+                if not combined_any:
+                    out_fh.writelines(lines)
+                    combined_any = True
+                else:
+                    out_fh.writelines(lines[1:])
+    except Exception as e:
+        if output_path.exists():
+            output_path.unlink()
+        print(f"Error combining files: {e}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
+        sys.exit(1)
+
+    if not combined_any:
+        if output_path.exists():
+            output_path.unlink()
+        print("Error: no non-empty input files were provided", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -418,6 +487,25 @@ Examples:
         help="Write detailed match diagnostics to CSV beside classifier script",
     )
 
+    combine_parser = subparsers.add_parser(
+        "combine",
+        help="Combine multiple TSV outputs (first header preserved, body appended)",
+    )
+    combine_parser.add_argument(
+        "--output",
+        required=True,
+        help="Path to write the combined TSV",
+    )
+    combine_parser.add_argument(
+        "--list",
+        help="Optional newline-delimited manifest of input files",
+    )
+    combine_parser.add_argument(
+        "files",
+        nargs="*",
+        help="Input TSV files to combine (order preserved)",
+    )
+
     args = parser.parse_args()
 
     # Route to command handler
@@ -427,6 +515,8 @@ Examples:
         export_command(args)
     elif args.command == "classify":
         classify_command(args)
+    elif args.command == "combine":
+        combine_command(args)
     else:
         parser.print_help()
         sys.exit(1)

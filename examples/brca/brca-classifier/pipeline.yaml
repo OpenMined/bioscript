@@ -1,5 +1,5 @@
 name: brca-classifier
-description: Classification of BRCA1 and BRCA2 variants from ClinVar database.
+version: 0.1.1
 inputs:
   samplesheet: List[GenotypeRecord]
 steps:

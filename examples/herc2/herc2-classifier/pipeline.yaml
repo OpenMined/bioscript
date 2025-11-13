@@ -1,5 +1,5 @@
 name: herc2-classifier
-description: Classification of HERC2 gene variant (rs12913832) for eye color prediction.
+version: 0.1.1
 inputs:
   samplesheet: List[GenotypeRecord]
 steps:
