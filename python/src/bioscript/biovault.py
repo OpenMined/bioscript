@@ -167,7 +167,7 @@ class DatasetInput:
         return d
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "DatasetInput":
+    def from_dict(cls, d: Dict[str, Any]) -> DatasetInput:
         """Create from dictionary."""
         return cls(
             name=d["name"],
@@ -206,7 +206,7 @@ class DatasetInput:
             raise ImportError(
                 "beaver package is required for dataset inputs. "
                 "Install with: pip install biovault-beaver"
-            )
+            ) from None
 
 
 @dataclass
