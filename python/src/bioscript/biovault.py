@@ -33,6 +33,8 @@ class TypeExpr(str, Enum):
     PARTICIPANT_SHEET = "ParticipantSheet"
     GENOTYPE_RECORD = "GenotypeRecord"
     BIOVAULT_CONTEXT = "BiovaultContext"
+    DATASET = "Dataset"  # Remote dataset via beaver Twin
+    DATASET_TWIN = "DatasetTwin"  # Twin object from dataset
 
     @staticmethod
     def list_of(inner: str) -> str:
@@ -126,6 +128,85 @@ class Input:
             mapping=d.get("mapping"),
             cli_flag=d.get("cli_flag"),
         )
+
+
+@dataclass
+class DatasetInput:
+    """A dataset input specification for loading remote datasets via beaver.
+
+    Datasets are loaded using beaver's DatasetRegistry and returned as Twin objects
+    for privacy-preserving analysis.
+
+    Example:
+        >>> dataset = DatasetInput(
+        ...     name="patient_genomics",
+        ...     owner="data_owner@example.com",
+        ...     dataset_name="single_cell_rnaseq",
+        ...     asset_key="sc_data",  # Optional: specific asset within dataset
+        ...     description="Patient single-cell RNA-seq data"
+        ... )
+    """
+
+    name: str
+    owner: str
+    dataset_name: str
+    description: str
+    asset_key: Optional[str] = None  # Specific asset within the dataset
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for YAML serialization."""
+        d = {
+            "name": self.name,
+            "type": "Dataset",
+            "owner": self.owner,
+            "dataset_name": self.dataset_name,
+            "description": self.description,
+        }
+        if self.asset_key:
+            d["asset_key"] = self.asset_key
+        return d
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "DatasetInput":
+        """Create from dictionary."""
+        return cls(
+            name=d["name"],
+            owner=d["owner"],
+            dataset_name=d["dataset_name"],
+            description=d["description"],
+            asset_key=d.get("asset_key"),
+        )
+
+    def load(self, context: Any = None) -> Any:
+        """
+        Load the dataset using beaver's DatasetRegistry.
+
+        Args:
+            context: Optional BeaverContext. If not provided, uses active context.
+
+        Returns:
+            Twin object for the dataset/asset, or Dataset object if no asset_key.
+
+        Example:
+            >>> ds_input = DatasetInput(...)
+            >>> twin = ds_input.load()
+            >>> # Use twin.mock for public mock data
+            >>> # Use twin.private for actual private data (requires authorization)
+        """
+        try:
+            import beaver
+
+            ctx = context or beaver.ctx()
+            dataset = ctx.datasets[self.owner][self.dataset_name]
+
+            if self.asset_key:
+                return dataset[self.asset_key]
+            return dataset
+        except ImportError:
+            raise ImportError(
+                "beaver package is required for dataset inputs. "
+                "Install with: pip install biovault-beaver"
+            )
 
 
 @dataclass
