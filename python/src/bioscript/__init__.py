@@ -4,8 +4,10 @@
 from .biovault import (
     BioVaultPipeline,
     BioVaultProject,
+    DatasetInput,
     PipelineStep,
     SQLStore,
+    TypeExpr,
     create_bioscript_project,
     export_bioscript_pipeline,
     export_bioscript_workflow,
@@ -47,8 +49,10 @@ __all__ = [
     # BioVault integration
     "BioVaultPipeline",
     "BioVaultProject",
+    "DatasetInput",
     "PipelineStep",
     "SQLStore",
+    "TypeExpr",
     "create_bioscript_project",
     "export_bioscript_pipeline",
     "export_bioscript_workflow",
