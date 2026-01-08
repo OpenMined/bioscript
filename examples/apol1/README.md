@@ -56,11 +56,13 @@ P003	G2/G1
 ## Classifier Details
 
 **Variants tested**:
+
 - rs73885319 (A>G) - G1 variant site 1
 - rs60910145 (T>C) - G1 variant site 2
 - rs71785313 (InDel) - G2 variant
 
 **Genotypes**:
+
 - **G0/G0** - No risk variants (healthy)
 - **G1/G0** - Heterozygous G1 (low risk)
 - **G1/G1** - Homozygous G1 (moderate risk)
