@@ -1,12 +1,17 @@
 #!/bin/bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 set -e
 
 export UV_VENV_CLEAR=1
-uv venv
+VENV_PATH="$SCRIPT_DIR/.venv"
+export UV_PROJECT_ENVIRONMENT="$VENV_PATH"
+
+uv venv "$VENV_PATH"
 uv pip install -e ./python
 uv pip install pytest ruff mypy vulture
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/python"
 
 echo "Running ruff format..."
