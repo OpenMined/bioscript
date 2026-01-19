@@ -16,6 +16,10 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import yaml
 
+SPEC_API_VERSION = "syftbox.openmined.org/v1alpha1"
+FLOW_KIND = "Flow"
+MODULE_KIND = "Module"
+
 
 class TemplateType(str, Enum):
     """Available BioVault templates."""
@@ -71,8 +75,6 @@ class Parameter:
         }
         if self.default is not None:
             d["default"] = self.default
-        if self.advanced:
-            d["advanced"] = self.advanced
         return d
 
     @classmethod
@@ -81,7 +83,7 @@ class Parameter:
         return cls(
             name=d["name"],
             type=d["type"],
-            description=d["description"],
+            description=d.get("description", ""),
             default=d.get("default"),
             advanced=d.get("advanced", False),
         )
@@ -94,38 +96,46 @@ class Input:
     name: str
     type: str
     description: str
-    format: Optional[str] = None
+    format: Optional[Union[str, Dict[str, Any]]] = None
     path: Optional[str] = None
     mapping: Optional[Dict[str, str]] = None
     cli_flag: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for YAML serialization."""
+        raw_type = self.type
+        optional = False
+        if raw_type.endswith("?"):
+            optional = True
+            raw_type = raw_type[:-1]
+
         d = {
             "name": self.name,
-            "type": self.type,
+            "type": raw_type,
             "description": self.description,
         }
-        if self.format:
-            d["format"] = self.format
-        if self.path:
-            d["path"] = self.path
-        if self.mapping:
-            d["mapping"] = self.mapping
-        if self.cli_flag:
-            d["cli_flag"] = self.cli_flag
+
+        format_spec = _serialize_format_spec(self.format, self.mapping)
+        if format_spec:
+            d["format"] = format_spec
+        if optional:
+            d["optional"] = True
         return d
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> Input:
         """Create from dictionary."""
+        format_kind, mapping = _parse_format_spec(d.get("format"), d.get("mapping"))
+        raw_type = d["type"]
+        if d.get("optional"):
+            raw_type = f"{raw_type}?"
         return cls(
             name=d["name"],
-            type=d["type"],
-            description=d["description"],
-            format=d.get("format"),
+            type=raw_type,
+            description=d.get("description", ""),
+            format=format_kind,
             path=d.get("path"),
-            mapping=d.get("mapping"),
+            mapping=mapping,
             cli_flag=d.get("cli_flag"),
         )
 
@@ -216,7 +226,7 @@ class Output:
     name: str
     type: str
     description: str
-    format: Optional[str] = None
+    format: Optional[Union[str, Dict[str, Any]]] = None
     path: Optional[str] = None
     cli_flag: Optional[str] = None
 
@@ -227,25 +237,73 @@ class Output:
             "type": self.type,
             "description": self.description,
         }
-        if self.format:
-            d["format"] = self.format
+        format_spec = _serialize_format_spec(self.format, None)
+        if format_spec:
+            d["format"] = format_spec
         if self.path:
             d["path"] = self.path
-        if self.cli_flag:
-            d["cli_flag"] = self.cli_flag
         return d
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> Output:
         """Create from dictionary."""
+        format_kind, _mapping = _parse_format_spec(d.get("format"), None)
         return cls(
             name=d["name"],
             type=d["type"],
-            description=d["description"],
-            format=d.get("format"),
+            description=d.get("description", ""),
+            format=format_kind,
             path=d.get("path"),
             cli_flag=d.get("cli_flag"),
         )
+
+
+def _serialize_format_spec(
+    format_value: Optional[Union[str, Dict[str, Any]]],
+    mapping: Optional[Dict[str, str]],
+) -> Optional[Dict[str, Any]]:
+    if format_value is None and not mapping:
+        return None
+    if isinstance(format_value, dict):
+        spec = dict(format_value)
+    else:
+        spec = {"kind": format_value} if format_value else {}
+    if mapping:
+        spec["mapping"] = dict(mapping)
+    return spec or None
+
+
+def _parse_format_spec(
+    format_value: Optional[Union[str, Dict[str, Any]]],
+    mapping: Optional[Dict[str, str]],
+) -> tuple[Optional[Union[str, Dict[str, Any]]], Optional[Dict[str, str]]]:
+    if isinstance(format_value, dict):
+        kind = format_value.get("kind")
+        merged_mapping = dict(mapping or {})
+        if "mapping" in format_value and isinstance(format_value["mapping"], dict):
+            merged_mapping.update(format_value["mapping"])
+        return kind, merged_mapping or None
+    return format_value, mapping
+
+
+def _parse_asset_paths(assets: Sequence[Any]) -> List[str]:
+    paths: List[str] = []
+    for asset in assets:
+        if isinstance(asset, str):
+            paths.append(asset)
+        elif isinstance(asset, dict) and "path" in asset:
+            paths.append(str(asset["path"]))
+    return paths
+
+
+def _normalize_uses_reference(uses: str) -> Union[str, Dict[str, Any]]:
+    if _looks_like_path(uses):
+        return {"source": {"kind": "local", "path": uses}}
+    return uses
+
+
+def _looks_like_path(value: str) -> bool:
+    return value.startswith((".", "/", "~")) or "/" in value
 
 
 @dataclass
@@ -295,23 +353,22 @@ class SQLStore:
     def to_dict(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "kind": "sql",
-            "destination": self.destination,
             "source": self.source,
-            "table_name": self.table_name,
+            "table": self.table_name,
         }
         if self.participant_column:
-            data["participant_column"] = self.participant_column
+            data["key_column"] = self.participant_column
         return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> SQLStore:
         return cls(
             source=data["source"],
-            table_name=data["table_name"],
+            table_name=data.get("table") or data["table_name"],
             destination=data.get("destination", "SQL()"),
-            participant_column=data.get("participant_column")
-            or data.get("participant_id_column")
-            or data.get("key_column"),
+            participant_column=data.get("key_column")
+            or data.get("participant_column")
+            or data.get("participant_id_column"),
         )
 
 
@@ -334,7 +391,7 @@ def _store_from_dict(data: Dict[str, Any]) -> StoreConfig:
 
 @dataclass
 class PipelineStep:
-    """A single step within a BioVault pipeline."""
+    """A single step within a BioVault flow."""
 
     step_id: str
     uses: str
@@ -345,7 +402,7 @@ class PipelineStep:
     def to_dict(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "id": self.step_id,
-            "uses": self.uses,
+            "uses": _normalize_uses_reference(self.uses),
         }
         if self.with_args:
             data["with"] = dict(self.with_args)
@@ -380,7 +437,7 @@ def _coerce_pipeline_step(value: Union[PipelineStep, Dict[str, Any]]) -> Pipelin
 
 @dataclass
 class BioVaultPipeline:
-    """Representation of a BioVault pipeline.yaml."""
+    """Representation of a BioVault flow.yaml."""
 
     name: str
     inputs: Dict[str, str] = field(default_factory=dict)
@@ -390,10 +447,19 @@ class BioVaultPipeline:
     _pipeline_dir: Optional[Path] = field(default=None, init=False, repr=False)
 
     def to_yaml(self) -> str:
-        data: Dict[str, Any] = {"name": self.name, "version": self.version}
+        spec: Dict[str, Any] = {"steps": [step.to_dict() for step in self.steps]}
         if self.inputs:
-            data["inputs"] = self.inputs
-        data["steps"] = [step.to_dict() for step in self.steps]
+            spec["inputs"] = {name: {"type": spec_type} for name, spec_type in self.inputs.items()}
+
+        data: Dict[str, Any] = {
+            "apiVersion": SPEC_API_VERSION,
+            "kind": FLOW_KIND,
+            "metadata": {
+                "name": self.name,
+                "version": self.version,
+            },
+            "spec": spec,
+        }
         return yaml.dump(
             data,
             default_flow_style=False,
@@ -405,7 +471,7 @@ class BioVaultPipeline:
     def save(self, path: Union[str, Path]) -> Path:
         target_dir = Path(path)
         target_dir.mkdir(parents=True, exist_ok=True)
-        yaml_path = target_dir / "pipeline.yaml"
+        yaml_path = target_dir / "flow.yaml"
         yaml_path.write_text(self.to_yaml())
         self._pipeline_dir = target_dir
         return yaml_path
@@ -443,7 +509,7 @@ class BioVaultProject:
     """
     A BioVault project configuration.
 
-    This class represents the structure of a BioVault project.yaml file
+    This class represents the structure of a BioVault module.yaml file
     and provides methods to create, load, save, and export projects.
     """
 
@@ -476,29 +542,39 @@ class BioVaultProject:
 
     @classmethod
     def from_yaml(cls, path: Union[str, Path]) -> BioVaultProject:
-        """Load a project from a project.yaml file."""
+        """Load a project from a module.yaml file."""
         path = Path(path)
-        yaml_path = path / "project.yaml" if path.is_dir() else path
+        yaml_path = path / "module.yaml" if path.is_dir() else path
 
         with open(yaml_path) as f:
             data = yaml.safe_load(f)
 
+        metadata = data["metadata"]
+        spec = data["spec"]
+        runner = spec.get("runner", {})
+
+        authors = metadata.get("authors") or []
+        if not authors and metadata.get("author"):
+            authors = [metadata["author"]]
+        if not authors:
+            raise ValueError("Module metadata.authors must include at least one author")
+
         project = cls(
-            name=data["name"],
-            author=data["author"],
-            workflow=data.get("workflow", "workflow.nf"),
-            description=data.get("description", ""),
+            name=metadata["name"],
+            author=authors[0],
+            workflow=runner.get("entrypoint", "workflow.nf"),
+            description=metadata.get("description", ""),
             template=TemplateType.DYNAMIC_NEXTFLOW,  # Only dynamic-nextflow supported
-            version=data.get("version", "0.1.0"),
-            assets=data.get("assets", []),
-            parameters=[Parameter.from_dict(p) for p in data.get("parameters", [])],
-            inputs=[Input.from_dict(i) for i in data.get("inputs", [])],
-            outputs=[Output.from_dict(o) for o in data.get("outputs", [])],
-            processes=[ProcessDefinition.from_dict(p) for p in data.get("processes", [])],
+            version=metadata.get("version", "0.1.0"),
+            assets=_parse_asset_paths(spec.get("assets", [])),
+            parameters=[Parameter.from_dict(p) for p in spec.get("parameters", [])],
+            inputs=[Input.from_dict(i) for i in spec.get("inputs", [])],
+            outputs=[Output.from_dict(o) for o in spec.get("outputs", [])],
+            processes=[],
         )
 
-        docker_image = data.get("docker_image")
-        docker_platform = data.get("docker_platform", "linux/amd64")
+        docker_image = runner.get("image")
+        docker_platform = "linux/amd64"
         project.set_docker_image(docker_image or _default_docker_image(), docker_platform)
 
         if project.processes:
@@ -512,35 +588,36 @@ class BioVaultProject:
 
     def to_yaml(self) -> str:
         """Convert project to YAML string."""
-        data = {
+        metadata: Dict[str, Any] = {
             "name": self.name,
-            "author": self.author,
-            "workflow": self.workflow,
-            "template": self.template.value,
             "version": self.version,
+            "authors": [self.author],
+        }
+        if self.description:
+            metadata["description"] = self.description
+
+        runner: Dict[str, Any] = {
+            "kind": "nextflow",
+            "entrypoint": self.workflow,
+            "template": self.template.value,
+        }
+        if self.docker_image:
+            runner["image"] = self.docker_image
+
+        spec: Dict[str, Any] = {
+            "runner": runner,
+            "inputs": [i.to_dict() for i in self.inputs],
+            "outputs": [o.to_dict() for o in self.outputs],
+            "parameters": [p.to_dict() for p in self.parameters],
+            "assets": [{"path": asset} for asset in self.assets],
         }
 
-        # Docker image and platform are hardcoded in workflow generation, not exposed in YAML
-        # if self.docker_image:
-        #     data["docker_image"] = self.docker_image
-        # if self.docker_platform:
-        #     data["docker_platform"] = self.docker_platform
-
-        if self.assets:
-            data["assets"] = self.assets
-
-        if self.description:
-            data["description"] = self.description
-
-        if self.parameters:
-            data["parameters"] = [p.to_dict() for p in self.parameters]
-
-        if self.inputs:
-            data["inputs"] = [i.to_dict() for i in self.inputs]
-
-        if self.outputs:
-            data["outputs"] = [o.to_dict() for o in self.outputs]
-
+        data = {
+            "apiVersion": SPEC_API_VERSION,
+            "kind": MODULE_KIND,
+            "metadata": metadata,
+            "spec": spec,
+        }
         return yaml.dump(
             data,
             default_flow_style=False,
@@ -557,7 +634,7 @@ class BioVaultProject:
             path: Directory to save to. If None, uses the project's original directory.
 
         Returns:
-            Path to the saved project.yaml file.
+            Path to the saved module.yaml file.
         """
         if path is None and self._project_dir is None:
             raise ValueError("No path specified and project has no directory set")
@@ -565,7 +642,7 @@ class BioVaultProject:
         project_dir = Path(path) if path else self._project_dir
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        yaml_path = project_dir / "project.yaml"
+        yaml_path = project_dir / "module.yaml"
         with open(yaml_path, "w") as f:
             f.write(self.to_yaml())
 
@@ -980,7 +1057,7 @@ process aggregate_results {{
         if not self.docker_image:
             self.set_docker_image(_default_docker_image(), self.docker_platform)
 
-        # Save project.yaml
+        # Save module.yaml
         self.save(target)
 
         # Generate and save workflow.nf
@@ -1021,7 +1098,7 @@ process aggregate_results {{
             # Add to assets if not already there
             if script_name not in self.assets:
                 self.assets.append(script_name)
-                self.save(target)  # Update project.yaml
+                self.save(target)  # Update module.yaml
             copied_assets.add(script_name)
 
         # Copy existing assets if project has a source directory
@@ -1057,7 +1134,7 @@ process aggregate_results {{
         """
         target = Path(target_dir)
 
-        # Save project.yaml to a temporary location
+        # Save module.yaml to a temporary location
         import tempfile
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -1065,9 +1142,9 @@ process aggregate_results {{
             temp_yaml = f.name
 
         try:
-            # Run bv project init command
+            # Run bv module init command
             result = subprocess.run(
-                ["bv", "project", "init", "--spec", temp_yaml, "--target", str(target)],
+                ["bv", "module", "init", "--spec", temp_yaml, "--target", str(target)],
                 capture_output=True,
                 text=True,
             )
@@ -1308,7 +1385,7 @@ def export_bioscript_pipeline(
     steps: Sequence[Union[PipelineStep, Dict[str, Any]]],
     version: str = "0.1.0",
 ) -> BioVaultPipeline:
-    """Export a BioVault pipeline.yaml file."""
+    """Export a BioVault flow.yaml file."""
 
     if not steps:
         raise ValueError("export_bioscript_pipeline requires at least one step definition")
@@ -1414,10 +1491,10 @@ def export_notebook_as_project(
 
 # Convenience functions for notebook usage
 def load_project(path: Union[str, Path]) -> BioVaultProject:
-    """Load a BioVault project from a directory or YAML file."""
+    """Load a BioVault module from a directory or YAML file."""
     return BioVaultProject.from_yaml(path)
 
 
 def new_project(name: str, author: str) -> BioVaultProject:
-    """Create a new empty BioVault project."""
+    """Create a new empty BioVault module."""
     return BioVaultProject(name=name, author=author)
