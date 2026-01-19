@@ -51,7 +51,7 @@ def test_parameter_creation():
     assert d["type"] == "String"
     assert d["description"] == "Quality threshold"
     assert d["default"] == "30"
-    assert d["advanced"] is True
+    assert "advanced" not in d
 
     # Test round-trip
     param2 = Parameter.from_dict(d)
