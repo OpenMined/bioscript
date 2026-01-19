@@ -51,7 +51,7 @@ def test_parameter_creation():
     assert d["type"] == "String"
     assert d["description"] == "Quality threshold"
     assert d["default"] == "30"
-    assert d["advanced"] is True
+    assert "advanced" not in d
 
     # Test round-trip
     param2 = Parameter.from_dict(d)
@@ -78,7 +78,8 @@ def test_input_output_creation():
         path="results.csv",
     )
 
-    assert inp.to_dict()["format"] == "tsv"
+    assert inp.to_dict()["format"]["kind"] == "tsv"
+    assert out.to_dict()["format"]["kind"] == "csv"
     assert out.to_dict()["path"] == "results.csv"
 
 
@@ -146,16 +147,18 @@ def test_project_yaml_serialization():
     yaml_str = project.to_yaml()
     data = yaml.safe_load(yaml_str)
 
-    assert data["name"] == "test-classifier"
-    assert data["author"] == "test@example.com"
-    assert data["template"] == "dynamic-nextflow"
-    assert data["version"] == "0.1.0"
+    assert data["apiVersion"] == "syftbox.openmined.org/v1alpha1"
+    assert data["kind"] == "Module"
+    assert data["metadata"]["name"] == "test-classifier"
+    assert data["metadata"]["authors"] == ["test@example.com"]
+    assert data["metadata"]["version"] == "0.1.0"
+    assert data["spec"]["runner"]["template"] == "dynamic-nextflow"
 
     # Check default input/output
-    assert len(data["inputs"]) == 1
-    assert data["inputs"][0]["name"] == "genotype_file"
-    assert len(data["outputs"]) == 1
-    assert data["outputs"][0]["name"] == "classification_result"
+    assert len(data["spec"]["inputs"]) == 1
+    assert data["spec"]["inputs"][0]["name"] == "genotype_file"
+    assert len(data["spec"]["outputs"]) == 1
+    assert data["spec"]["outputs"][0]["name"] == "classification_result"
 
 
 def test_project_save_and_load():
@@ -169,7 +172,7 @@ def test_project_save_and_load():
 
         yaml_path = project.save(tmppath / "test-project")
         assert yaml_path.exists()
-        assert yaml_path.name == "project.yaml"
+        assert yaml_path.name == "module.yaml"
 
         # Load project
         loaded = load_project(tmppath / "test-project")
@@ -248,7 +251,7 @@ def test_project_export():
         export_path = project.export(tmppath / "exported")
 
         # Check exported files
-        assert (export_path / "project.yaml").exists()
+        assert (export_path / "module.yaml").exists()
         assert (export_path / "workflow.nf").exists()
         assert (export_path / "assets").is_dir()
 

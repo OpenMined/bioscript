@@ -1,0 +1,33 @@
+apiVersion: syftbox.openmined.org/v1alpha1
+kind: Module
+metadata:
+  name: thalassemia-classifier
+  version: 0.1.1
+  description: Classification of thalassemia-associated variants using ClinVar reference data.
+  authors:
+    - madhava@openmined.org
+spec:
+  runner:
+    kind: nextflow
+    entrypoint: workflow.nf
+    template: dynamic-nextflow
+  assets:
+    - path: classify_thalassemia.py
+    - path: thalassemia_clinvar.tsv
+  inputs:
+    - name: participants
+      type: List[GenotypeRecord]
+      description: CSV/TSV with participant_id and genotype_file columns
+      format:
+        kind: csv
+        mapping:
+          participant_id: participant_id
+          genotype_file: genotype_file
+  outputs:
+    - name: classification_result
+      type: File
+      description: Thalassemia variant classification (aggregated)
+      format:
+        kind: tsv
+      path: result_THALASSEMIA.tsv
+  parameters: []
