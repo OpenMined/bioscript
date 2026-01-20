@@ -53,8 +53,7 @@ process apol1_classifier {
     script:
     def genoFileName = genotype_file.getName()
     """
-    GENO_FILE=\$(printf '%q' "${genoFileName}")
-    bioscript classify "${assets_dir}/classify_apol1.py" --file \$GENO_FILE --participant_id "${participant_id}"
+    bioscript classify "${assets_dir}/classify_apol1.py" --file "${genoFileName}" --participant_id "${participant_id}"
     """
 }
 
