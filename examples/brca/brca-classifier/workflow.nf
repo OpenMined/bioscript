@@ -38,7 +38,7 @@ workflow USER {
 }
 
 process brca_classifier {
-    container 'ghcr.io/openmined/bioscript:0.1.5'
+    container 'ghcr.io/openmined/bioscript:0.1.6'
     publishDir params.results_dir, mode: 'copy', overwrite: true, pattern: 'result_BRCA_*.tsv'
     tag { participant_id }
     errorStrategy { params.nextflow.error_strategy }
@@ -58,7 +58,7 @@ process brca_classifier {
 }
 
 process aggregate_results {
-    container 'ghcr.io/openmined/bioscript:0.1.5'
+    container 'ghcr.io/openmined/bioscript:0.1.6'
     publishDir params.results_dir, mode: 'copy', overwrite: true
 
     input:
