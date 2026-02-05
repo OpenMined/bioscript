@@ -34,18 +34,19 @@ workflow USER {
         )
 
         // Aggregate population statistics
-        def population_stats = aggregate_population_stats(
-            tuple(assetsDirPath, aggregated)
+        def population_stats_ch = aggregate_population_stats(
+            Channel.value(assetsDirPath),
+            aggregated
         )
 
     emit:
         classification_result = aggregated
-        population_stats = population_stats
+        population_stats = population_stats_ch
 }
 
 process herc2_classifier {
     container 'ghcr.io/openmined/bioscript:0.1.6'
-    publishDir params.results_dir, mode: 'copy', overwrite: true, pattern: 'result_HERC2_stats_*.tsv'
+    publishDir params.results_dir, mode: 'copy', overwrite: true, pattern: 'result_HERC2_*.tsv'
     tag { participant_id }
     errorStrategy { params.nextflow.error_strategy }
     maxRetries { params.nextflow.max_retries }
@@ -54,7 +55,7 @@ process herc2_classifier {
         tuple path(assets_dir), val(participant_id), path(genotype_file)
 
     output:
-        path "result_HERC2_stats_${participant_id}.tsv"
+        path "result_HERC2_${participant_id}.tsv"
 
     script:
     def genoFileName = genotype_file.getName()
@@ -71,13 +72,13 @@ process aggregate_results {
         path individual_results
 
     output:
-        path "result_HERC2_stats.tsv"
+        path "result_HERC2.tsv"
 
     script:
     def manifestContent = individual_results.collect { it.toString() }.join('\n') + '\n'
     """
     cat <<'EOF' > results.list\n${manifestContent}EOF
-    bioscript combine --list results.list --output result_HERC2_stats.tsv
+    bioscript combine --list results.list --output result_HERC2.tsv
     """
 }
 
@@ -86,7 +87,8 @@ process aggregate_population_stats {
     publishDir params.results_dir, mode: 'copy', overwrite: true
 
     input:
-        tuple path(assets_dir), path(aggregated_results)
+        path assets_dir
+        path aggregated_results
 
     output:
         path "result_HERC2_stats.tsv"
