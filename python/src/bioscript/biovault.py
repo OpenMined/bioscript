@@ -1077,10 +1077,14 @@ process aggregate_results {{
                 raise FileNotFoundError(f"Asset source not found: {src_path}")
             dst_path = assets_dir / asset
             dst_path.parent.mkdir(parents=True, exist_ok=True)
-            if src_path.is_dir():
-                shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
-            else:
-                shutil.copy2(src_path, dst_path)
+            try:
+                if src_path.is_dir():
+                    shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src_path, dst_path)
+            except shutil.SameFileError:
+                # Asset already in place (common when exporting into project dir)
+                pass
             copied_assets.add(asset)
 
         # Export notebook if provided

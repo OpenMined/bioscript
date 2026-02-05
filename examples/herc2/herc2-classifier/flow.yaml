@@ -4,22 +4,23 @@ metadata:
   name: herc2-classifier
   version: 0.1.1
 spec:
+  steps:
+  - id: herc2
+    uses:
+      source:
+        kind: local
+        path: ./
+    with:
+      participants: inputs.samplesheet
+    publish:
+      classification_result: File(result_HERC2.tsv)
+      population_stats: File(result_HERC2_stats.tsv)
+    store:
+      counts_sql:
+        kind: sql
+        source: classification_result
+        table: herc2_{run_id}
+        key_column: participant_id
   inputs:
     samplesheet:
       type: List[GenotypeRecord]
-  steps:
-    - id: herc2
-      uses:
-        source:
-          kind: local
-          path: ./
-      with:
-        participants: inputs.samplesheet
-      publish:
-        classification_result: File(result_HERC2.tsv)
-      store:
-        counts_sql:
-          kind: sql
-          source: classification_result
-          table: herc2_{run_id}
-          key_column: participant_id
