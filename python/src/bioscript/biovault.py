@@ -763,7 +763,9 @@ class BioVaultProject:
                     if aggregated_path is None:
                         aggregated_path = output_spec.path
                         # Extract classifier name from aggregated path (e.g., result_HERC2.tsv -> HERC2)
-                        if aggregated_path.startswith("result_") and aggregated_path.endswith(".tsv"):
+                        if aggregated_path.startswith("result_") and aggregated_path.endswith(
+                            ".tsv"
+                        ):
                             classifier_name = aggregated_path[7:-4]  # Remove "result_" and ".tsv"
 
         if not classifier_name:
