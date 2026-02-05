@@ -33,8 +33,15 @@ workflow USER {
             per_participant_results.collect()
         )
 
+        // Aggregate population statistics
+        def population_stats_ch = aggregate_population_stats(
+            Channel.value(assetsDirPath),
+            aggregated
+        )
+
     emit:
         classification_result = aggregated
+        population_stats = population_stats_ch
 }
 
 process herc2_classifier {
@@ -72,5 +79,22 @@ process aggregate_results {
     """
     cat <<'EOF' > results.list\n${manifestContent}EOF
     bioscript combine --list results.list --output result_HERC2.tsv
+    """
+}
+
+process aggregate_population_stats {
+    container 'ghcr.io/openmined/bioscript:0.1.6'
+    publishDir params.results_dir, mode: 'copy', overwrite: true
+
+    input:
+        path assets_dir
+        path aggregated_results
+
+    output:
+        path "result_HERC2_stats.tsv"
+
+    script:
+    """
+    python3 "${assets_dir}/aggregate_population_stats.py"       --input "${aggregated_results}"       --output result_HERC2_stats.tsv
     """
 }

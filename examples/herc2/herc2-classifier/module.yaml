@@ -3,30 +3,38 @@ kind: Module
 metadata:
   name: herc2-classifier
   version: 0.1.1
-  description: Classification of HERC2 genotypes for eye color prediction.
   authors:
-    - madhava@openmined.org
+  - madhava@openmined.org
+  description: Classification of HERC2 genotypes for eye color prediction.
 spec:
   runner:
     kind: nextflow
     entrypoint: workflow.nf
     template: dynamic-nextflow
-  assets:
-    - path: classify_herc2.py
+    image: ghcr.io/openmined/bioscript:0.1.6
   inputs:
-    - name: participants
-      type: List[GenotypeRecord]
-      description: CSV/TSV with participant_id and genotype_file columns
-      format:
-        kind: csv
-        mapping:
-          participant_id: participant_id
-          genotype_file: genotype_file
+  - name: participants
+    type: List[GenotypeRecord]
+    description: CSV/TSV with participant_id and genotype_file columns
+    format:
+      kind: csv
+      mapping:
+        participant_id: participant_id
+        genotype_file: genotype_file
   outputs:
-    - name: classification_result
-      type: File
-      description: HERC2 eye color classification (aggregated)
-      format:
-        kind: tsv
-      path: result_HERC2.tsv
+  - name: classification_result
+    type: File
+    description: HERC2 eye color classification (aggregated)
+    format:
+      kind: tsv
+    path: result_HERC2.tsv
+  - name: population_stats
+    type: File
+    description: HERC2 population allele statistics (aggregated)
+    format:
+      kind: tsv
+    path: result_HERC2_stats.tsv
   parameters: []
+  assets:
+  - path: classify_herc2.py
+  - path: aggregate_population_stats.py

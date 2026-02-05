@@ -760,10 +760,11 @@ class BioVaultProject:
                 if "{participant_id}" in output_spec.path:
                     individual_pattern = output_spec.path.replace("{participant_id}", "*")
                 else:
-                    aggregated_path = output_spec.path
-                    # Extract classifier name from aggregated path (e.g., result_HERC2.tsv -> HERC2)
-                    if aggregated_path.startswith("result_") and aggregated_path.endswith(".tsv"):
-                        classifier_name = aggregated_path[7:-4]  # Remove "result_" and ".tsv"
+                    if aggregated_path is None:
+                        aggregated_path = output_spec.path
+                        # Extract classifier name from aggregated path (e.g., result_HERC2.tsv -> HERC2)
+                        if aggregated_path.startswith("result_") and aggregated_path.endswith(".tsv"):
+                            classifier_name = aggregated_path[7:-4]  # Remove "result_" and ".tsv"
 
         if not classifier_name:
             classifier_name = self.name.upper().replace("-", "_").replace(" ", "_")
@@ -1077,10 +1078,14 @@ process aggregate_results {{
                 raise FileNotFoundError(f"Asset source not found: {src_path}")
             dst_path = assets_dir / asset
             dst_path.parent.mkdir(parents=True, exist_ok=True)
-            if src_path.is_dir():
-                shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
-            else:
-                shutil.copy2(src_path, dst_path)
+            try:
+                if src_path.is_dir():
+                    shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src_path, dst_path)
+            except shutil.SameFileError:
+                # Asset already in place (common when exporting into project dir)
+                pass
             copied_assets.add(asset)
 
         # Export notebook if provided
