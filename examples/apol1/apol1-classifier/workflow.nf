@@ -59,7 +59,7 @@ workflow USER {
 }
 
 process apol1_classifier {
-    container 'ghcr.io/openmined/bioscript:0.1.6'
+    container 'ghcr.io/openmined/bioscript:0.1.7'
     publishDir params.results_dir, mode: 'copy', overwrite: true, pattern: 'result_APOL1_*.tsv'
     tag { participant_id }
     errorStrategy { params.nextflow.error_strategy }
@@ -79,7 +79,7 @@ process apol1_classifier {
 }
 
 process aggregate_results {
-    container 'ghcr.io/openmined/bioscript:0.1.6'
+    container 'ghcr.io/openmined/bioscript:0.1.7'
     publishDir params.results_dir, mode: 'copy', overwrite: true
 
     input:
@@ -97,7 +97,7 @@ process aggregate_results {
 }
 
 process aggregate_population_stats {
-    container 'ghcr.io/openmined/bioscript:0.1.6'
+    container 'ghcr.io/openmined/bioscript:0.1.7'
     publishDir params.results_dir, mode: 'copy', overwrite: true
 
     input:
@@ -116,7 +116,7 @@ process aggregate_population_stats {
 }
 
 process aggregate_classification_stats {
-    container 'ghcr.io/openmined/bioscript:0.1.6'
+    container 'ghcr.io/openmined/bioscript:0.1.7'
     publishDir params.results_dir, mode: 'copy', overwrite: true
 
     input:
@@ -135,7 +135,7 @@ process aggregate_classification_stats {
 }
 
 process aggregate_apol1_status {
-    container 'ghcr.io/openmined/bioscript:0.1.6'
+    container 'ghcr.io/openmined/bioscript:0.1.7'
     publishDir params.results_dir, mode: 'copy', overwrite: true
 
     input:

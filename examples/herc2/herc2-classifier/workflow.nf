@@ -45,7 +45,7 @@ workflow USER {
 }
 
 process herc2_classifier {
-    container 'ghcr.io/openmined/bioscript:0.1.6'
+    container 'ghcr.io/openmined/bioscript:0.1.7'
     publishDir params.results_dir, mode: 'copy', overwrite: true, pattern: 'result_HERC2_*.tsv'
     tag { participant_id }
     errorStrategy { params.nextflow.error_strategy }
@@ -65,7 +65,7 @@ process herc2_classifier {
 }
 
 process aggregate_results {
-    container 'ghcr.io/openmined/bioscript:0.1.6'
+    container 'ghcr.io/openmined/bioscript:0.1.7'
     publishDir params.results_dir, mode: 'copy', overwrite: true
 
     input:
@@ -83,7 +83,7 @@ process aggregate_results {
 }
 
 process aggregate_population_stats {
-    container 'ghcr.io/openmined/bioscript:0.1.6'
+    container 'ghcr.io/openmined/bioscript:0.1.7'
     publishDir params.results_dir, mode: 'copy', overwrite: true
 
     input:
