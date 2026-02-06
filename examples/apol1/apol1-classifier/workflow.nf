@@ -51,11 +51,18 @@ workflow USER {
             aggregated
         )
 
+        // Count distinct diploid classification groups (G0/G0, G1/G0, etc.)
+        def group_stats_ch = aggregate_apol1_group_stats(
+            Channel.value(assetsDirPath),
+            aggregated
+        )
+
     emit:
         classification_result = aggregated
         population_stats = population_stats_ch
         classification_stats = classification_stats_ch
         apol1_status = apol1_status_ch
+        group_stats = group_stats_ch
 }
 
 process apol1_classifier {
@@ -150,5 +157,24 @@ process aggregate_apol1_status {
     python3 "${assets_dir}/aggregate_apol1_status.py" \
       --input "${aggregated_results}" \
       --output result_APOL1_status.tsv
+    """
+}
+
+process aggregate_apol1_group_stats {
+    container 'ghcr.io/openmined/bioscript:0.1.7'
+    publishDir params.results_dir, mode: 'copy', overwrite: true
+
+    input:
+        path assets_dir
+        path aggregated_results
+
+    output:
+        path "result_APOL1_group_stats.tsv"
+
+    script:
+    """
+    python3 "${assets_dir}/aggregate_apol1_group_stats.py" \
+      --input "${aggregated_results}" \
+      --output result_APOL1_group_stats.tsv
     """
 }
