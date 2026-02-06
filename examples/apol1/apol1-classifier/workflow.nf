@@ -33,8 +33,29 @@ workflow USER {
             per_participant_results.collect()
         )
 
+        // Aggregate population statistics
+        def population_stats_ch = aggregate_population_stats(
+            Channel.value(assetsDirPath),
+            aggregated
+        )
+
+        // Aggregate APOL1 status statistics (G0/G1/G2 with hetero/homo counts)
+        def classification_stats_ch = aggregate_classification_stats(
+            Channel.value(assetsDirPath),
+            aggregated
+        )
+
+        // Emit per-participant APOL1 status summary.
+        def apol1_status_ch = aggregate_apol1_status(
+            Channel.value(assetsDirPath),
+            aggregated
+        )
+
     emit:
         classification_result = aggregated
+        population_stats = population_stats_ch
+        classification_stats = classification_stats_ch
+        apol1_status = apol1_status_ch
 }
 
 process apol1_classifier {
@@ -72,5 +93,62 @@ process aggregate_results {
     """
     cat <<'EOF' > results.list\n${manifestContent}EOF
     bioscript combine --list results.list --output result_APOL1.tsv
+    """
+}
+
+process aggregate_population_stats {
+    container 'ghcr.io/openmined/bioscript:0.1.6'
+    publishDir params.results_dir, mode: 'copy', overwrite: true
+
+    input:
+        path assets_dir
+        path aggregated_results
+
+    output:
+        path "result_APOL1_stats.tsv"
+
+    script:
+    """
+    python3 "${assets_dir}/aggregate_population_stats.py" \
+      --input "${aggregated_results}" \
+      --output result_APOL1_stats.tsv
+    """
+}
+
+process aggregate_classification_stats {
+    container 'ghcr.io/openmined/bioscript:0.1.6'
+    publishDir params.results_dir, mode: 'copy', overwrite: true
+
+    input:
+        path assets_dir
+        path aggregated_results
+
+    output:
+        path "result_APOL1_classification_stats.tsv"
+
+    script:
+    """
+    python3 "${assets_dir}/aggregate_classification_stats.py" \
+      --input "${aggregated_results}" \
+      --output result_APOL1_classification_stats.tsv
+    """
+}
+
+process aggregate_apol1_status {
+    container 'ghcr.io/openmined/bioscript:0.1.6'
+    publishDir params.results_dir, mode: 'copy', overwrite: true
+
+    input:
+        path assets_dir
+        path aggregated_results
+
+    output:
+        path "apol1_status.tsv"
+
+    script:
+    """
+    python3 "${assets_dir}/aggregate_apol1_status.py" \
+      --input "${aggregated_results}" \
+      --output apol1_status.tsv
     """
 }

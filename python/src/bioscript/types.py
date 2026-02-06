@@ -419,6 +419,8 @@ class VariantMatch:
             "alt": alt,
             "variant_type": variant_type,
             "match_type": match_type,
+            "ref_count": self.ref_count,
+            "alt_count": self.alt_count,
             "filename": filename,
         }
 

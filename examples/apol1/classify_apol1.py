@@ -18,6 +18,15 @@ MISSING = "G-"
 from bioscript import write_tsv
 from bioscript.types import MatchType
 
+def _format_allele_label(allele):
+    if isinstance(allele, Alleles):
+        return ",".join(sorted(a.value for a in allele))
+    if isinstance(allele, str):
+        return allele
+    if hasattr(allele, "__iter__"):
+        return ",".join(sorted(str(a) for a in allele))
+    return str(allele)
+
 class APOL1Classifier(GenotypeClassifier):
     def classify(self, matches) -> list[dict[str, object]]:
         g2_match = matches.get(rs71785313)
@@ -71,12 +80,23 @@ class APOL1Classifier(GenotypeClassifier):
 
             if match:
                 genotype = match.genotype_sorted
-                match_type = (
-                    match.match_type.value if not match.has_missing else MatchType.NO_CALL.value
-                )
+                raw_match_type = match.match_type.value
+                if match.has_missing or raw_match_type == MatchType.NO_CALL.value:
+                    match_type = MatchType.NO_CALL.value
+                    ref_count = 0
+                    alt_count = 0
+                else:
+                    match_type = raw_match_type
+                    ref_count = match.ref_count
+                    alt_count = match.alt_count
             else:
                 genotype = None
                 match_type = MatchType.NO_CALL.value
+                ref_count = 0
+                alt_count = 0
+
+            ref_label = _format_allele_label(variant_call.ref)
+            alt_label = _format_allele_label(variant_call.alt)
 
             report_rows.append(
                 {
@@ -85,8 +105,12 @@ class APOL1Classifier(GenotypeClassifier):
                     "rsid": rsid,
                     "chromosome": chromosome,
                     "position": position,
+                    "ref": ref_label,
+                    "alt": alt_label,
                     "genotype": genotype,
                     "match_type": match_type,
+                    "ref_count": ref_count,
+                    "alt_count": alt_count,
                     "apol1_status": apol1_status,
                 }
             )
@@ -134,6 +158,10 @@ def classify_fixture(genotypes):
     for row in rows.values():
         assert row["participant_id"] == "TEST_ID"
         assert row["filename"] == "test.txt"
+        assert "ref" in row
+        assert "alt" in row
+        assert "ref_count" in row
+        assert "alt_count" in row
     return rows
 
 def test_g0_homozygous():
@@ -141,14 +169,56 @@ def test_g0_homozygous():
     assert rows["rs71785313"]["apol1_status"] == "G0/G0"
     assert rows["rs71785313"]["genotype"] == "II"
     assert rows["rs71785313"]["match_type"] == MatchType.NO_CALL.value
+    assert rows["rs71785313"]["ref_count"] == 0
+    assert rows["rs71785313"]["alt_count"] == 0
 
     assert rows["rs73885319"]["apol1_status"] == "G0/G0"
     assert rows["rs73885319"]["genotype"] == "AA"
     assert rows["rs73885319"]["match_type"] == MatchType.REFERENCE_CALL.value
+    assert rows["rs73885319"]["ref_count"] == 2
+    assert rows["rs73885319"]["alt_count"] == 0
 
     assert rows["rs60910145"]["apol1_status"] == "G0/G0"
     assert rows["rs60910145"]["genotype"] == "TT"
     assert rows["rs60910145"]["match_type"] == MatchType.REFERENCE_CALL.value
+    assert rows["rs60910145"]["ref_count"] == 2
+    assert rows["rs60910145"]["alt_count"] == 0
+
+    cleanup_output()
+
+def test_all_apol1_status_combinations():
+    cases = [
+        ("G0/G0", ["AA", "TT", "II"], {"rs73885319": "AA", "rs60910145": "TT", "rs71785313": "II"}),
+        ("G1/G0", ["AG", "TC", "II"], {"rs73885319": "AG", "rs60910145": "CT", "rs71785313": "II"}),
+        ("G1/G1", ["GG", "CC", "II"], {"rs73885319": "GG", "rs60910145": "CC", "rs71785313": "II"}),
+        ("G2/G0", ["AA", "TT", "ID"], {"rs73885319": "AA", "rs60910145": "TT", "rs71785313": "DI"}),
+        ("G2/G1", ["AG", "TC", "ID"], {"rs73885319": "AG", "rs60910145": "CT", "rs71785313": "DI"}),
+        ("G2/G2", ["AA", "TT", "DD"], {"rs73885319": "AA", "rs60910145": "TT", "rs71785313": "DD"}),
+    ]
+
+    for expected_status, genotypes, expected_genotypes in cases:
+        rows = classify_fixture(genotypes)
+
+        assert set(rows.keys()) == {"rs73885319", "rs60910145", "rs71785313"}
+        assert all(row["apol1_status"] == expected_status for row in rows.values())
+
+        for rsid, expected_genotype in expected_genotypes.items():
+            assert rows[rsid]["genotype"] == expected_genotype
+
+        # rs71785313 is present in every test case and currently emitted as No call by the matcher.
+        assert rows["rs71785313"]["match_type"] == MatchType.NO_CALL.value
+        assert rows["rs71785313"]["ref_count"] == 0
+        assert rows["rs71785313"]["alt_count"] == 0
+
+        # rs73885319 and rs60910145 must still be callable and typed correctly.
+        assert rows["rs73885319"]["match_type"] in {
+            MatchType.REFERENCE_CALL.value,
+            MatchType.VARIANT_CALL.value,
+        }
+        assert rows["rs60910145"]["match_type"] in {
+            MatchType.REFERENCE_CALL.value,
+            MatchType.VARIANT_CALL.value,
+        }
 
     cleanup_output()
 
@@ -158,11 +228,17 @@ def test_g1_homozygous():
 
     assert rows["rs73885319"]["genotype"] == "GG"
     assert rows["rs73885319"]["match_type"] == MatchType.VARIANT_CALL.value
+    assert rows["rs73885319"]["ref_count"] == 0
+    assert rows["rs73885319"]["alt_count"] == 2
 
     assert rows["rs60910145"]["genotype"] == "CC"
     assert rows["rs60910145"]["match_type"] == MatchType.VARIANT_CALL.value
+    assert rows["rs60910145"]["ref_count"] == 0
+    assert rows["rs60910145"]["alt_count"] == 2
 
     assert rows["rs71785313"]["genotype"] == "II"
     assert rows["rs71785313"]["match_type"] == MatchType.NO_CALL.value
+    assert rows["rs71785313"]["ref_count"] == 0
+    assert rows["rs71785313"]["alt_count"] == 0
 
     cleanup_output()
