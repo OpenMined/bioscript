@@ -45,7 +45,7 @@ spec:
     description: Per-participant APOL1 status summary
     format:
       kind: tsv
-    path: apol1_status.tsv
+    path: result_APOL1_status.tsv
   parameters: []
   assets:
   - path: classify_apol1.py

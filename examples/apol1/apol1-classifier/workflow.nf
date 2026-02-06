@@ -143,12 +143,12 @@ process aggregate_apol1_status {
         path aggregated_results
 
     output:
-        path "apol1_status.tsv"
+        path "result_APOL1_status.tsv"
 
     script:
     """
     python3 "${assets_dir}/aggregate_apol1_status.py" \
       --input "${aggregated_results}" \
-      --output apol1_status.tsv
+      --output result_APOL1_status.tsv
     """
 }
