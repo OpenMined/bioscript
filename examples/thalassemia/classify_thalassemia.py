@@ -18,6 +18,8 @@ RESULT_HEADERS = [
     'alt',
     'variant_type',
     'match_type',
+    'ref_count',
+    'alt_count',
 ]
 
 def generate_variant_calls(df: pd.DataFrame) -> list[VariantCall]:

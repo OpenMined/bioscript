@@ -4,22 +4,25 @@ metadata:
   name: apol1-classifier
   version: 0.1.1
 spec:
+  steps:
+  - id: apol1
+    uses:
+      source:
+        kind: local
+        path: ./
+    with:
+      participants: inputs.samplesheet
+    publish:
+      classification_result: File(result_APOL1.tsv)
+      population_stats: File(result_APOL1_stats.tsv)
+      classification_stats: File(result_APOL1_classification_stats.tsv)
+      apol1_status: File(result_APOL1_status.tsv)
+    store:
+      counts_sql:
+        kind: sql
+        source: classification_result
+        table: apol1_{run_id}
+        key_column: participant_id
   inputs:
     samplesheet:
       type: List[GenotypeRecord]
-  steps:
-    - id: apol1
-      uses:
-        source:
-          kind: local
-          path: ./
-      with:
-        participants: inputs.samplesheet
-      publish:
-        classification_result: File(result_APOL1.tsv)
-      store:
-        counts_sql:
-          kind: sql
-          source: classification_result
-          table: apol1_{run_id}
-          key_column: participant_id
