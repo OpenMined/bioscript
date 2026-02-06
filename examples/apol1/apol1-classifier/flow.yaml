@@ -17,6 +17,7 @@ spec:
       population_stats: File(result_APOL1_stats.tsv)
       classification_stats: File(result_APOL1_classification_stats.tsv)
       apol1_status: File(result_APOL1_status.tsv)
+      group_stats: File(result_APOL1_group_stats.tsv)
     store:
       counts_sql:
         kind: sql
