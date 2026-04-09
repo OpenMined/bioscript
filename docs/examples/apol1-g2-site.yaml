@@ -1,0 +1,53 @@
+schema: "bioscript:variant"
+version: "1.0"
+variant_id: "APOL1_G2"
+label: "APOL1 G2 deletion"
+gene: "APOL1"
+summary: "6 bp deletion associated with APOL1 G2 haplotype"
+
+identifiers:
+  rsids:
+    - "rs71785313"
+    - "rs1317778148"
+    - "rs143830837"
+
+coordinates:
+  grch37:
+    chrom: "22"
+    start: 36662046
+    end: 36662051
+  grch38:
+    chrom: "22"
+    start: 36266000
+    end: 36266005
+
+alleles:
+  kind: "deletion"
+  ref: "I"
+  alts:
+    - "D"
+  canonical_alt: "D"
+  deletion_length: 6
+  motifs:
+    - "TTATAA"
+    - "ATAATT"
+  equivalent_coordinates:
+    grch37:
+      - "22:36662042-36662047"
+      - "22:36662046-36662051"
+    grch38:
+      - "22:36265996-36266001"
+      - "22:36266000-36266005"
+  notes:
+    - "Repeat-context deletion may be left/right shifted across equivalent representations"
+    - "Normalize against the correct assembly FASTA before exact comparison"
+
+research:
+  tasks:
+    - "Confirm canonical dbSNP representation"
+    - "Verify normalized deletion representations in repeat context"
+  tags:
+    - "apol1"
+    - "g2"
+    - "deletion"
+    - "indel"

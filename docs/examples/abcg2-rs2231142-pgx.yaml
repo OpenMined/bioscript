@@ -1,0 +1,106 @@
+schema: "bioscript:variant"
+version: "1.0"
+variant_id: "ABCG2_rs2231142"
+label: "ABCG2 rs2231142"
+gene: "ABCG2"
+summary: "ABCG2 SNV locus with pharmacogenomic interpretation"
+
+identifiers:
+  rsids:
+    - "rs2231142"
+
+coordinates:
+  grch37:
+    chrom: "4"
+    pos: 89052323
+  grch38:
+    chrom: "4"
+    pos: 88131171
+
+alleles:
+  kind: "snv"
+  ref: "G"
+  alts:
+    - "A"
+    - "C"
+    - "T"
+  canonical_alt: "A"
+
+research:
+  tasks:
+    - "Verify canonical dbSNP, ClinVar, and Ensembl annotations"
+    - "Collect PharmGKB and disease-association references for ABCG2"
+  tags:
+    - "abcg2"
+    - "pgx"
+    - "snv"
+    - "rs2231142"
+
+clinical:
+  pgx:
+    gene: "ABCG2"
+    source: "ClinPGx"
+    variant_page_url: "https://www.clinpgx.org/variant/PA166156544/labelAnnotation"
+    drug_labels:
+      - source: "HCSC"
+        title: "Annotation of HCSC Label for rosuvastatin and ABCG2, SLCO1B1"
+        genes:
+          - "ABCG2"
+          - "SLCO1B1"
+        drugs:
+          - "rosuvastatin"
+        pgx_level: "Actionable PGx"
+        actionable: true
+        tags:
+          - "Dosing Info"
+          - "Prescribing Info"
+          - "Pediatric"
+        annotation_url: "https://www.clinpgx.org/variant/PA166156544/labelAnnotation"
+      - source: "Swissmedic"
+        title: "Annotation of Swissmedic Label for rosuvastatin and ABCG2, SLCO1B1"
+        genes:
+          - "ABCG2"
+          - "SLCO1B1"
+        drugs:
+          - "rosuvastatin"
+        pgx_level: "Actionable PGx"
+        actionable: true
+        tags:
+          - "Dosing Info"
+          - "Prescribing Info"
+        annotation_url: "https://www.clinpgx.org/variant/PA166156544/labelAnnotation"
+      - source: "Swissmedic"
+        title: "Annotation of Swissmedic Label for ezetimibe / rosuvastatin and ABCG2, SLCO1B1"
+        genes:
+          - "ABCG2"
+          - "SLCO1B1"
+        drugs:
+          - "ezetimibe / rosuvastatin"
+        pgx_level: "Actionable PGx"
+        actionable: true
+        tags:
+          - "Dosing Info"
+          - "Prescribing Info"
+        annotation_url: "https://www.clinpgx.org/variant/PA166156544/labelAnnotation"
+      - source: "FDA"
+        title: "Annotation of FDA Label for resmetirom and ABCG2"
+        genes:
+          - "ABCG2"
+        drugs:
+          - "resmetirom"
+        pgx_level: "No Clinical PGx"
+        actionable: false
+        tags:
+          - "FDA Biomarker"
+        annotation_url: "https://www.clinpgx.org/variant/PA166156544/labelAnnotation"
+      - source: "FDA"
+        title: "Annotation of FDA Label for sepiapterin and ABCG2"
+        genes:
+          - "ABCG2"
+        drugs:
+          - "sepiapterin"
+        pgx_level: "No Clinical PGx"
+        actionable: false
+        tags:
+          - "FDA Biomarker"
+        annotation_url: "https://www.clinpgx.org/variant/PA166156544/labelAnnotation"
