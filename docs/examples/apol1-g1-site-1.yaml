@@ -1,0 +1,33 @@
+schema: "bioscript:variant"
+version: "1.0"
+variant_id: "APOL1_G1_rs73885319"
+label: "APOL1 G1 site 1"
+gene: "APOL1"
+summary: "APOL1 G1 site 1 SNV"
+
+identifiers:
+  rsids:
+    - "rs73885319"
+
+coordinates:
+  grch37:
+    chrom: "22"
+    pos: 36661906
+  grch38:
+    chrom: "22"
+    pos: 36265860
+
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts:
+    - "G"
+  canonical_alt: "G"
+
+research:
+  tasks:
+    - "Verify canonical annotation and protein consequence"
+  tags:
+    - "apol1"
+    - "g1"
+    - "snv"

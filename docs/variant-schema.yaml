@@ -1,0 +1,74 @@
+schema: "bioscript:variant"
+version: "1.0"
+variant_id: "string"
+label: "string"
+gene: "string"
+summary: "string"
+
+identifiers:
+  rsids:
+    - "string"
+  aliases:
+    - "string"
+
+coordinates:
+  grch37:
+    chrom: "string"
+    pos: 0
+  grch38:
+    chrom: "string"
+    start: 0
+    end: 0
+
+alleles:
+  kind: "snv"
+  ref: "string"
+  alts:
+    - "string"
+  canonical_alt: "string"
+  deletion_length: 0
+  insertion_sequence: "string"
+  motifs:
+    - "string"
+  equivalent_coordinates:
+    grch37:
+      - "string"
+    grch38:
+      - "string"
+  notes:
+    - "string"
+
+research:
+  tasks:
+    - "string"
+  tags:
+    - "string"
+
+clinical:
+  pgx:
+    gene: "string"
+    source: "ClinPGx"
+    variant_page_url: "https://example.org"
+    drug_labels:
+      - source: "FDA"
+        title: "string"
+        genes:
+          - "string"
+        drugs:
+          - "string"
+        pgx_level: "Actionable PGx"
+        actionable: true
+        tags:
+          - "Dosing Info"
+        annotation_url: "https://example.org"
+        note: "string"
+    clinical_annotations:
+      - source: "CPIC"
+        title: "string"
+        genes:
+          - "string"
+        drugs:
+          - "string"
+        level: "string"
+        actionable: true
+        annotation_url: "https://example.org"

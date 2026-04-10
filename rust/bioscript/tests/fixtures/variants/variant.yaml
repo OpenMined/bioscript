@@ -1,0 +1,27 @@
+
+schema: "bioscript:variant"
+version: "1.0"
+variant_id: "TEST_rs1"
+identifiers:
+  rsids:
+    - "rs1"
+coordinates:
+  grch38:
+    chrom: "1"
+    pos: 100
+alleles:
+  kind: "snv"
+  ref: "G"
+  alts: ["A"]
+research:
+  tags:
+    - "snp"
+clinical:
+  pgx:
+    drug_labels:
+      - source: "FDA"
+        title: "Example"
+        genes: ["GENE1"]
+        drugs: ["drug1"]
+        pgx_level: ""
+        actionable: false
