@@ -1,10 +1,15 @@
 use std::{
-    collections::hash_map::DefaultHasher,
     fs,
-    hash::{Hash, Hasher},
     path::{Path, PathBuf},
 };
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 use rust_htslib::{bam, faidx};
 
 use crate::genotype::GenotypeSourceFormat;
@@ -106,6 +111,14 @@ fn detect_alignment_input(path: &Path) -> bool {
 }
 
 fn ensure_alignment_index(path: &Path, cache_dir: &Path) -> Result<PathBuf, String> {
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+    {
+        let _ = (path, cache_dir);
+        return Err("alignment indexing is not supported on Apple mobile targets".to_owned());
+    }
+
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+    {
     if let Some(existing) = adjacent_alignment_index(path) {
         return Ok(existing);
     }
@@ -137,8 +150,10 @@ fn ensure_alignment_index(path: &Path, cache_dir: &Path) -> Result<PathBuf, Stri
         )
     })?;
     Ok(out)
+    }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn adjacent_alignment_index(path: &Path) -> Option<PathBuf> {
     let lower = path.to_string_lossy().to_ascii_lowercase();
     let candidates = if lower.ends_with(".cram") {
@@ -156,6 +171,14 @@ fn adjacent_alignment_index(path: &Path) -> Option<PathBuf> {
 }
 
 fn ensure_reference_index(path: &Path, cache_dir: &Path) -> Result<(PathBuf, PathBuf), String> {
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
+    {
+        let _ = (path, cache_dir);
+        return Err("reference indexing is not supported on Apple mobile targets".to_owned());
+    }
+
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+    {
     let adjacent = adjacent_reference_index(path);
     if let Some(index) = adjacent {
         return Ok((path.to_path_buf(), index));
@@ -179,13 +202,16 @@ fn ensure_reference_index(path: &Path, cache_dir: &Path) -> Result<(PathBuf, Pat
     }
 
     Ok((cached_reference, cached_index))
+    }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn adjacent_reference_index(path: &Path) -> Option<PathBuf> {
     let candidate = cached_reference_index_path(path);
     candidate.exists().then_some(candidate)
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn cached_reference_index_path(path: &Path) -> PathBuf {
     if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
         path.with_extension(format!("{ext}.fai"))
@@ -194,6 +220,7 @@ fn cached_reference_index_path(path: &Path) -> PathBuf {
     }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn create_reference_link(source: &Path, target: &Path) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)
@@ -225,6 +252,7 @@ fn create_reference_link(source: &Path, target: &Path) -> Result<(), String> {
     }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn stable_stem(path: &Path) -> String {
     let mut hasher = DefaultHasher::new();
     path.to_string_lossy().hash(&mut hasher);
@@ -237,6 +265,7 @@ fn stable_stem(path: &Path) -> String {
     format!("{file_name}-{hash:016x}")
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn cache_reference_name(path: &Path) -> String {
     let file_name = path
         .file_name()

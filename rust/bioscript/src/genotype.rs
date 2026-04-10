@@ -7,11 +7,14 @@ use std::{
 };
 
 use noodles::bgzf;
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 use rust_htslib::bam::{self, Read};
 use zip::ZipArchive;
 
 use crate::runtime::RuntimeError;
-use crate::variant::{Assembly, VariantKind, VariantObservation, VariantSpec};
+use crate::variant::{VariantObservation, VariantSpec};
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+use crate::variant::{Assembly, VariantKind};
 
 const COMMENT_PREFIXES: [&str; 2] = ["#", "//"];
 
@@ -65,6 +68,7 @@ struct DelimitedBackend {
     zip_entry_name: Option<String>,
 }
 
+#[cfg_attr(any(target_os = "ios", target_os = "tvos"), allow(dead_code))]
 #[derive(Debug, Clone)]
 struct CramBackend {
     path: PathBuf,
@@ -249,7 +253,7 @@ impl GenotypeStore {
             },
             QueryBackend::Cram(_) => BackendCapabilities {
                 rsid_lookup: false,
-                locus_lookup: true,
+                locus_lookup: cfg!(not(any(target_os = "ios", target_os = "tvos"))),
             },
         }
     }
@@ -371,6 +375,7 @@ impl DelimitedBackend {
     }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 impl CramBackend {
     fn backend_name(&self) -> &'static str {
         "cram"
@@ -636,6 +641,20 @@ impl CramBackend {
     }
 }
 
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
+impl CramBackend {
+    fn backend_name(&self) -> &'static str {
+        "cram"
+    }
+
+    fn lookup_variant(&self, _variant: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "CRAM/BAM-backed lookup is not supported on Apple mobile targets".to_owned(),
+        ))
+    }
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn choose_variant_locus(variant: &VariantSpec, reference_file: &Path) -> Option<(Assembly, GenomicLocus)> {
     match detect_reference_assembly(reference_file) {
         Some(Assembly::Grch38) => variant
@@ -656,6 +675,7 @@ fn choose_variant_locus(variant: &VariantSpec, reference_file: &Path) -> Option<
     }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn detect_reference_assembly(reference_file: &Path) -> Option<Assembly> {
     let lower = reference_file.to_string_lossy().to_ascii_lowercase();
     if lower.contains("grch38") || lower.contains("hg38") || lower.contains("assembly38") {
@@ -667,6 +687,7 @@ fn detect_reference_assembly(reference_file: &Path) -> Option<Assembly> {
     }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn fetch_locus(reader: &mut bam::IndexedReader, locus: &GenomicLocus) -> Result<(), RuntimeError> {
     let tid = header_tid(reader.header(), &locus.chrom).ok_or_else(|| {
         RuntimeError::Unsupported(format!(
@@ -686,15 +707,18 @@ fn fetch_locus(reader: &mut bam::IndexedReader, locus: &GenomicLocus) -> Result<
     })
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn header_tid(header: &bam::HeaderView, chrom: &str) -> Option<u32> {
     let candidates = [chrom.to_owned(), format!("chr{chrom}"), chrom.trim_start_matches("chr").to_owned()];
     candidates.iter().find_map(|candidate| header.tid(candidate.as_bytes()))
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn describe_locus(locus: &GenomicLocus) -> String {
     format!("{}:{}-{}", locus.chrom, locus.start, locus.end)
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn anchor_window(locus: &GenomicLocus) -> GenomicLocus {
     let anchor = locus.start.saturating_sub(1);
     GenomicLocus {
@@ -704,10 +728,12 @@ fn anchor_window(locus: &GenomicLocus) -> GenomicLocus {
     }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn first_base(value: &str) -> Option<char> {
     value.trim().chars().next().map(|ch| ch.to_ascii_uppercase())
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn infer_snp_genotype(
     reference: char,
     alternate: char,
@@ -728,6 +754,7 @@ fn infer_snp_genotype(
     }
 }
 
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn infer_copy_number_genotype(
     reference: &str,
     alternate: &str,
@@ -823,6 +850,7 @@ fn detect_delimiter(lines: &[String]) -> Delimiter {
     Delimiter::Tab
 }
 
+#[allow(dead_code)]
 struct RowParser {
     delimiter: Delimiter,
     header: Option<Vec<String>>,
@@ -830,6 +858,7 @@ struct RowParser {
     alias_map: HashMap<&'static str, BTreeSet<&'static str>>,
 }
 
+#[allow(dead_code)]
 impl RowParser {
     fn new(delimiter: Delimiter) -> Self {
         let mut alias_map = HashMap::new();
