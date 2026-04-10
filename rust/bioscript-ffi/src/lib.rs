@@ -102,7 +102,14 @@ pub fn run_file_request(request: RunFileRequest) -> Result<RunFileResult, String
             .cache_dir
             .as_ref()
             .map(PathBuf::from)
-            .unwrap_or_else(|| cwd.join(".bioscript-cache"));
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    runtime_root.join(path)
+                }
+            })
+            .unwrap_or_else(|| runtime_root.join(".bioscript-cache"));
         let prepare_request = PrepareRequest {
             root: runtime_root.clone(),
             cwd: cwd.clone(),
