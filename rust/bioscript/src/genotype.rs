@@ -48,6 +48,7 @@ pub struct GenotypeStore {
 #[derive(Debug, Clone)]
 enum QueryBackend {
     RsidMap(RsidMapBackend),
+    Delimited(DelimitedBackend),
     Cram(CramBackend),
 }
 
@@ -55,6 +56,13 @@ enum QueryBackend {
 struct RsidMapBackend {
     format: GenotypeSourceFormat,
     values: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+struct DelimitedBackend {
+    format: GenotypeSourceFormat,
+    path: PathBuf,
+    zip_entry_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -119,29 +127,11 @@ impl GenotypeStore {
 
     pub fn from_file_with_options(path: &Path, options: &GenotypeLoadOptions) -> Result<Self, RuntimeError> {
         match detect_source_format(path, options.format)? {
-            GenotypeSourceFormat::Text => Self::from_text_lines(read_plain_lines(path)?),
+            GenotypeSourceFormat::Text => Ok(Self::from_delimited_file(path, GenotypeSourceFormat::Text, None)),
             GenotypeSourceFormat::Zip => Self::from_zip_file(path),
             GenotypeSourceFormat::Vcf => Self::from_vcf_file(path),
             GenotypeSourceFormat::Cram => Self::from_cram_file(path, options),
         }
-    }
-
-    fn from_text_lines(lines: Vec<String>) -> Result<Self, RuntimeError> {
-        if lines.is_empty() {
-            return Ok(Self::from_rsid_map(GenotypeSourceFormat::Text, HashMap::new()));
-        }
-
-        let delimiter = detect_delimiter(&lines);
-        let mut parser = RowParser::new(delimiter);
-        let mut values = HashMap::new();
-
-        for line in lines {
-            if let Some((rsid, genotype)) = parser.consume_line(&line)? {
-                values.insert(rsid, genotype);
-            }
-        }
-
-        Ok(Self::from_rsid_map(GenotypeSourceFormat::Text, values))
     }
 
     fn from_vcf_file(path: &Path) -> Result<Self, RuntimeError> {
@@ -159,60 +149,25 @@ impl GenotypeStore {
     }
 
     fn from_zip_file(path: &Path) -> Result<Self, RuntimeError> {
-        let file = File::open(path)
-            .map_err(|err| RuntimeError::Io(format!("failed to open genotype zip {}: {err}", path.display())))?;
-        let mut archive = ZipArchive::new(file)
-            .map_err(|err| RuntimeError::Io(format!("failed to read genotype zip {}: {err}", path.display())))?;
-
-        let mut selected_idx = None;
-        for idx in 0..archive.len() {
-            let entry = archive.by_index(idx).map_err(|err| {
-                RuntimeError::Io(format!("failed to inspect genotype zip {}: {err}", path.display()))
+        let selected = select_zip_entry(path)?;
+        let lower = selected.to_ascii_lowercase();
+        if lower.ends_with(".vcf") || lower.ends_with(".vcf.gz") {
+            let file = File::open(path).map_err(|err| {
+                RuntimeError::Io(format!("failed to open genotype zip {}: {err}", path.display()))
             })?;
-            if entry.is_dir() {
-                continue;
-            }
-            let name = entry.name().to_ascii_lowercase();
-            if name.ends_with(".txt")
-                || name.ends_with(".csv")
-                || name.ends_with(".tsv")
-                || name.ends_with(".vcf")
-                || name.ends_with(".vcf.gz")
-            {
-                selected_idx = Some(idx);
-                break;
-            }
-            if selected_idx.is_none() {
-                selected_idx = Some(idx);
-            }
+            let mut archive = ZipArchive::new(file).map_err(|err| {
+                RuntimeError::Io(format!("failed to read genotype zip {}: {err}", path.display()))
+            })?;
+            let entry = archive.by_name(&selected).map_err(|err| {
+                RuntimeError::Io(format!(
+                    "failed to open genotype entry {selected} in {}: {err}",
+                    path.display()
+                ))
+            })?;
+            let lines = read_lines_from_reader(BufReader::new(entry), path)?;
+            return Self::from_vcf_lines(lines);
         }
-
-        let Some(idx) = selected_idx else {
-            return Err(RuntimeError::Unsupported(format!(
-                "zip archive {} does not contain a supported genotype file",
-                path.display()
-            )));
-        };
-
-        let entry_name = {
-            let entry = archive.by_index(idx).map_err(|err| {
-                RuntimeError::Io(format!("failed to inspect genotype zip {}: {err}", path.display()))
-            })?;
-            entry.name().to_owned()
-        };
-
-        let lines = {
-            let entry = archive.by_index(idx).map_err(|err| {
-                RuntimeError::Io(format!("failed to open genotype entry in {}: {err}", path.display()))
-            })?;
-            read_lines_from_reader(BufReader::new(entry), path)?
-        };
-
-        if looks_like_vcf_lines(&lines) || entry_name.to_ascii_lowercase().ends_with(".vcf") {
-            Self::from_vcf_lines(lines)
-        } else {
-            Self::from_text_lines(lines)
-        }
+        Ok(Self::from_delimited_file(path, GenotypeSourceFormat::Zip, Some(selected)))
     }
 
     fn from_cram_file(path: &Path, options: &GenotypeLoadOptions) -> Result<Self, RuntimeError> {
@@ -268,11 +223,29 @@ impl GenotypeStore {
         }
     }
 
+    fn from_delimited_file(
+        path: &Path,
+        format: GenotypeSourceFormat,
+        zip_entry_name: Option<String>,
+    ) -> Self {
+        Self {
+            backend: QueryBackend::Delimited(DelimitedBackend {
+                format,
+                path: path.to_path_buf(),
+                zip_entry_name,
+            }),
+        }
+    }
+
     pub fn capabilities(&self) -> BackendCapabilities {
         match &self.backend {
             QueryBackend::RsidMap(_) => BackendCapabilities {
                 rsid_lookup: true,
                 locus_lookup: false,
+            },
+            QueryBackend::Delimited(_) => BackendCapabilities {
+                rsid_lookup: true,
+                locus_lookup: true,
             },
             QueryBackend::Cram(_) => BackendCapabilities {
                 rsid_lookup: false,
@@ -292,6 +265,7 @@ impl GenotypeStore {
     pub fn backend_name(&self) -> &'static str {
         match &self.backend {
             QueryBackend::RsidMap(map) => map.backend_name(),
+            QueryBackend::Delimited(backend) => backend.backend_name(),
             QueryBackend::Cram(backend) => backend.backend_name(),
         }
     }
@@ -299,6 +273,7 @@ impl GenotypeStore {
     pub fn get(&self, rsid: &str) -> Result<Option<String>, RuntimeError> {
         match &self.backend {
             QueryBackend::RsidMap(map) => Ok(map.values.get(rsid).cloned()),
+            QueryBackend::Delimited(backend) => backend.get(rsid),
             QueryBackend::Cram(backend) => backend.lookup_variant(&VariantSpec {
                 rsids: vec![rsid.to_owned()],
                 ..VariantSpec::default()
@@ -309,8 +284,23 @@ impl GenotypeStore {
     pub fn lookup_variant(&self, variant: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
         match &self.backend {
             QueryBackend::RsidMap(map) => map.lookup_variant(variant),
+            QueryBackend::Delimited(backend) => backend.lookup_variant(variant),
             QueryBackend::Cram(backend) => backend.lookup_variant(variant),
         }
+    }
+
+    pub fn lookup_variants(&self, variants: &[VariantSpec]) -> Result<Vec<VariantObservation>, RuntimeError> {
+        if let QueryBackend::Delimited(backend) = &self.backend {
+            return backend.lookup_variants(variants);
+        }
+        let mut indexed: Vec<(usize, &VariantSpec)> = variants.iter().enumerate().collect();
+        indexed.sort_by_cached_key(|(_, variant)| variant_sort_key(variant));
+
+        let mut results = vec![VariantObservation::default(); variants.len()];
+        for (original_idx, variant) in indexed {
+            results[original_idx] = self.lookup_variant(variant)?;
+        }
+        Ok(results)
     }
 }
 
@@ -342,6 +332,42 @@ impl RsidMapBackend {
             evidence: vec!["no matching rsid found".to_owned()],
             ..VariantObservation::default()
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ParsedDelimitedRow {
+    rsid: Option<String>,
+    chrom: Option<String>,
+    position: Option<i64>,
+    genotype: String,
+}
+
+impl DelimitedBackend {
+    fn backend_name(&self) -> &'static str {
+        match self.format {
+            GenotypeSourceFormat::Text => "text",
+            GenotypeSourceFormat::Zip => "zip",
+            GenotypeSourceFormat::Vcf => "vcf",
+            GenotypeSourceFormat::Cram => "cram",
+        }
+    }
+
+    fn get(&self, rsid: &str) -> Result<Option<String>, RuntimeError> {
+        let results = self.lookup_variants(&[VariantSpec {
+            rsids: vec![rsid.to_owned()],
+            ..VariantSpec::default()
+        }])?;
+        Ok(results.into_iter().next().and_then(|obs| obs.genotype))
+    }
+
+    fn lookup_variant(&self, variant: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
+        let mut results = self.lookup_variants(std::slice::from_ref(variant))?;
+        Ok(results.pop().unwrap_or_default())
+    }
+
+    fn lookup_variants(&self, variants: &[VariantSpec]) -> Result<Vec<VariantObservation>, RuntimeError> {
+        scan_delimited_variants(self, variants)
     }
 }
 
@@ -730,6 +756,47 @@ fn describe_query(variant: &VariantSpec) -> &'static str {
     }
 }
 
+fn variant_sort_key(variant: &VariantSpec) -> (u8, String, i64, i64, String) {
+    if let Some(locus) = &variant.grch38 {
+        return (
+            0,
+            chrom_sort_key(&locus.chrom),
+            locus.start,
+            locus.end,
+            variant.rsids.first().cloned().unwrap_or_default(),
+        );
+    }
+    if let Some(locus) = &variant.grch37 {
+        return (
+            1,
+            chrom_sort_key(&locus.chrom),
+            locus.start,
+            locus.end,
+            variant.rsids.first().cloned().unwrap_or_default(),
+        );
+    }
+    (
+        2,
+        "~".to_owned(),
+        i64::MAX,
+        i64::MAX,
+        variant.rsids.first().cloned().unwrap_or_default(),
+    )
+}
+
+fn chrom_sort_key(raw: &str) -> String {
+    let chrom = raw.trim().strip_prefix("chr").unwrap_or(raw.trim());
+    if let Ok(value) = chrom.parse::<u32>() {
+        return format!("{value:03}");
+    }
+    match chrom.to_ascii_uppercase().as_str() {
+        "X" => "023".to_owned(),
+        "Y" => "024".to_owned(),
+        "M" | "MT" => "025".to_owned(),
+        other => format!("999-{other}"),
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Delimiter {
     Tab,
@@ -781,6 +848,12 @@ impl RowParser {
     }
 
     fn consume_line(&mut self, line: &str) -> Result<Option<(String, String)>, RuntimeError> {
+        Ok(self
+            .consume_record(line)?
+            .and_then(|row| row.rsid.map(|rsid| (rsid, row.genotype))))
+    }
+
+    fn consume_record(&mut self, line: &str) -> Result<Option<ParsedDelimitedRow>, RuntimeError> {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             return Ok(None);
@@ -824,18 +897,12 @@ impl RowParser {
             row_map.insert(normalize_name(&header[idx]), strip_inline_comment(&value));
         }
 
-        let Some(rsid) = self.lookup(&row_map, "rsid").filter(|value| !value.is_empty()) else {
+        let rsid = self.lookup(&row_map, "rsid").filter(|value| !value.is_empty());
+        let chrom = self.lookup(&row_map, "chromosome").filter(|value| !value.is_empty());
+        let position = self.lookup(&row_map, "position").and_then(|value| value.parse::<i64>().ok());
+        if rsid.is_none() && (chrom.is_none() || position.is_none()) {
             return Ok(None);
-        };
-        let Some(_chrom) = self.lookup(&row_map, "chromosome").filter(|value| !value.is_empty()) else {
-            return Ok(None);
-        };
-        let Some(_pos) = self
-            .lookup(&row_map, "position")
-            .and_then(|value| value.parse::<i64>().ok())
-        else {
-            return Ok(None);
-        };
+        }
 
         let genotype = if let Some(gt) = self.lookup(&row_map, "genotype") {
             gt
@@ -845,7 +912,12 @@ impl RowParser {
             format!("{allele1}{allele2}")
         };
 
-        Ok(Some((rsid, normalize_genotype(&genotype))))
+        Ok(Some(ParsedDelimitedRow {
+            rsid,
+            chrom,
+            position,
+            genotype: normalize_genotype(&genotype),
+        }))
     }
 
     fn parse_fields(&self, line: &str) -> Vec<String> {
@@ -949,6 +1021,340 @@ fn read_plain_lines(path: &Path) -> Result<Vec<String>, RuntimeError> {
     let file = File::open(path)
         .map_err(|err| RuntimeError::Io(format!("failed to open genotype file {}: {err}", path.display())))?;
     read_lines_from_reader(BufReader::new(file), path)
+}
+
+fn select_zip_entry(path: &Path) -> Result<String, RuntimeError> {
+    let file = File::open(path)
+        .map_err(|err| RuntimeError::Io(format!("failed to open genotype zip {}: {err}", path.display())))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|err| RuntimeError::Io(format!("failed to read genotype zip {}: {err}", path.display())))?;
+
+    let mut selected_name: Option<String> = None;
+    for idx in 0..archive.len() {
+        let entry = archive.by_index(idx).map_err(|err| {
+            RuntimeError::Io(format!("failed to inspect genotype zip {}: {err}", path.display()))
+        })?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().to_owned();
+        let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".txt")
+            || lower.ends_with(".csv")
+            || lower.ends_with(".tsv")
+            || lower.ends_with(".vcf")
+            || lower.ends_with(".vcf.gz")
+        {
+            return Ok(name);
+        }
+        if selected_name.is_none() {
+            selected_name = Some(name);
+        }
+    }
+
+    selected_name.ok_or_else(|| {
+        RuntimeError::Unsupported(format!(
+            "zip archive {} does not contain a supported genotype file",
+            path.display()
+        ))
+    })
+}
+
+fn scan_delimited_variants(
+    backend: &DelimitedBackend,
+    variants: &[VariantSpec],
+) -> Result<Vec<VariantObservation>, RuntimeError> {
+    let mut indexed: Vec<(usize, &VariantSpec)> = variants.iter().enumerate().collect();
+    indexed.sort_by_cached_key(|(_, variant)| variant_sort_key(variant));
+
+    let mut rsid_targets: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut coord_targets: HashMap<(String, i64), Vec<usize>> = HashMap::new();
+    let mut results = vec![VariantObservation::default(); variants.len()];
+    let mut unresolved = variants.len();
+
+    for (idx, variant) in &indexed {
+        for rsid in &variant.rsids {
+            rsid_targets.entry(rsid.clone()).or_default().push(*idx);
+        }
+        if let Some(locus) = variant.grch38.as_ref().or(variant.grch37.as_ref()) {
+            coord_targets
+                .entry((locus.chrom.trim_start_matches("chr").to_ascii_lowercase(), locus.start))
+                .or_default()
+                .push(*idx);
+        }
+    }
+
+    let mut scan_reader = |reader: &mut dyn BufRead| -> Result<(), RuntimeError> {
+        let mut probe_lines = Vec::new();
+        let mut buf = String::new();
+        for _ in 0..8 {
+            buf.clear();
+            let bytes = reader.read_line(&mut buf).map_err(|err| {
+                RuntimeError::Io(format!("failed to read genotype stream {}: {err}", backend.path.display()))
+            })?;
+            if bytes == 0 {
+                break;
+            }
+            probe_lines.push(buf.trim_end_matches(['\n', '\r']).to_owned());
+        }
+
+        let delimiter = detect_delimiter(&probe_lines);
+        let mut column_indexes: Option<DelimitedColumnIndexes> = None;
+        let mut comment_header: Option<Vec<String>> = None;
+
+        let mut process_line = |line: &str| -> Result<bool, RuntimeError> {
+            let Some(row) = parse_streaming_row(
+                line,
+                delimiter,
+                &mut column_indexes,
+                &mut comment_header,
+            )? else {
+                return Ok(unresolved == 0);
+            };
+
+            if let Some(rsid) = row.rsid.as_ref()
+                && let Some(target_indexes) = rsid_targets.get(rsid)
+            {
+                for &target_idx in target_indexes {
+                    if results[target_idx].genotype.is_none() {
+                        results[target_idx] = VariantObservation {
+                            backend: backend.backend_name().to_owned(),
+                            matched_rsid: Some(rsid.clone()),
+                            genotype: Some(row.genotype.clone()),
+                            evidence: vec![format!("resolved by rsid {rsid}")],
+                            ..VariantObservation::default()
+                        };
+                        unresolved = unresolved.saturating_sub(1);
+                    }
+                }
+            }
+
+            if unresolved == 0 {
+                return Ok(true);
+            }
+
+            if let (Some(chrom), Some(position)) = (row.chrom.as_ref(), row.position) {
+                let key = (chrom.trim_start_matches("chr").to_ascii_lowercase(), position);
+                if let Some(target_indexes) = coord_targets.get(&key) {
+                    for &target_idx in target_indexes {
+                        if results[target_idx].genotype.is_none() {
+                            results[target_idx] = VariantObservation {
+                                backend: backend.backend_name().to_owned(),
+                                matched_rsid: row.rsid.clone(),
+                                genotype: Some(row.genotype.clone()),
+                                evidence: vec![format!("resolved by locus {}:{}", chrom, position)],
+                                ..VariantObservation::default()
+                            };
+                            unresolved = unresolved.saturating_sub(1);
+                        }
+                    }
+                }
+            }
+            Ok(unresolved == 0)
+        };
+
+        for line in &probe_lines {
+            if process_line(line)? {
+                return Ok(());
+            }
+        }
+
+        loop {
+            buf.clear();
+            let bytes = reader.read_line(&mut buf).map_err(|err| {
+                RuntimeError::Io(format!("failed to read genotype stream {}: {err}", backend.path.display()))
+            })?;
+            if bytes == 0 {
+                break;
+            }
+            if process_line(buf.trim_end_matches(['\n', '\r']))? {
+                break;
+            }
+        }
+        Ok(())
+    };
+
+    match backend.format {
+        GenotypeSourceFormat::Text => {
+            let file = File::open(&backend.path).map_err(|err| {
+                RuntimeError::Io(format!("failed to open genotype file {}: {err}", backend.path.display()))
+            })?;
+            let mut reader = BufReader::new(file);
+            scan_reader(&mut reader)?;
+        }
+        GenotypeSourceFormat::Zip => {
+            let entry_name = backend.zip_entry_name.as_ref().ok_or_else(|| {
+                RuntimeError::Unsupported(format!(
+                    "zip backend missing selected entry for {}",
+                    backend.path.display()
+                ))
+            })?;
+            let file = File::open(&backend.path).map_err(|err| {
+                RuntimeError::Io(format!("failed to open genotype zip {}: {err}", backend.path.display()))
+            })?;
+            let mut archive = ZipArchive::new(file).map_err(|err| {
+                RuntimeError::Io(format!("failed to read genotype zip {}: {err}", backend.path.display()))
+            })?;
+            let entry = archive.by_name(entry_name).map_err(|err| {
+                RuntimeError::Io(format!(
+                    "failed to open genotype entry {entry_name} in {}: {err}",
+                    backend.path.display()
+                ))
+            })?;
+            let mut reader = BufReader::new(entry);
+            scan_reader(&mut reader)?;
+        }
+        _ => {
+            return Err(RuntimeError::Unsupported(
+                "streaming delimited backend only supports text and zip".to_owned(),
+            ))
+        }
+    }
+
+    for (idx, variant) in indexed {
+        if results[idx].genotype.is_none() {
+            results[idx] = VariantObservation {
+                backend: backend.backend_name().to_owned(),
+                evidence: vec![format!("no matching rsid or locus found for {}", describe_query(variant))],
+                ..VariantObservation::default()
+            };
+        }
+    }
+
+    Ok(results)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DelimitedColumnIndexes {
+    rsid: Option<usize>,
+    chrom: Option<usize>,
+    position: Option<usize>,
+    genotype: Option<usize>,
+    allele1: Option<usize>,
+    allele2: Option<usize>,
+}
+
+fn parse_streaming_row(
+    line: &str,
+    delimiter: Delimiter,
+    column_indexes: &mut Option<DelimitedColumnIndexes>,
+    comment_header: &mut Option<Vec<String>>,
+) -> Result<Option<ParsedDelimitedRow>, RuntimeError> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let trimmed = strip_bom(trimmed);
+    if let Some(prefix) = COMMENT_PREFIXES.iter().find(|prefix| trimmed.starts_with(**prefix)) {
+        let candidate = trimmed.trim_start_matches(prefix).trim();
+        if !candidate.is_empty() {
+            let fields = parse_owned_fields(candidate, delimiter);
+            if looks_like_header_fields(&fields) {
+                *comment_header = Some(fields);
+            }
+        }
+        return Ok(None);
+    }
+
+    let fields = parse_owned_fields(strip_bom(line), delimiter);
+    if fields.is_empty() {
+        return Ok(None);
+    }
+
+    if column_indexes.is_none() {
+        if looks_like_header_fields(&fields) {
+            *column_indexes = Some(build_column_indexes(&fields));
+            return Ok(None);
+        }
+        if let Some(header) = comment_header.take() {
+            *column_indexes = Some(build_column_indexes(&header));
+        } else {
+            *column_indexes = Some(default_column_indexes(fields.len()));
+        }
+    }
+
+    let indexes = column_indexes.expect("streaming column indexes initialized");
+    let rsid = indexes
+        .rsid
+        .and_then(|idx| fields.get(idx))
+        .map(|value| strip_inline_comment(value).trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let chrom = indexes
+        .chrom
+        .and_then(|idx| fields.get(idx))
+        .map(|value| strip_inline_comment(value).trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let position = indexes
+        .position
+        .and_then(|idx| fields.get(idx))
+        .and_then(|value| strip_inline_comment(value).trim().parse::<i64>().ok());
+    if rsid.is_none() && (chrom.is_none() || position.is_none()) {
+        return Ok(None);
+    }
+
+    let genotype = if let Some(idx) = indexes.genotype {
+        fields.get(idx).map(|value| strip_inline_comment(value)).unwrap_or_default().to_owned()
+    } else {
+        let allele1 = indexes
+            .allele1
+            .and_then(|idx| fields.get(idx))
+            .map(|value| strip_inline_comment(value))
+            .unwrap_or_default();
+        let allele2 = indexes
+            .allele2
+            .and_then(|idx| fields.get(idx))
+            .map(|value| strip_inline_comment(value))
+            .unwrap_or_default();
+        format!("{allele1}{allele2}")
+    };
+
+    Ok(Some(ParsedDelimitedRow {
+        rsid,
+        chrom,
+        position,
+        genotype: normalize_genotype(&genotype),
+    }))
+}
+
+fn parse_owned_fields(line: &str, delimiter: Delimiter) -> Vec<String> {
+    match delimiter {
+        Delimiter::Tab => line.split('\t').map(|field| field.trim().to_owned()).collect(),
+        Delimiter::Space => line.split_whitespace().map(str::to_owned).collect(),
+        Delimiter::Comma => split_csv_line(line),
+    }
+}
+
+fn looks_like_header_fields(fields: &[String]) -> bool {
+    fields.first().is_some_and(|first| RSID_ALIASES.contains(&normalize_name(first).as_str()))
+}
+
+fn build_column_indexes(header: &[String]) -> DelimitedColumnIndexes {
+    DelimitedColumnIndexes {
+        rsid: find_header_index(header, RSID_ALIASES),
+        chrom: find_header_index(header, CHROM_ALIASES),
+        position: find_header_index(header, POSITION_ALIASES),
+        genotype: find_header_index(header, GENOTYPE_ALIASES),
+        allele1: find_header_index(header, ALLELE1_ALIASES),
+        allele2: find_header_index(header, ALLELE2_ALIASES),
+    }
+}
+
+fn default_column_indexes(field_count: usize) -> DelimitedColumnIndexes {
+    DelimitedColumnIndexes {
+        rsid: (field_count > 0).then_some(0),
+        chrom: (field_count > 1).then_some(1),
+        position: (field_count > 2).then_some(2),
+        genotype: (field_count > 3).then_some(3),
+        allele1: None,
+        allele2: None,
+    }
+}
+
+fn find_header_index(header: &[String], aliases: &[&str]) -> Option<usize> {
+    header
+        .iter()
+        .position(|field| aliases.iter().any(|alias| normalize_name(field) == normalize_name(alias)))
 }
 
 fn read_bgzf_lines(path: &Path) -> Result<Vec<String>, RuntimeError> {

@@ -2,3 +2,5 @@
 resolver = "2"
 members = ["bioscript"]
 
+[profile.dev]
+opt-level = 2

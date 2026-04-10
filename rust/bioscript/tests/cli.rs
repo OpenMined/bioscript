@@ -69,3 +69,23 @@ fn trace_report_is_written_for_hello_world() {
     assert!(trace.contains("step\tline\tcode"));
     assert!(trace.contains("hello from bioscript"));
 }
+
+#[test]
+fn batch_lookup_query_plan_runs_and_preserves_requested_result_order() {
+    let root = repo_root();
+    let script = root.join("rust/bioscript/tests/fixtures/batch_lookup.py");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("old/examples/apol1/test_snps.txt")
+        .arg(script)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("AG"));
+    assert!(stdout.contains("TG"));
+    assert!(stdout.contains("II"));
+}

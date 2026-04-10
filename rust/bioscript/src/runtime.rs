@@ -8,7 +8,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use monty::{
@@ -51,6 +51,13 @@ pub enum RuntimeError {
     Io(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StageTiming {
+    pub stage: String,
+    pub duration_ms: u128,
+    pub detail: String,
+}
+
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -73,6 +80,7 @@ struct RuntimeState {
     next_handle: AtomicU64,
     genotype_files: Mutex<HashMap<u64, GenotypeStore>>,
     trace_lines: Mutex<Vec<usize>>,
+    timings: Mutex<Vec<StageTiming>>,
 }
 
 impl RuntimeState {
@@ -81,6 +89,7 @@ impl RuntimeState {
             next_handle: AtomicU64::new(1),
             genotype_files: Mutex::new(HashMap::new()),
             trace_lines: Mutex::new(Vec::new()),
+            timings: Mutex::new(Vec::new()),
         }
     }
 
@@ -137,12 +146,14 @@ impl BioscriptRuntime {
         trace_report_path: Option<&Path>,
         mut extra_inputs: Vec<(&str, MontyObject)>,
     ) -> Result<MontyObject, RuntimeError> {
+        let run_started = Instant::now();
         let script_path = script_path.as_ref();
         let code = fs::read_to_string(script_path).map_err(|err| {
             RuntimeError::Io(format!("failed to read script {}: {err}", script_path.display()))
         })?;
         let instrumented = instrument_source(&code);
         self.state.trace_lines.lock().expect("trace mutex poisoned").clear();
+        self.state.timings.lock().expect("timings mutex poisoned").clear();
 
         extra_inputs.push(("__name__", MontyObject::String("__main__".to_owned())));
         extra_inputs.push((
@@ -156,8 +167,18 @@ impl BioscriptRuntime {
         if let Some(report_path) = trace_report_path {
             self.write_trace_report(report_path, &code)?;
         }
+        self.record_timing(
+            "run_file_total",
+            run_started.elapsed(),
+            format!("script={}", script_path.display()),
+        );
 
         Ok(result)
+    }
+
+    #[must_use]
+    pub fn timing_snapshot(&self) -> Vec<StageTiming> {
+        self.state.timings.lock().expect("timings mutex poisoned").clone()
     }
 
     pub fn run_script(
@@ -228,11 +249,13 @@ impl BioscriptRuntime {
         match (class_name, method_name) {
             ("Bioscript", "load_genotypes") => self.method_load_genotypes(args, kwargs),
             ("Bioscript", "variant") => self.method_variant(args, kwargs),
+            ("Bioscript", "query_plan") => self.method_query_plan(args, kwargs),
             ("Bioscript", "write_tsv") => self.method_write_tsv(args, kwargs),
             ("Bioscript", "read_text") => self.method_read_text(args, kwargs),
             ("Bioscript", "write_text") => self.method_write_text(args, kwargs),
             ("GenotypeFile", "get") => self.method_genotype_get(args, kwargs),
             ("GenotypeFile", "lookup_variant") => self.method_genotype_lookup_variant(args, kwargs),
+            ("GenotypeFile", "lookup_variants") => self.method_genotype_lookup_variants(args, kwargs),
             _ => Err(RuntimeError::Unsupported(format!(
                 "'{class_name}' object has no attribute '{method_name}'"
             ))),
@@ -244,6 +267,7 @@ impl BioscriptRuntime {
         args: &[MontyObject],
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
+        let started = Instant::now();
         reject_kwargs(kwargs, "bioscript.load_genotypes")?;
         if args.len() != 2 {
             return Err(RuntimeError::InvalidArguments(
@@ -259,6 +283,11 @@ impl BioscriptRuntime {
             .lock()
             .expect("genotype mutex poisoned")
             .insert(handle, store);
+        self.record_timing(
+            "load_genotypes",
+            started.elapsed(),
+            format!("path={}", path.display()),
+        );
         Ok(genotype_file_object(handle))
     }
 
@@ -309,11 +338,27 @@ impl BioscriptRuntime {
         Ok(variant_object(&spec))
     }
 
+    fn method_query_plan(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bioscript.query_plan")?;
+        if args.len() != 2 {
+            return Err(RuntimeError::InvalidArguments(
+                "bioscript.query_plan expects self and a list of variants".to_owned(),
+            ));
+        }
+        let variants = variant_specs_from_plan(&args[1])?;
+        Ok(variant_plan_object(&variants))
+    }
+
     fn method_genotype_lookup_variant(
         &self,
         args: &[MontyObject],
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
+        let started = Instant::now();
         reject_kwargs(kwargs, "GenotypeFile.lookup_variant")?;
         if args.len() != 2 {
             return Err(RuntimeError::InvalidArguments(
@@ -329,10 +374,52 @@ impl BioscriptRuntime {
             )));
         };
         let observation = store.lookup_variant(&spec)?;
+        self.record_timing(
+            "lookup_variant",
+            started.elapsed(),
+            format!("rsids={}", spec.rsids.join("|")),
+        );
         Ok(match observation.genotype {
             Some(value) => MontyObject::String(value),
             None => MontyObject::None,
         })
+    }
+
+    fn method_genotype_lookup_variants(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        let started = Instant::now();
+        reject_kwargs(kwargs, "GenotypeFile.lookup_variants")?;
+        if args.len() != 2 {
+            return Err(RuntimeError::InvalidArguments(
+                "GenotypeFile.lookup_variants expects self and a variant plan".to_owned(),
+            ));
+        }
+        let handle = dataclass_handle_id(&args[0], "GenotypeFile")?;
+        let specs = variant_specs_from_plan(&args[1])?;
+        let guard = self.state.genotype_files.lock().expect("genotype mutex poisoned");
+        let Some(store) = guard.get(&handle) else {
+            return Err(RuntimeError::InvalidArguments(format!(
+                "unknown genotype handle: {handle}"
+            )));
+        };
+        let observations = store.lookup_variants(&specs)?;
+        self.record_timing(
+            "lookup_variants",
+            started.elapsed(),
+            format!("count={}", specs.len()),
+        );
+        Ok(MontyObject::List(
+            observations
+                .into_iter()
+                .map(|observation| match observation.genotype {
+                    Some(value) => MontyObject::String(value),
+                    None => MontyObject::None,
+                })
+                .collect(),
+        ))
     }
 
     fn method_write_tsv(
@@ -340,6 +427,7 @@ impl BioscriptRuntime {
         args: &[MontyObject],
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
+        let started = Instant::now();
         reject_kwargs(kwargs, "bioscript.write_tsv")?;
         if args.len() != 3 {
             return Err(RuntimeError::InvalidArguments(
@@ -369,7 +457,24 @@ impl BioscriptRuntime {
         }
         fs::write(&path, output)
             .map_err(|err| RuntimeError::Io(format!("failed to write {}: {err}", path.display())))?;
+        self.record_timing(
+            "write_tsv",
+            started.elapsed(),
+            format!("path={} rows={}", path.display(), rows.len()),
+        );
         Ok(MontyObject::None)
+    }
+
+    fn record_timing(&self, stage: &str, duration: Duration, detail: String) {
+        self.state
+            .timings
+            .lock()
+            .expect("timings mutex poisoned")
+            .push(StageTiming {
+                stage: stage.to_owned(),
+                duration_ms: duration.as_millis(),
+                detail,
+            });
     }
 
     fn method_read_text(
@@ -629,6 +734,20 @@ fn variant_object(spec: &VariantSpec) -> MontyObject {
     }
 }
 
+fn variant_plan_object(variants: &[VariantSpec]) -> MontyObject {
+    MontyObject::Dataclass {
+        name: "VariantPlan".to_owned(),
+        type_id: 4,
+        field_names: vec!["variants".to_owned()],
+        attrs: vec![(
+            MontyObject::String("variants".to_owned()),
+            MontyObject::List(variants.iter().map(variant_object).collect()),
+        )]
+        .into(),
+        frozen: true,
+    }
+}
+
 fn dataclass_handle_id(obj: &MontyObject, expected_name: &str) -> Result<u64, RuntimeError> {
     match obj {
         MontyObject::Dataclass { name, attrs, .. } if name == expected_name => {
@@ -675,6 +794,25 @@ fn dataclass_to_variant_spec(obj: &MontyObject) -> Result<VariantSpec, RuntimeEr
         }
     }
     Ok(spec)
+}
+
+fn variant_specs_from_plan(obj: &MontyObject) -> Result<Vec<VariantSpec>, RuntimeError> {
+    match obj {
+        MontyObject::List(items) => items.iter().map(dataclass_to_variant_spec).collect(),
+        MontyObject::Dataclass { name, attrs, .. } if name == "VariantPlan" => {
+            for (key, value) in attrs {
+                if matches!(key, MontyObject::String(text) if text == "variants") {
+                    return variant_specs_from_plan(value);
+                }
+            }
+            Err(RuntimeError::InvalidArguments(
+                "VariantPlan missing variants".to_owned(),
+            ))
+        }
+        _ => Err(RuntimeError::InvalidArguments(
+            "expected a list of Variant objects or a VariantPlan".to_owned(),
+        )),
+    }
 }
 
 fn variant_spec_from_kwargs(kwargs: &[(MontyObject, MontyObject)]) -> Result<VariantSpec, RuntimeError> {
