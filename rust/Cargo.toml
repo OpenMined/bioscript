@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["bioscript"]
+members = ["bioscript", "bioscript-core", "bioscript-ffi"]
 
 [profile.dev]
 opt-level = 2
