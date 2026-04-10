@@ -137,14 +137,32 @@ dependencies = [
 name = "bioscript"
 version = "0.1.0"
 dependencies = [
- "jni",
+ "bioscript-core",
+ "monty",
+ "zip",
+]
+
+[[package]]
+name = "bioscript-core"
+version = "0.1.0"
+dependencies = [
  "monty",
  "noodles",
  "rust-htslib",
  "serde",
- "serde_json",
  "serde_yaml",
  "zip",
+]
+
+[[package]]
+name = "bioscript-ffi"
+version = "0.1.0"
+dependencies = [
+ "bioscript-core",
+ "jni",
+ "monty",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
