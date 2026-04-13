@@ -1,19 +1,12 @@
 [package]
-name = "bioscript-ffi"
+name = "bioscript-runtime"
 version = "0.1.0"
 edition = "2024"
-
-[lib]
-crate-type = ["rlib", "staticlib", "cdylib"]
 
 [dependencies]
 bioscript-core = { path = "../bioscript-core" }
 bioscript-formats = { path = "../bioscript-formats" }
-bioscript-runtime = { path = "../bioscript-runtime" }
-jni = "0.21"
 monty = { path = "../../monty/crates/monty" }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

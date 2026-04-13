@@ -7,10 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bioscript_core::{
-    BioscriptRuntime, GenotypeLoadOptions, GenotypeSourceFormat, PrepareRequest, RuntimeConfig,
-    StageTiming, prepare_indexes,
+use bioscript_formats::{
+    GenotypeLoadOptions, GenotypeSourceFormat, PrepareRequest, prepare_indexes,
 };
+use bioscript_runtime::{BioscriptRuntime, RuntimeConfig, StageTiming};
 use monty::{MontyObject, ResourceLimits};
 use serde::{Deserialize, Serialize};
 
