@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from runtime_capabilities import assess_variant_runtime_support
+
 
 @dataclass
 class VariantDefinition:
@@ -15,13 +17,28 @@ class VariantDefinition:
 
 
 @dataclass
+class RunnableVariantEntry:
+    variant: VariantDefinition
+
+
+@dataclass
+class UnsupportedVariantEntry:
+    reason: str
+    variant: VariantDefinition
+
+
+@dataclass
 class AssayPackage:
-    root: Path
-    manifest: dict[str, Any]
     implementation_kind: str
+    manifest: dict[str, Any]
+    root: Path
+    runnable_variants: list[RunnableVariantEntry]
     script_path: Path | None
-    variants: list[VariantDefinition]
-    unsupported_variants: list[tuple[VariantDefinition, str]]
+    unsupported_variants: list[UnsupportedVariantEntry]
+
+    @property
+    def variants(self) -> list[VariantDefinition]:
+        return [entry.variant for entry in self.runnable_variants]
 
 
 VALID_IMPLEMENTATION_KINDS = {"panel", "script"}
@@ -221,21 +238,6 @@ def resolve_catalogue_variants(assay_root: Path, manifest: dict[str, Any]) -> li
     return variants
 
 
-def runtime_supports_variant(variant: VariantDefinition) -> tuple[bool, str]:
-    kind = str(variant.fields.get("kind", "") or "").lower()
-    if kind in {"", "snp"}:
-        return True, ""
-    if kind == "deletion":
-        if variant.fields.get("deletion_length"):
-            return True, ""
-        return False, "deletion missing deletion_length"
-    if kind == "insertion":
-        return False, "insertions not yet supported by bioscript runtime"
-    if kind == "indel":
-        return False, "indels not yet supported by bioscript runtime"
-    return False, f"unsupported variant kind: {kind}"
-
-
 def load_assay_package(assay_path: Path) -> AssayPackage:
     manifest_path = assay_path / "assay.yaml"
     manifest = read_yaml_dict(manifest_path)
@@ -252,20 +254,25 @@ def load_assay_package(assay_path: Path) -> AssayPackage:
             raise RuntimeError(f"{manifest_path} references missing script: {script_ref}")
 
     all_variants = resolve_catalogue_variants(assay_path, manifest)
-    supported_variants: list[VariantDefinition] = []
-    unsupported_variants: list[tuple[VariantDefinition, str]] = []
+    supported_variants: list[RunnableVariantEntry] = []
+    unsupported_variants: list[UnsupportedVariantEntry] = []
     for variant in all_variants:
-        supported, reason = runtime_supports_variant(variant)
-        if supported:
-            supported_variants.append(variant)
+        assessment = assess_variant_runtime_support(variant.fields)
+        if assessment.supported:
+            supported_variants.append(RunnableVariantEntry(variant=variant))
         else:
-            unsupported_variants.append((variant, reason))
+            unsupported_variants.append(
+                UnsupportedVariantEntry(
+                    variant=variant,
+                    reason=assessment.reason or "unsupported by bioscript runtime",
+                )
+            )
 
     return AssayPackage(
-        root=assay_path,
-        manifest=manifest,
         implementation_kind=implementation_kind,
+        manifest=manifest,
+        root=assay_path,
+        runnable_variants=supported_variants,
         script_path=script_path,
-        variants=supported_variants,
         unsupported_variants=unsupported_variants,
     )

@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "kindAliases": {
+    "": "snp",
+    "snv": "snp",
+    "snp": "snp"
+  },
+  "defaultUnsupportedReason": "unsupported variant kind: {kind}",
+  "kinds": {
+    "snp": {
+      "supported": true
+    },
+    "deletion": {
+      "supported": true,
+      "requiredFields": [
+        "deletion_length"
+      ],
+      "missingFieldReason": "deletion missing {field}"
+    },
+    "insertion": {
+      "supported": false,
+      "reason": "insertions not yet supported by bioscript runtime"
+    },
+    "indel": {
+      "supported": false,
+      "reason": "indels not yet supported by bioscript runtime"
+    }
+  }
+}
