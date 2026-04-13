@@ -1,7 +1,6 @@
-schema: "bioscript:variant"
+name: "string"
 version: "1.0"
-variant_id: "string"
-label: "string"
+schema: "bioscript:variant:1.0"
 gene: "string"
 summary: "string"
 
@@ -25,7 +24,6 @@ alleles:
   ref: "string"
   alts:
     - "string"
-  canonical_alt: "string"
   deletion_length: 0
   insertion_sequence: "string"
   motifs:
@@ -38,11 +36,23 @@ alleles:
   notes:
     - "string"
 
-research:
-  tasks:
-    - "string"
-  tags:
-    - "string"
+findings:
+  - alt: "string"
+    notes: "string"
+    source: "https://example.org"
+
+provenance:
+  sources:
+    - kind: "paper"
+      label: "string"
+      url: "https://example.org"
+      fields:
+        - "string"
+    - kind: "database"
+      label: "string"
+      url: "https://example.org"
+      fields:
+        - "string"
 
 clinical:
   pgx:

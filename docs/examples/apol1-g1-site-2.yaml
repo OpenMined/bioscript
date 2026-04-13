@@ -1,7 +1,6 @@
-schema: "bioscript:variant"
+name: "APOL1-test-G1-site-2-rs60910145-T-G"
 version: "1.0"
-variant_id: "APOL1_G1_rs60910145"
-label: "APOL1 G1 site 2"
+schema: "bioscript:variant:1.0"
 gene: "APOL1"
 summary: "APOL1 G1 site 2 SNV"
 
@@ -22,12 +21,7 @@ alleles:
   ref: "T"
   alts:
     - "G"
-  canonical_alt: "G"
 
-research:
-  tasks:
-    - "Verify canonical annotation and linked haplotype context"
-  tags:
-    - "apol1"
-    - "g1"
-    - "snv"
+findings:
+  - alt: "G"
+    notes: "G1 risk allele for APOL1-associated nephropathy (site 2 of 2)"

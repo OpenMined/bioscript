@@ -19,13 +19,13 @@ catalogue_id: "apol1-panel"
 label: "APOL1 panel"
 
 variants:
-  - id: "APOL1_G1_rs73885319"
+  - name: "APOL1-test-G1-site-1-rs73885319-A-G"
     path: "variants/apol1/rs73885319.yaml"
     version: "1.0"
-  - id: "APOL1_G1_rs60910145"
+  - name: "APOL1-test-G1-site-2-rs60910145-T-G"
     path: "variants/apol1/rs60910145.yaml"
     version: "1.0"
-  - id: "APOL1_G2"
+  - name: "APOL1-test-G2-deletion"
     path: "variants/apol1/g2.yaml"
     version: "1.0"
 ```
@@ -33,7 +33,7 @@ variants:
 ## Why This Shape
 
 - `path` is easy to load locally
-- `id` lets you refer to a variant without reparsing the path
+- `name` lets you refer to a variant without reparsing the path
 - `version` lets you cache and pin a known record revision
 
 ## Optional Extensions
@@ -54,7 +54,7 @@ version: "1.0"
 catalogue_id: "pgx-core"
 
 variants:
-  - id: "ABCG2_rs2231142"
+  - name: "PGX-abcg2-rs2231142-G-A"
     path: "variants/abcg2/rs2231142.yaml"
     version: "1.0"
     tags:
@@ -68,4 +68,4 @@ variants:
 2. Keep those files in a predictable directory layout.
 3. Use a catalogue file to define the panel.
 4. Validate both the catalogue and each referenced variant.
-5. Cache by `id + version`.
+5. Cache by `name + version`.

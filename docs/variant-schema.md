@@ -11,18 +11,22 @@ Use it as the canonical stored form. Keep it small enough to:
 ## Schema Identity
 
 ```yaml
-schema: "bioscript:variant"
+name: "PROJECT-SOURCE-rsNNNNNN-REF-ALT"
 version: "1.0"
+schema: "bioscript:variant:1.0"
 ```
 
-`bioscript:variant` is a reasonable name for this object. It is explicit, stable, and leaves room for later schema types like `bioscript:panel` or `bioscript:report`.
+- `name`: a human-readable identifier for this specific variant record, typically `PROJECT-SOURCE-rsid-REF-ALT`
+- `version`: record version
+- `schema`: schema type and version combined as `bioscript:variant:1.0`
 
 ## Minimal Shape
 
 ```yaml
-schema: "bioscript:variant"
+name: "APOL1-test-rs73885319-A-G"
 version: "1.0"
-variant_id: "APOL1_G1_rs73885319"
+schema: "bioscript:variant:1.0"
+gene: "APOL1"
 
 identifiers:
   rsids:
@@ -41,14 +45,13 @@ alleles:
   ref: "A"
   alts:
     - "G"
-  canonical_alt: "G"
 ```
 
 ## Required Fields
 
-- `schema`
+- `name`
 - `version`
-- `variant_id`
+- `schema`
 - `alleles.kind`
 - `alleles.ref`
 - `alleles.alts`
@@ -77,9 +80,9 @@ Example:
 identifiers:
   rsids:
     - "rs71785313"
+  aliases:
     - "rs1317778148"
     - "rs143830837"
-  aliases: []
 ```
 
 ### `coordinates`
@@ -125,7 +128,6 @@ Fields:
 - `kind`: `snv | deletion | insertion | indel | other`
 - `ref`
 - `alts`
-- `canonical_alt` optional
 - `deletion_length` optional
 - `insertion_sequence` optional
 - `motifs` optional
@@ -142,7 +144,6 @@ alleles:
     - "A"
     - "C"
     - "T"
-  canonical_alt: "A"
 ```
 
 Example deletion:
@@ -153,7 +154,6 @@ alleles:
   ref: "I"
   alts:
     - "D"
-  canonical_alt: "D"
   deletion_length: 6
   motifs:
     - "TTATAA"
@@ -167,35 +167,74 @@ alleles:
       - "22:36266000-36266005"
 ```
 
-`canonical_alt` means: this is the specific alternate allele the file is primarily about.
+`alts` lists all known alternate alleles for this variant. Use `findings` to annotate which specific alt is associated with a particular result.
 
-If the file is only a locus-level record and you do not want to choose one allele, omit `canonical_alt`.
+### `findings`
+
+Optional list of alt-specific findings from studies or databases. Each entry ties a specific alternate allele to a result, with a source URL for verification.
+
+Fields per entry:
+
+- `alt` required — the specific alternate allele this finding is about (use `"*"` when the finding applies to all alts or the specific alt is ambiguous, e.g. multiallelic indels)
+- `notes` required — free-text description of the finding
+- `source` optional — URL to the paper, database entry, or evidence
+
+Example:
+
+```yaml
+findings:
+  - alt: "T"
+    notes: "p.Pro7Leu missense — associated with increased GLP-1 receptor agonist weight-loss efficacy (~0.76 kg per allele, p=2.9e-10)"
+    source: "https://www.nature.com/articles/s41586-026-10330-z"
+  - alt: "T"
+    notes: "PharmGKB level 4 Efficacy annotation for rs10305420 (GLP1R) and liraglutide"
+    source: "https://www.pharmgkb.org/variant/PA166157167"
+```
+
+Use `findings` when:
+- A paper reports an association with a specific allele
+- Different alts have different clinical significance
+- You want to record which alt matters for a panel or assay
 
 ## Optional Metadata
 
 These fields are optional and can be added without changing the core shape:
 
-- `label`
 - `gene`
 - `summary`
-- `research`
+- `findings`
+- `provenance`
 - `clinical`
 
-## `research`
+### `provenance`
 
-Optional instructions or tags for enrichment tooling.
+Tracks where each field's data came from.
 
 ```yaml
-research:
-  tasks:
-    - "Confirm canonical dbSNP aliases"
-    - "Find ClinVar and Ensembl links"
-  tags:
-    - "apol1"
-    - "pgx"
+provenance:
+  sources:
+    - kind: "paper"
+      label: "Nature 2026 GLP-1 response study"
+      url: "https://www.nature.com/articles/s41586-026-10330-z"
+      fields:
+        - "summary"
+        - "findings[0]"
+    - kind: "database"
+      label: "dbSNP / NCBI variation services"
+      url: "https://www.ncbi.nlm.nih.gov/snp/rs10305420"
+      fields:
+        - "identifiers.rsids"
+        - "coordinates.grch37"
+        - "coordinates.grch38"
+        - "alleles"
 ```
 
-`tasks` is for downstream research automation, not for runtime execution.
+Each source entry has:
+
+- `kind`: `"paper"`, `"database"`, or other descriptor
+- `label`: human-readable name
+- `url`: verification link
+- `fields`: list of dotpath references to fields derived from this source
 
 ## `clinical`
 
@@ -243,15 +282,15 @@ Those can usually be derived or enriched later. They are useful annotation data,
 This YAML:
 
 ```yaml
-schema: "bioscript:variant"
+name: "APOL1-test-G2-deletion"
 version: "1.0"
-variant_id: "APOL1_G2"
-label: "APOL1 G2 deletion"
+schema: "bioscript:variant:1.0"
 gene: "APOL1"
 
 identifiers:
   rsids:
     - "rs71785313"
+  aliases:
     - "rs1317778148"
     - "rs143830837"
 
@@ -270,18 +309,21 @@ alleles:
   ref: "I"
   alts:
     - "D"
-  canonical_alt: "D"
   deletion_length: 6
   motifs:
     - "TTATAA"
     - "ATAATT"
+
+findings:
+  - alt: "D"
+    notes: "G2 risk deletion for APOL1-associated nephropathy"
 ```
 
 maps cleanly to:
 
 ```python
 bioscript.variant(
-    rsid=["rs71785313", "rs1317778148", "rs143830837"],
+    rsid="rs71785313",
     grch37="22:36662046-36662051",
     grch38="22:36266000-36266005",
     ref="I",

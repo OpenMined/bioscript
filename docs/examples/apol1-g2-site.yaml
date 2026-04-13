@@ -1,13 +1,13 @@
-schema: "bioscript:variant"
+name: "APOL1-test-G2-deletion"
 version: "1.0"
-variant_id: "APOL1_G2"
-label: "APOL1 G2 deletion"
+schema: "bioscript:variant:1.0"
 gene: "APOL1"
 summary: "6 bp deletion associated with APOL1 G2 haplotype"
 
 identifiers:
   rsids:
     - "rs71785313"
+  aliases:
     - "rs1317778148"
     - "rs143830837"
 
@@ -26,7 +26,6 @@ alleles:
   ref: "I"
   alts:
     - "D"
-  canonical_alt: "D"
   deletion_length: 6
   motifs:
     - "TTATAA"
@@ -38,16 +37,7 @@ alleles:
     grch38:
       - "22:36265996-36266001"
       - "22:36266000-36266005"
-  notes:
-    - "Repeat-context deletion may be left/right shifted across equivalent representations"
-    - "Normalize against the correct assembly FASTA before exact comparison"
 
-research:
-  tasks:
-    - "Confirm canonical dbSNP representation"
-    - "Verify normalized deletion representations in repeat context"
-  tags:
-    - "apol1"
-    - "g2"
-    - "deletion"
-    - "indel"
+findings:
+  - alt: "D"
+    notes: "G2 risk deletion for APOL1-associated nephropathy"
