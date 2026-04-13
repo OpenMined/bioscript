@@ -201,6 +201,23 @@ Current envelope:
 
 This is the preferred next contract for clients that should not re-interpret raw YAML directly.
 
+## Shared Assay Result Schema
+
+Shared assay-result metadata now also lives in:
+
+- `assay_result_schema.json`
+
+Current schema:
+
+- outcome field name: `assay_outcome`
+- allowed assay outcomes:
+  - `matched`
+  - `normal`
+  - `missing`
+  - `partial`
+
+Clients should prefer the explicit assay outcome returned by runtime output over re-deriving the top-level assay state from individual row statuses.
+
 ### Generation workflow
 
 Assay authors should not hand-maintain `assay.compiled.yaml`.
