@@ -1,10 +1,11 @@
 use std::{
+    collections::HashMap,
     env,
     ffi::{CStr, CString},
     fs,
     os::raw::c_char,
-    path::PathBuf,
-    time::{Duration, Instant},
+    path::{Component, Path, PathBuf},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use bioscript_formats::{
@@ -18,9 +19,12 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct RunFileRequest {
     pub script_path: String,
+    pub script_contents: Option<String>,
     pub root: Option<String>,
     pub input_file: Option<String>,
+    pub input_contents: Option<String>,
     pub output_file: Option<String>,
+    pub file_contents: Option<HashMap<String, String>>,
     pub participant_id: Option<String>,
     pub trace_report_path: Option<String>,
     pub timing_report_path: Option<String>,
@@ -52,11 +56,114 @@ struct FfiResult<T> {
     error: Option<String>,
 }
 
+fn unique_temp_dir(label: &str) -> Result<PathBuf, String> {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("failed to get system time: {err}"))?
+        .as_nanos();
+    let dir = env::temp_dir().join(format!("bioscript-ffi-{label}-{}-{nanos}", std::process::id()));
+    fs::create_dir_all(&dir)
+        .map_err(|err| format!("failed to create temp dir {}: {err}", dir.display()))?;
+    Ok(dir)
+}
+
+fn resolve_staged_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let candidate = Path::new(relative);
+    if candidate.is_absolute() {
+        return Err(format!("staged file path must be relative: {relative}"));
+    }
+
+    let mut result = root.to_path_buf();
+    for component in candidate.components() {
+        match component {
+            Component::Normal(segment) => result.push(segment),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                return Err(format!("staged file path must not traverse upward: {relative}"));
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                return Err(format!("staged file path must be relative: {relative}"));
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+fn stage_runtime_files(root: &Path, request: &RunFileRequest) -> Result<(), String> {
+    if let Some(files) = &request.file_contents {
+        for (relative_path, contents) in files {
+            let destination = resolve_staged_path(root, relative_path)?;
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).map_err(|err| {
+                    format!("failed to create staged directory {}: {err}", parent.display())
+                })?;
+            }
+            fs::write(&destination, contents)
+                .map_err(|err| format!("failed to stage file {}: {err}", destination.display()))?;
+        }
+    }
+
+    if let Some(input_contents) = &request.input_contents
+        && let Some(input_file) = &request.input_file
+    {
+        let destination = resolve_staged_path(root, input_file)?;
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|err| {
+                format!("failed to create input directory {}: {err}", parent.display())
+            })?;
+        }
+        fs::write(&destination, input_contents)
+            .map_err(|err| format!("failed to stage input file {}: {err}", destination.display()))?;
+    }
+
+    if let Some(script_contents) = &request.script_contents {
+        let destination = resolve_staged_path(root, &request.script_path)?;
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|err| {
+                format!("failed to create script directory {}: {err}", parent.display())
+            })?;
+        }
+        fs::write(&destination, script_contents)
+            .map_err(|err| format!("failed to stage script {}: {err}", destination.display()))?;
+    }
+
+    Ok(())
+}
+
 pub fn run_file_request(request: RunFileRequest) -> Result<RunFileResult, String> {
-    let script_path = PathBuf::from(&request.script_path);
-    let runtime_root = match request.root {
+    let should_stage_runtime_files = request.script_contents.is_some()
+        || request.input_contents.is_some()
+        || request
+            .file_contents
+            .as_ref()
+            .map(|files| !files.is_empty())
+            .unwrap_or(false);
+
+    let temp_runtime_root = if should_stage_runtime_files && request.root.is_none() {
+        Some(unique_temp_dir("runtime")?)
+    } else {
+        None
+    };
+
+    let runtime_root = match request.root.as_deref() {
         Some(dir) => PathBuf::from(dir),
-        None => env::current_dir().map_err(|err| format!("failed to get current directory: {err}"))?,
+        None => match temp_runtime_root.as_ref() {
+            Some(dir) => dir.clone(),
+            None => env::current_dir().map_err(|err| format!("failed to get current directory: {err}"))?,
+        },
+    };
+    fs::create_dir_all(&runtime_root)
+        .map_err(|err| format!("failed to create runtime root {}: {err}", runtime_root.display()))?;
+
+    if should_stage_runtime_files {
+        stage_runtime_files(&runtime_root, &request)?;
+    }
+
+    let script_path = if should_stage_runtime_files {
+        resolve_staged_path(&runtime_root, &request.script_path)?
+    } else {
+        PathBuf::from(&request.script_path)
     };
 
     let mut loader = GenotypeLoadOptions::default();
@@ -291,5 +398,72 @@ pub mod android {
         };
 
         env.new_string(response).expect("jni new_string should succeed")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run_file_request, RunFileRequest};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn unique_path(label: &str) -> String {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!("bioscript-ffi-test-{label}-{}-{nanos}", std::process::id()))
+            .to_string_lossy()
+            .to_string()
+    }
+
+    #[test]
+    fn run_file_request_stages_in_memory_assay_package() {
+        let root = unique_path("staging");
+        let output_rel = "outputs/result.tsv";
+
+        let request = RunFileRequest {
+            script_path: "assets/assays/herc2/herc2.py".to_owned(),
+            script_contents: Some(
+                r#"bioscript.write_tsv(output_file, [{"gene": "HERC2", "row_status": "matched"}])
+"#
+                .to_owned(),
+            ),
+            root: Some(root.clone()),
+            input_file: None,
+            input_contents: None,
+            output_file: Some(output_rel.to_owned()),
+            file_contents: Some(std::collections::HashMap::from([(
+                "assets/assays/herc2/assay.yaml".to_owned(),
+                "schema: bioscript:assay\n".to_owned(),
+            )])),
+            participant_id: None,
+            trace_report_path: None,
+            timing_report_path: None,
+            input_format: None,
+            input_index: None,
+            reference_file: None,
+            reference_index: None,
+            auto_index: None,
+            cache_dir: None,
+            max_duration_ms: Some(5_000),
+            max_memory_bytes: None,
+            max_allocations: None,
+            max_recursion_depth: None,
+        };
+
+        run_file_request(request).expect("run_file_request should succeed");
+
+        let output = fs::read_to_string(format!("{root}/{output_rel}"))
+            .expect("expected output file to be written");
+        assert!(output.contains("HERC2"));
+        assert!(output.contains("matched"));
+
+        let staged_assay = fs::read_to_string(format!("{root}/assets/assays/herc2/assay.yaml"))
+            .expect("expected assay file to be staged");
+        assert!(staged_assay.contains("bioscript:assay"));
     }
 }
