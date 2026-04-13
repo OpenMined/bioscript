@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +46,7 @@ def variant_definition_to_record(variant: VariantDefinition) -> dict[str, Any]:
     }
 
 
-def assay_package_to_intermediate(package: AssayPackage) -> dict[str, Any]:
+def assay_package_to_compiled(package: AssayPackage) -> dict[str, Any]:
     manifest = package.manifest
     metadata = manifest.get("metadata", {}) if isinstance(manifest.get("metadata"), dict) else {}
     package_block = manifest.get("package", {}) if isinstance(manifest.get("package"), dict) else {}
@@ -56,7 +55,7 @@ def assay_package_to_intermediate(package: AssayPackage) -> dict[str, Any]:
     privacy = manifest.get("privacy", {}) if isinstance(manifest.get("privacy"), dict) else {}
 
     return {
-        "schema": "bioscript:assay-intermediate",
+        "schema": "bioscript:assay-compiled",
         "version": "1.0",
         "assay": {
             "id": as_string(manifest.get("assay_id")),
@@ -100,32 +99,32 @@ def assay_package_to_intermediate(package: AssayPackage) -> dict[str, Any]:
     }
 
 
-def load_assay_package_intermediate(assay_path: Path) -> dict[str, Any]:
-    return assay_package_to_intermediate(load_assay_package(assay_path))
+def load_assay_package_compiled(assay_path: Path) -> dict[str, Any]:
+    return assay_package_to_compiled(load_assay_package(assay_path))
 
 
-def load_assay_package_intermediate_json(assay_path: Path) -> str:
-    return json.dumps(load_assay_package_intermediate(assay_path), indent=2, sort_keys=True)
+def load_assay_package_compiled_yaml(assay_path: Path) -> str:
+    return yaml.safe_dump(load_assay_package_compiled(assay_path), sort_keys=False, allow_unicode=False)
 
 
-def write_assay_package_intermediate(assay_path: Path, output_path: Path | None = None) -> Path:
-    target_path = output_path if output_path is not None else assay_path / "assay.intermediate.json"
-    target_path.write_text(load_assay_package_intermediate_json(assay_path) + "\n", encoding="utf-8")
+def write_assay_package_compiled(assay_path: Path, output_path: Path | None = None) -> Path:
+    target_path = output_path if output_path is not None else assay_path / "assay.compiled.yaml"
+    target_path.write_text(load_assay_package_compiled_yaml(assay_path), encoding="utf-8")
     return target_path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate a bioscript assay intermediate artifact.")
+    parser = argparse.ArgumentParser(description="Generate a bioscript compiled assay artifact.")
     parser.add_argument("assay_path", type=Path, help="Path to the assay package directory.")
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        help="Optional output path. Defaults to <assay_path>/assay.intermediate.json.",
+        help="Optional output path. Defaults to <assay_path>/assay.compiled.yaml.",
     )
     args = parser.parse_args()
 
-    output_path = write_assay_package_intermediate(args.assay_path.resolve(), args.output.resolve() if args.output else None)
+    output_path = write_assay_package_compiled(args.assay_path.resolve(), args.output.resolve() if args.output else None)
     print(output_path)
     return 0
 

@@ -165,15 +165,15 @@ That is acceptable for now as long as:
 The next refinement should be one of:
 
 1. keep dual implementations, but freeze and test the contract more rigorously
-2. introduce a shared intermediate/package export format so clients stop re-parsing independently
+2. introduce a shared compiled/package export format so clients stop re-parsing independently
 
 Until then, this document is the source of truth for loader behavior.
 
-## Shared Intermediate
+## Shared Compiled Artifact
 
-The first shared intermediate now exists in Python:
+The first shared compiled artifact now exists in Python:
 
-- `assay_intermediate.py`
+- `assay_compiled.py`
 
 It exports a normalized serializable document with:
 
@@ -187,7 +187,7 @@ Current envelope:
 
 ```json
 {
-  "schema": "bioscript:assay-intermediate",
+  "schema": "bioscript:assay-compiled",
   "version": "1.0",
   "assay": {},
   "implementation": {},
@@ -200,3 +200,38 @@ Current envelope:
 ```
 
 This is the preferred next contract for clients that should not re-interpret raw YAML directly.
+
+### Generation workflow
+
+Assay authors should not hand-maintain `assay.compiled.yaml`.
+
+The source of truth remains:
+
+- `assay.yaml`
+- `catalogue.yaml`
+- variant YAML files
+
+The compiled artifact must be generated from those files before publishing a package for clients such as BioVault.
+
+Generate one package:
+
+```bash
+python3 tools/generate_assay_compiled.py assays/traits/HERC2
+```
+
+Generate every package under a tree:
+
+```bash
+python3 tools/generate_assay_compiled.py assays
+```
+
+Check that committed compiled artifacts are up to date:
+
+```bash
+python3 tools/generate_assay_compiled.py --check assays
+```
+
+Published packages intended for thin clients should include:
+
+- runtime/source files needed for execution
+- generated `assay.compiled.yaml`
