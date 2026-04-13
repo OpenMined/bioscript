@@ -1,0 +1,20 @@
+[package]
+name = "bioscript-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "bioscript"
+path = "src/main.rs"
+
+[dependencies]
+bioscript-formats = { path = "../bioscript-formats" }
+bioscript-runtime = { path = "../bioscript-runtime" }
+bioscript-schema = { path = "../bioscript-schema" }
+monty = { path = "../../monty/crates/monty" }
+
+[dev-dependencies]
+zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }

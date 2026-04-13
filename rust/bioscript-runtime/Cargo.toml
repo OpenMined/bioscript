@@ -1,0 +1,12 @@
+[package]
+name = "bioscript-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bioscript-core = { path = "../bioscript-core" }
+bioscript-formats = { path = "../bioscript-formats" }
+monty = { path = "../../monty/crates/monty" }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }

@@ -134,14 +134,44 @@ dependencies = [
 ]
 
 [[package]]
-name = "bioscript"
+name = "bioscript-cli"
 version = "0.1.0"
 dependencies = [
+ "bioscript-formats",
+ "bioscript-runtime",
+ "bioscript-schema",
  "monty",
+ "zip",
+]
+
+[[package]]
+name = "bioscript-core"
+version = "0.1.0"
+
+[[package]]
+name = "bioscript-formats"
+version = "0.1.0"
+dependencies = [
+ "bioscript-core",
  "noodles",
  "rust-htslib",
- "serde_yaml",
  "zip",
+]
+
+[[package]]
+name = "bioscript-runtime"
+version = "0.1.0"
+dependencies = [
+ "bioscript-core",
+ "bioscript-formats",
+ "monty",
+]
+
+[[package]]
+name = "bioscript-schema"
+version = "0.1.0"
+dependencies = [
+ "serde_yaml",
 ]
 
 [[package]]
