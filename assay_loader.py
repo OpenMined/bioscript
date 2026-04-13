@@ -24,7 +24,12 @@ class AssayPackage:
     unsupported_variants: list[tuple[VariantDefinition, str]]
 
 
+VALID_IMPLEMENTATION_KINDS = {"panel", "script"}
+
+
 def read_yaml_dict(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise RuntimeError(f"{path} does not exist")
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise RuntimeError(f"{path} did not contain a YAML mapping")
@@ -110,6 +115,77 @@ def yaml_to_variant_definition(yaml_path: Path) -> VariantDefinition | None:
     )
 
 
+def validate_manifest(manifest_path: Path, manifest: dict[str, Any]) -> None:
+    schema = manifest.get("schema")
+    if schema != "bioscript:assay":
+        raise RuntimeError(f"{manifest_path} must declare schema: bioscript:assay")
+
+    assay_id = manifest.get("assay_id")
+    if not isinstance(assay_id, str) or not assay_id.strip():
+        raise RuntimeError(f"{manifest_path} missing assay_id")
+
+    implementation = manifest.get("implementation")
+    if not isinstance(implementation, dict):
+        raise RuntimeError(f"{manifest_path} missing implementation block")
+
+    kind = implementation.get("kind")
+    if not isinstance(kind, str) or kind not in VALID_IMPLEMENTATION_KINDS:
+        allowed = ", ".join(sorted(VALID_IMPLEMENTATION_KINDS))
+        raise RuntimeError(f"{manifest_path} implementation.kind must be one of: {allowed}")
+
+
+def validate_catalogue(catalogue_path: Path, catalogue: dict[str, Any]) -> list[dict[str, Any]]:
+    schema = catalogue.get("schema")
+    if schema != "bioscript:catalogue":
+        raise RuntimeError(f"{catalogue_path} must declare schema: bioscript:catalogue")
+
+    entries = catalogue.get("variants")
+    if not isinstance(entries, list):
+        raise RuntimeError(f"{catalogue_path} missing variants list")
+    if not entries:
+        raise RuntimeError(f"{catalogue_path} variants list is empty")
+
+    validated: list[dict[str, Any]] = []
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"{catalogue_path} variants[{idx}] must be a mapping")
+        variant_ref = entry.get("path")
+        if not isinstance(variant_ref, str) or not variant_ref:
+            raise RuntimeError(f"{catalogue_path} variants[{idx}] missing path")
+        validated.append(entry)
+    return validated
+
+
+def validate_variant_fields(variant_path: Path, variant: VariantDefinition) -> None:
+    fields = variant.fields
+    has_rsid = bool(fields.get("rsid"))
+    has_coords = bool(fields.get("grch37") or fields.get("grch38"))
+    if not has_rsid and not has_coords:
+        raise RuntimeError(f"{variant_path} must declare at least one rsid or genomic coordinate")
+
+    kind = str(fields.get("kind", "") or "").lower()
+    if kind in {"", "snp"}:
+        if not fields.get("ref"):
+            raise RuntimeError(f"{variant_path} SNP variant missing ref allele")
+        if not fields.get("alt"):
+            raise RuntimeError(f"{variant_path} SNP variant missing alt allele")
+        return
+
+    if kind == "deletion":
+        if not fields.get("ref"):
+            raise RuntimeError(f"{variant_path} deletion variant missing ref allele")
+        if not fields.get("alt"):
+            raise RuntimeError(f"{variant_path} deletion variant missing alt allele")
+        if not fields.get("deletion_length"):
+            raise RuntimeError(f"{variant_path} deletion variant missing deletion_length")
+        return
+
+    if kind in {"insertion", "indel", "other"}:
+        return
+
+    raise RuntimeError(f"{variant_path} declares unsupported variant kind: {kind}")
+
+
 def extract_yaml_variant_definitions(directory: Path) -> list[VariantDefinition]:
     variants: list[VariantDefinition] = []
     for yaml_file in sorted(directory.glob("*.yaml")):
@@ -123,21 +199,25 @@ def resolve_catalogue_variants(assay_root: Path, manifest: dict[str, Any]) -> li
     inputs = manifest.get("inputs", {}) or {}
     catalogue_ref = inputs.get("catalogue")
     if not isinstance(catalogue_ref, str) or not catalogue_ref:
-        return extract_yaml_variant_definitions(assay_root)
+        variants = extract_yaml_variant_definitions(assay_root)
+        if not variants:
+            raise RuntimeError(f"{assay_root} does not declare a catalogue and contains no root-level variant YAML files")
+        return variants
 
     catalogue_path = (assay_root / catalogue_ref).resolve()
     catalogue = read_yaml_dict(catalogue_path)
+    entries = validate_catalogue(catalogue_path, catalogue)
     variants: list[VariantDefinition] = []
-    for entry in catalogue.get("variants", []) or []:
-        if not isinstance(entry, dict):
-            continue
+    for entry in entries:
         variant_ref = entry.get("path")
-        if not isinstance(variant_ref, str) or not variant_ref:
-            continue
         variant_path = (catalogue_path.parent / variant_ref).resolve()
+        if not variant_path.exists():
+            raise RuntimeError(f"{catalogue_path} references missing variant file: {variant_ref}")
         variant = yaml_to_variant_definition(variant_path)
-        if variant:
-            variants.append(variant)
+        if variant is None:
+            raise RuntimeError(f"{variant_path} is not a bioscript:variant record")
+        validate_variant_fields(variant_path, variant)
+        variants.append(variant)
     return variants
 
 
@@ -159,6 +239,7 @@ def runtime_supports_variant(variant: VariantDefinition) -> tuple[bool, str]:
 def load_assay_package(assay_path: Path) -> AssayPackage:
     manifest_path = assay_path / "assay.yaml"
     manifest = read_yaml_dict(manifest_path)
+    validate_manifest(manifest_path, manifest)
     implementation = manifest.get("implementation", {}) or {}
     implementation_kind = str(implementation.get("kind", "panel") or "panel")
     script_path: Path | None = None
@@ -167,6 +248,8 @@ def load_assay_package(assay_path: Path) -> AssayPackage:
         if not isinstance(script_ref, str) or not script_ref:
             raise RuntimeError(f"{manifest_path} missing implementation.path for script assay")
         script_path = (assay_path / script_ref).resolve()
+        if not script_path.exists():
+            raise RuntimeError(f"{manifest_path} references missing script: {script_ref}")
 
     all_variants = resolve_catalogue_variants(assay_path, manifest)
     supported_variants: list[VariantDefinition] = []
