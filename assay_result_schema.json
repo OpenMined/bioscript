@@ -1,0 +1,6 @@
+{
+  "schema": "bioscript:assay-result-schema",
+  "version": "1.0",
+  "outcomeField": "assay_outcome",
+  "allowedOutcomes": ["matched", "normal", "missing", "partial"]
+}

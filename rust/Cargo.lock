@@ -1136,7 +1136,7 @@ dependencies = [
 
 [[package]]
 name = "monty"
-version = "0.0.9"
+version = "0.0.11"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1151,7 +1151,6 @@ dependencies = [
  "num-integer",
  "num-traits",
  "postcard",
- "pyo3-build-config",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
