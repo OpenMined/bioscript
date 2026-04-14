@@ -1,0 +1,18 @@
+[package]
+name = "bioscript-formats"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+bioscript-core = { path = "../bioscript-core" }
+noodles = { version = "0.104.0", features = ["bgzf"] }
+zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
+
+[target.'cfg(not(any(target_os = "ios", target_os = "tvos")))'.dependencies]
+rust-htslib = "0.51.0"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }

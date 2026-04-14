@@ -1,4 +1,9 @@
-use crate::genotype::GenomicLocus;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenomicLocus {
+    pub chrom: String,
+    pub start: i64,
+    pub end: i64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assembly {
