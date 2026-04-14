@@ -1,6 +1,7 @@
 use std::{
     env,
     ffi::{CStr, CString},
+    fmt::Write as _,
     fs,
     os::raw::c_char,
     path::PathBuf,
@@ -52,64 +53,33 @@ struct FfiResult<T> {
     error: Option<String>,
 }
 
+/// Runs a bioscript file request described by a JSON-compatible Rust struct.
+///
+/// # Errors
+///
+/// Returns an error string when request parsing, optional index preparation,
+/// runtime construction, script execution, or report writing fails.
 pub fn run_file_request(request: RunFileRequest) -> Result<RunFileResult, String> {
     let script_path = PathBuf::from(&request.script_path);
-    let runtime_root = match request.root {
-        Some(dir) => PathBuf::from(dir),
-        None => env::current_dir().map_err(|err| format!("failed to get current directory: {err}"))?,
-    };
-
-    let mut loader = GenotypeLoadOptions::default();
-    if let Some(value) = request.input_format.as_deref() {
-        if value.eq_ignore_ascii_case("auto") {
-            loader.format = None;
-        } else {
-            let parsed = value
-                .parse::<GenotypeSourceFormat>()
-                .map_err(|err| format!("invalid inputFormat value {value}: {err}"))?;
-            loader.format = Some(parsed);
-        }
-    }
-    loader.input_index = request.input_index.map(PathBuf::from);
-    loader.reference_file = request.reference_file.map(PathBuf::from);
-    loader.reference_index = request.reference_index.map(PathBuf::from);
-
-    let mut limits = ResourceLimits::new()
-        .max_duration(Duration::from_millis(100))
-        .max_memory(8 * 1024 * 1024)
-        .max_allocations(200_000)
-        .gc_interval(1000)
-        .max_recursion_depth(Some(200));
-
-    if let Some(value) = request.max_duration_ms {
-        limits = limits.max_duration(Duration::from_millis(value));
-    }
-    if let Some(value) = request.max_memory_bytes {
-        limits = limits.max_memory(value);
-    }
-    if let Some(value) = request.max_allocations {
-        limits = limits.max_allocations(value);
-    }
-    if let Some(value) = request.max_recursion_depth {
-        limits = limits.max_recursion_depth(Some(value));
-    }
+    let runtime_root = runtime_root(&request)?;
+    let mut loader = build_loader(&request)?;
+    let limits = build_limits(&request);
 
     let mut ffi_timings: Vec<StageTiming> = Vec::new();
     if request.auto_index.unwrap_or(false) {
         let auto_index_started = Instant::now();
         let cwd = env::current_dir().map_err(|err| format!("failed to get cwd: {err}"))?;
-        let effective_cache = request
-            .cache_dir
-            .as_ref()
-            .map(PathBuf::from)
-            .map(|path| {
+        let effective_cache = request.cache_dir.as_ref().map_or_else(
+            || runtime_root.join(".bioscript-cache"),
+            |dir| {
+                let path = PathBuf::from(dir);
                 if path.is_absolute() {
                     path
                 } else {
                     runtime_root.join(path)
                 }
-            })
-            .unwrap_or_else(|| runtime_root.join(".bioscript-cache"));
+            },
+        );
         let prepare_request = PrepareRequest {
             root: runtime_root.clone(),
             cwd: cwd.clone(),
@@ -142,11 +112,8 @@ pub fn run_file_request(request: RunFileRequest) -> Result<RunFileResult, String
         });
     }
 
-    let runtime = BioscriptRuntime::with_config(
-        runtime_root,
-        RuntimeConfig { limits, loader },
-    )
-    .map_err(|err| err.to_string())?;
+    let runtime = BioscriptRuntime::with_config(runtime_root, RuntimeConfig { limits, loader })
+        .map_err(|err| err.to_string())?;
 
     let mut inputs = Vec::new();
     if let Some(input_file) = request.input_file {
@@ -162,7 +129,10 @@ pub fn run_file_request(request: RunFileRequest) -> Result<RunFileResult, String
     runtime
         .run_file(
             &script_path,
-            request.trace_report_path.as_deref().map(std::path::Path::new),
+            request
+                .trace_report_path
+                .as_deref()
+                .map(std::path::Path::new),
             inputs,
         )
         .map_err(|err| err.to_string())?;
@@ -176,24 +146,85 @@ pub fn run_file_request(request: RunFileRequest) -> Result<RunFileResult, String
     Ok(RunFileResult { ok: true })
 }
 
+fn runtime_root(request: &RunFileRequest) -> Result<PathBuf, String> {
+    match request.root.as_deref() {
+        Some(dir) => Ok(PathBuf::from(dir)),
+        None => env::current_dir().map_err(|err| format!("failed to get current directory: {err}")),
+    }
+}
+
+fn build_loader(request: &RunFileRequest) -> Result<GenotypeLoadOptions, String> {
+    let mut loader = GenotypeLoadOptions::default();
+    if let Some(value) = request.input_format.as_deref() {
+        if value.eq_ignore_ascii_case("auto") {
+            loader.format = None;
+        } else {
+            let parsed = value
+                .parse::<GenotypeSourceFormat>()
+                .map_err(|err| format!("invalid inputFormat value {value}: {err}"))?;
+            loader.format = Some(parsed);
+        }
+    }
+    loader.input_index = request.input_index.clone().map(PathBuf::from);
+    loader.reference_file = request.reference_file.clone().map(PathBuf::from);
+    loader.reference_index = request.reference_index.clone().map(PathBuf::from);
+    Ok(loader)
+}
+
+fn build_limits(request: &RunFileRequest) -> ResourceLimits {
+    let mut limits = ResourceLimits::new()
+        .max_duration(Duration::from_millis(100))
+        .max_memory(8 * 1024 * 1024)
+        .max_allocations(200_000)
+        .gc_interval(1000)
+        .max_recursion_depth(Some(200));
+
+    if let Some(value) = request.max_duration_ms {
+        limits = limits.max_duration(Duration::from_millis(value));
+    }
+    if let Some(value) = request.max_memory_bytes {
+        limits = limits.max_memory(value);
+    }
+    if let Some(value) = request.max_allocations {
+        limits = limits.max_allocations(value);
+    }
+    if let Some(value) = request.max_recursion_depth {
+        limits = limits.max_recursion_depth(Some(value));
+    }
+
+    limits
+}
+
 fn write_timing_report(path: &PathBuf, timings: &[StageTiming]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create timing report dir {}: {err}", parent.display()))?;
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "failed to create timing report dir {}: {err}",
+                parent.display()
+            )
+        })?;
     }
     let mut output = String::from("stage\tduration_ms\tdetail\n");
     for timing in timings {
-        output.push_str(&format!(
+        let _ = writeln!(
+            output,
             "{}\t{}\t{}\n",
             timing.stage,
             timing.duration_ms,
             timing.detail.replace('\t', " ")
-        ));
+        );
     }
-    fs::write(path, output).map_err(|err| format!("failed to write timing report {}: {err}", path.display()))
+    fs::write(path, output)
+        .map_err(|err| format!("failed to write timing report {}: {err}", path.display()))
 }
 
 #[unsafe(no_mangle)]
+/// Executes a bioscript run request encoded as a UTF-8 JSON C string.
+///
+/// # Safety
+///
+/// `request_json` must either be null or point to a valid, NUL-terminated C
+/// string that remains alive for the duration of this call.
 pub unsafe extern "C" fn bioscript_run_file_json(request_json: *const c_char) -> *mut c_char {
     let response = unsafe {
         if request_json.is_null() {
@@ -242,6 +273,12 @@ pub unsafe extern "C" fn bioscript_run_file_json(request_json: *const c_char) ->
 }
 
 #[unsafe(no_mangle)]
+/// Frees a string previously returned by [`bioscript_run_file_json`].
+///
+/// # Safety
+///
+/// `ptr` must be null or a pointer returned by [`CString::into_raw`] from this
+/// library, and it must not be freed more than once.
 pub unsafe extern "C" fn bioscript_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
         unsafe {
@@ -290,6 +327,7 @@ pub mod android {
             }
         };
 
-        env.new_string(response).expect("jni new_string should succeed")
+        env.new_string(response)
+            .expect("jni new_string should succeed")
     }
 }

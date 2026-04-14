@@ -7,6 +7,7 @@
     clippy::unused_self
 )]
 
+mod alignment;
 mod genotype;
 mod prepare;
 

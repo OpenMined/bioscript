@@ -13,10 +13,15 @@ PACKAGES=(
   bioscript-schema
 )
 
-FMT_ARGS=()
+PKG_ARGS=()
 for package in "${PACKAGES[@]}"; do
-  FMT_ARGS+=(-p "$package")
+  PKG_ARGS+=(-p "$package")
 done
 
-cargo fmt --check "${FMT_ARGS[@]}"
-cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --check "${PKG_ARGS[@]}"
+
+filter_vendored() {
+  awk 'BEGIN{RS=""; ORS="\n\n"} !/\/noodles\/|\/vendor\/|`noodles-|`lexical-/'
+}
+
+cargo clippy "${PKG_ARGS[@]}" --all-targets --color=never -- -D warnings 2> >(filter_vendored >&2)

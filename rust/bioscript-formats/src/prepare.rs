@@ -3,14 +3,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
 };
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-use rust_htslib::{bam, faidx};
+use noodles::{cram, fasta};
 
 use crate::genotype::GenotypeSourceFormat;
 
@@ -115,78 +113,59 @@ fn detect_alignment_input(path: &Path) -> bool {
 }
 
 fn ensure_alignment_index(path: &Path, cache_dir: &Path) -> Result<PathBuf, String> {
-    #[cfg(any(target_os = "ios", target_os = "tvos"))]
-    {
-        let _ = (path, cache_dir);
-        return Err("alignment indexing is not supported on Apple mobile targets".to_owned());
-    }
-
-    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-    {
     if let Some(existing) = adjacent_alignment_index(path) {
         return Ok(existing);
     }
 
-    let ext = if path
+    let is_cram = path
         .extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("cram"))
-    {
-        "csi"
-    } else {
-        "bai"
-    };
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("cram"));
+    if !is_cram {
+        return Err(format!(
+            "alignment indexing only supports CRAM in the pure-Rust backend: {}",
+            path.display()
+        ));
+    }
+
+    let ext = "crai";
     let out = cache_dir.join(format!("{}.{ext}", stable_stem(path)));
     if out.exists() {
         return Ok(out);
     }
 
-    let idx_type = if ext == "bai" {
-        bam::index::Type::Bai
-    } else {
-        bam::index::Type::Csi(14)
-    };
-    bam::index::build(path, Some(&out), idx_type, 1).map_err(|err| {
+    let index = cram::fs::index(path).map_err(|err| {
         format!(
             "failed to build alignment index {} for {}: {err}",
             out.display(),
             path.display()
         )
     })?;
+    cram::crai::fs::write(&out, &index).map_err(|err| {
+        format!(
+            "failed to write alignment index {} for {}: {err}",
+            out.display(),
+            path.display()
+        )
+    })?;
     Ok(out)
-    }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn adjacent_alignment_index(path: &Path) -> Option<PathBuf> {
     let lower = path.to_string_lossy().to_ascii_lowercase();
     let candidates = if lower.ends_with(".cram") {
         vec![
             path.with_extension("cram.crai"),
             path.with_extension("crai"),
-            path.with_extension("cram.csi"),
-            path.with_extension("csi"),
         ]
     } else {
-        vec![
-            path.with_extension("bam.bai"),
-            path.with_extension("bai"),
-            path.with_extension("csi"),
-        ]
+        Vec::new()
     };
 
     candidates.into_iter().find(|candidate| candidate.exists())
 }
 
 fn ensure_reference_index(path: &Path, cache_dir: &Path) -> Result<(PathBuf, PathBuf), String> {
-    #[cfg(any(target_os = "ios", target_os = "tvos"))]
-    {
-        let _ = (path, cache_dir);
-        return Err("reference indexing is not supported on Apple mobile targets".to_owned());
-    }
-
-    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-    {
     let adjacent = adjacent_reference_index(path);
     if let Some(index) = adjacent {
         return Ok((path.to_path_buf(), index));
@@ -200,9 +179,16 @@ fn ensure_reference_index(path: &Path, cache_dir: &Path) -> Result<(PathBuf, Pat
     let cached_index = adjacent_reference_index(&cached_reference)
         .unwrap_or_else(|| cached_reference_index_path(&cached_reference));
     if !cached_index.exists() {
-        faidx::build(&cached_reference).map_err(|err| {
+        let index = fasta::fs::index(&cached_reference).map_err(|err| {
             format!(
                 "failed to build FASTA index {} for {}: {err}",
+                cached_index.display(),
+                cached_reference.display()
+            )
+        })?;
+        fasta::fai::fs::write(&cached_index, &index).map_err(|err| {
+            format!(
+                "failed to write FASTA index {} for {}: {err}",
                 cached_index.display(),
                 cached_reference.display()
             )
@@ -210,16 +196,13 @@ fn ensure_reference_index(path: &Path, cache_dir: &Path) -> Result<(PathBuf, Pat
     }
 
     Ok((cached_reference, cached_index))
-    }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn adjacent_reference_index(path: &Path) -> Option<PathBuf> {
     let candidate = cached_reference_index_path(path);
     candidate.exists().then_some(candidate)
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn cached_reference_index_path(path: &Path) -> PathBuf {
     if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
         path.with_extension(format!("{ext}.fai"))
@@ -228,7 +211,6 @@ fn cached_reference_index_path(path: &Path) -> PathBuf {
     }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn create_reference_link(source: &Path, target: &Path) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)

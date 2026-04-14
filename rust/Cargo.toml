@@ -11,3 +11,13 @@ members = [
 
 [profile.dev]
 opt-level = 2
+
+[patch.crates-io]
+lexical-util = { path = "vendor/lexical-util" }
+noodles-bam = { path = "../noodles/noodles-bam" }
+noodles-bgzf = { path = "../noodles/noodles-bgzf" }
+noodles-core = { path = "../noodles/noodles-core" }
+noodles-cram = { path = "../noodles/noodles-cram" }
+noodles-csi = { path = "../noodles/noodles-csi" }
+noodles-fasta = { path = "../noodles/noodles-fasta" }
+noodles-sam = { path = "../noodles/noodles-sam" }
