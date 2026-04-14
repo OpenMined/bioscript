@@ -1,3 +1,7 @@
 [submodule "monty"]
 	path = monty
 	url = git@github.com:pydantic/monty.git
+[submodule "noodles"]
+	path = noodles
+	url = git@github.com:madhavajay/noodles.git
+	branch = madhava/streaming-slice-records

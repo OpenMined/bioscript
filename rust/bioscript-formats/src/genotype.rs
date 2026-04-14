@@ -8,13 +8,13 @@ use std::{
 };
 
 use noodles::bgzf;
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-use rust_htslib::bam::{self, Read};
 use zip::ZipArchive;
 
 use bioscript_core::{
     Assembly, GenomicLocus, RuntimeError, VariantKind, VariantObservation, VariantSpec,
 };
+
+use crate::alignment::{self, AlignmentOpKind, AlignmentRecord};
 
 const COMMENT_PREFIXES: [&str; 2] = ["#", "//"];
 
@@ -68,7 +68,6 @@ struct DelimitedBackend {
     zip_entry_name: Option<String>,
 }
 
-#[cfg_attr(any(target_os = "ios", target_os = "tvos"), allow(dead_code))]
 #[derive(Debug, Clone)]
 struct CramBackend {
     path: PathBuf,
@@ -263,7 +262,7 @@ impl GenotypeStore {
             },
             QueryBackend::Cram(_) => BackendCapabilities {
                 rsid_lookup: false,
-                locus_lookup: cfg!(not(any(target_os = "ios", target_os = "tvos"))),
+                locus_lookup: true,
             },
         }
     }
@@ -396,7 +395,6 @@ impl DelimitedBackend {
     }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 impl CramBackend {
     fn backend_name(&self) -> &'static str {
         "cram"
@@ -435,7 +433,10 @@ impl CramBackend {
             VariantKind::Deletion => {
                 self.observe_deletion(variant, assembly, &locus, reference_file)?
             }
-            VariantKind::Insertion | VariantKind::Indel | VariantKind::Other => {
+            VariantKind::Insertion | VariantKind::Indel => {
+                self.observe_indel(variant, assembly, &locus, reference_file)?
+            }
+            VariantKind::Other => {
                 return Err(RuntimeError::Unsupported(format!(
                     "backend '{}' does not yet support {:?} observation for {}",
                     self.backend_name(),
@@ -475,23 +476,17 @@ impl CramBackend {
         let mut ref_count = 0u32;
         let mut depth = 0u32;
 
-        self.with_pileups(reference_file, locus, |pileup| {
-            let pos1 = i64::from(pileup.pos()) + 1;
-            if pos1 != target_pos {
-                return;
-            }
-
-            for alignment in pileup.alignments() {
-                if alignment.is_del() || alignment.is_refskip() {
-                    continue;
+        alignment::for_each_cram_record(
+            &self.path,
+            &self.options,
+            reference_file,
+            locus,
+            |record| {
+                if record.is_unmapped {
+                    return Ok(true);
                 }
-                let Some(qpos) = alignment.qpos() else {
-                    continue;
-                };
-                let record = alignment.record();
-                let bases = record.seq().as_bytes();
-                let Some(base) = bases.get(qpos).copied() else {
-                    continue;
+                let Some(base) = base_at_position(&record, target_pos) else {
+                    return Ok(true);
                 };
                 let base = (base as char).to_ascii_uppercase();
                 depth += 1;
@@ -500,8 +495,9 @@ impl CramBackend {
                 } else if base == alternate {
                     alt_count += 1;
                 }
-            }
-        })?;
+                Ok(true)
+            },
+        )?;
 
         Ok(VariantObservation {
             backend: self.backend_name().to_owned(),
@@ -536,29 +532,25 @@ impl CramBackend {
         let mut ref_count = 0u32;
         let mut depth = 0u32;
 
-        self.with_pileups(reference_file, &anchor_window(locus), |pileup| {
-            let pos1 = i64::from(pileup.pos()) + 1;
-            if pos1 != anchor_pos {
-                return;
-            }
-
-            for alignment in pileup.alignments() {
-                if alignment.is_refskip() {
-                    continue;
+        alignment::for_each_cram_record(
+            &self.path,
+            &self.options,
+            reference_file,
+            &anchor_window(locus),
+            |record| {
+                if record.is_unmapped || !spans_position(&record, anchor_pos) {
+                    return Ok(true);
                 }
                 depth += 1;
-                match alignment.indel() {
-                    bam::pileup::Indel::Del(len)
-                        if usize::try_from(len).ok() == Some(deletion_length) =>
-                    {
+                match indel_at_anchor(&record, anchor_pos) {
+                    Some((AlignmentOpKind::Deletion, len)) if len == deletion_length => {
                         alt_count += 1;
                     }
-                    _ => {
-                        ref_count += 1;
-                    }
+                    _ => ref_count += 1,
                 }
-            }
-        })?;
+                Ok(true)
+            },
+        )?;
 
         Ok(VariantObservation {
             backend: self.backend_name().to_owned(),
@@ -577,135 +569,84 @@ impl CramBackend {
         })
     }
 
-    fn with_pileups<F>(
+    fn observe_indel(
         &self,
-        reference_file: &Path,
+        variant: &VariantSpec,
+        assembly: Assembly,
         locus: &GenomicLocus,
-        mut on_pileup: F,
-    ) -> Result<(), RuntimeError>
-    where
-        F: FnMut(&bam::pileup::Pileup),
-    {
-        if let Some(index_path) = self.options.input_index.as_ref() {
-            let mut reader = bam::IndexedReader::from_path_and_index(&self.path, index_path)
-                .map_err(|err| {
-                    RuntimeError::Io(format!(
-                        "failed to open indexed CRAM {} with index {}: {err}",
-                        self.path.display(),
-                        index_path.display()
-                    ))
-                })?;
-            reader.set_reference(reference_file).map_err(|err| {
-                RuntimeError::Io(format!(
-                    "failed to set CRAM reference {} for {}: {err}",
-                    reference_file.display(),
-                    self.path.display()
-                ))
-            })?;
-            fetch_locus(&mut reader, locus)?;
-            for pileup in reader.pileup() {
-                let pileup = pileup.map_err(|err| {
-                    RuntimeError::Io(format!(
-                        "failed while piling up {}: {err}",
-                        self.path.display()
-                    ))
-                })?;
-                on_pileup(&pileup);
-            }
-            return Ok(());
-        }
-
-        if self.path.with_extension("cram.crai").exists()
-            || self.path.with_extension("crai").exists()
-        {
-            let mut reader = bam::IndexedReader::from_path(&self.path).map_err(|err| {
-                RuntimeError::Io(format!(
-                    "failed to open indexed CRAM {}: {err}",
-                    self.path.display()
-                ))
-            })?;
-            reader.set_reference(reference_file).map_err(|err| {
-                RuntimeError::Io(format!(
-                    "failed to set CRAM reference {} for {}: {err}",
-                    reference_file.display(),
-                    self.path.display()
-                ))
-            })?;
-            fetch_locus(&mut reader, locus)?;
-            for pileup in reader.pileup() {
-                let pileup = pileup.map_err(|err| {
-                    RuntimeError::Io(format!(
-                        "failed while piling up {}: {err}",
-                        self.path.display()
-                    ))
-                })?;
-                on_pileup(&pileup);
-            }
-            return Ok(());
-        }
-
-        let mut reader = bam::Reader::from_path(&self.path).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to open CRAM {}: {err}",
-                self.path.display()
-            ))
+        reference_file: &Path,
+    ) -> Result<VariantObservation, RuntimeError> {
+        let reference = variant.reference.clone().ok_or_else(|| {
+            RuntimeError::InvalidArguments("indel variant requires ref/reference".to_owned())
         })?;
-        reader.set_reference(reference_file).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to set CRAM reference {} for {}: {err}",
-                reference_file.display(),
-                self.path.display()
-            ))
+        let alternate = variant.alternate.clone().ok_or_else(|| {
+            RuntimeError::InvalidArguments("indel variant requires alt/alternate".to_owned())
         })?;
+        let records =
+            alignment::query_cram_records(&self.path, &self.options, reference_file, locus)?;
 
-        let target_tid = header_tid(reader.header(), &locus.chrom).ok_or_else(|| {
-            RuntimeError::Unsupported(format!(
-                "reference {} does not contain contig {} for {}",
-                self.path.display(),
-                locus.chrom,
-                describe_locus(locus)
-            ))
-        })?;
+        let mut alt_count = 0u32;
+        let mut ref_count = 0u32;
+        let mut depth = 0u32;
+        let mut matching_alt_lengths = BTreeSet::new();
 
-        for pileup in reader.pileup() {
-            let pileup = pileup.map_err(|err| {
-                RuntimeError::Io(format!(
-                    "failed while piling up {}: {err}",
-                    self.path.display()
-                ))
-            })?;
-            if pileup.tid() != target_tid {
+        for record in records {
+            if record.is_unmapped {
                 continue;
             }
-            let pos1 = i64::from(pileup.pos()) + 1;
-            if pos1 < locus.start {
+            if !record_overlaps_locus(&record, locus) {
                 continue;
             }
-            if pos1 > locus.end {
-                break;
+            let classification =
+                classify_expected_indel(&record, locus, reference.len(), &alternate)?;
+            if !classification.covering {
+                continue;
             }
-            on_pileup(&pileup);
+            depth += 1;
+            if classification.matches_alt {
+                alt_count += 1;
+                matching_alt_lengths.insert(classification.observed_len);
+            } else if classification.reference_like {
+                ref_count += 1;
+            }
         }
 
-        Ok(())
+        let evidence_label = if matching_alt_lengths.is_empty() {
+            "none".to_owned()
+        } else {
+            matching_alt_lengths
+                .into_iter()
+                .map(|len| len.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+
+        Ok(VariantObservation {
+            backend: self.backend_name().to_owned(),
+            matched_rsid: variant.rsids.first().cloned(),
+            assembly: Some(assembly),
+            genotype: infer_copy_number_genotype(
+                &reference, &alternate, ref_count, alt_count, depth,
+            ),
+            ref_count: Some(ref_count),
+            alt_count: Some(alt_count),
+            depth: Some(depth),
+            evidence: vec![format!(
+                "observed indel at {} depth={} ref_count={} alt_count={} matching_alt_lengths={}",
+                describe_locus(locus),
+                depth,
+                ref_count,
+                alt_count,
+                evidence_label
+            )],
+        })
     }
 }
 
-#[cfg(any(target_os = "ios", target_os = "tvos"))]
-impl CramBackend {
-    fn backend_name(&self) -> &'static str {
-        "cram"
-    }
-
-    fn lookup_variant(&self, _variant: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "CRAM/BAM-backed lookup is not supported on Apple mobile targets".to_owned(),
-        ))
-    }
-}
-
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-fn choose_variant_locus(variant: &VariantSpec, reference_file: &Path) -> Option<(Assembly, GenomicLocus)> {
+fn choose_variant_locus(
+    variant: &VariantSpec,
+    reference_file: &Path,
+) -> Option<(Assembly, GenomicLocus)> {
     match detect_reference_assembly(reference_file) {
         Some(Assembly::Grch38) => variant
             .grch38
@@ -740,7 +681,6 @@ fn choose_variant_locus(variant: &VariantSpec, reference_file: &Path) -> Option<
     }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn detect_reference_assembly(reference_file: &Path) -> Option<Assembly> {
     let lower = reference_file.to_string_lossy().to_ascii_lowercase();
     if lower.contains("grch38") || lower.contains("hg38") || lower.contains("assembly38") {
@@ -752,50 +692,10 @@ fn detect_reference_assembly(reference_file: &Path) -> Option<Assembly> {
     }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-fn fetch_locus(reader: &mut bam::IndexedReader, locus: &GenomicLocus) -> Result<(), RuntimeError> {
-    let tid = header_tid(reader.header(), &locus.chrom).ok_or_else(|| {
-        RuntimeError::Unsupported(format!(
-            "indexed CRAM does not contain contig {} for {}",
-            locus.chrom,
-            describe_locus(locus)
-        ))
-    })?;
-
-    let start = locus.start.saturating_sub(1);
-    let end = locus.end;
-    let tid = i32::try_from(tid).map_err(|_| {
-        RuntimeError::Unsupported(format!(
-            "indexed CRAM contig id {tid} does not fit i32 for {}",
-            describe_locus(locus)
-        ))
-    })?;
-    reader.fetch((tid, start, end)).map_err(|err| {
-        RuntimeError::Io(format!(
-            "failed to fetch {}:{}-{}: {err}",
-            locus.chrom, locus.start, locus.end
-        ))
-    })
-}
-
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
-fn header_tid(header: &bam::HeaderView, chrom: &str) -> Option<u32> {
-    let candidates = [
-        chrom.to_owned(),
-        format!("chr{chrom}"),
-        chrom.trim_start_matches("chr").to_owned(),
-    ];
-    candidates
-        .iter()
-        .find_map(|candidate| header.tid(candidate.as_bytes()))
-}
-
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn describe_locus(locus: &GenomicLocus) -> String {
     format!("{}:{}-{}", locus.chrom, locus.start, locus.end)
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn anchor_window(locus: &GenomicLocus) -> GenomicLocus {
     let anchor = locus.start.saturating_sub(1);
     GenomicLocus {
@@ -805,7 +705,6 @@ fn anchor_window(locus: &GenomicLocus) -> GenomicLocus {
     }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn first_base(value: &str) -> Option<char> {
     value
         .trim()
@@ -814,7 +713,6 @@ fn first_base(value: &str) -> Option<char> {
         .map(|ch| ch.to_ascii_uppercase())
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn infer_snp_genotype(
     reference: char,
     alternate: char,
@@ -835,7 +733,6 @@ fn infer_snp_genotype(
     }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn infer_copy_number_genotype(
     reference: &str,
     alternate: &str,
@@ -854,6 +751,138 @@ fn infer_copy_number_genotype(
     } else {
         Some(format!("{reference}{alternate}"))
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IndelClassification {
+    covering: bool,
+    reference_like: bool,
+    matches_alt: bool,
+    observed_len: usize,
+}
+
+fn len_as_i64(len: usize) -> Option<i64> {
+    i64::try_from(len).ok()
+}
+
+fn base_at_position(record: &AlignmentRecord, target_pos: i64) -> Option<u8> {
+    let mut ref_pos = record.start;
+    let mut read_pos = 0usize;
+
+    for op in &record.cigar {
+        match op.kind {
+            AlignmentOpKind::Match
+            | AlignmentOpKind::SequenceMatch
+            | AlignmentOpKind::SequenceMismatch => {
+                let op_len = len_as_i64(op.len)?;
+                if target_pos >= ref_pos && target_pos < ref_pos + op_len {
+                    let offset = usize::try_from(target_pos - ref_pos).ok()?;
+                    return record.sequence.get(read_pos + offset).copied();
+                }
+                ref_pos += op_len;
+                read_pos += op.len;
+            }
+            AlignmentOpKind::Insertion | AlignmentOpKind::SoftClip => {
+                read_pos += op.len;
+            }
+            AlignmentOpKind::Deletion | AlignmentOpKind::Skip => {
+                let op_len = len_as_i64(op.len)?;
+                if target_pos >= ref_pos && target_pos < ref_pos + op_len {
+                    return None;
+                }
+                ref_pos += op_len;
+            }
+            AlignmentOpKind::HardClip | AlignmentOpKind::Pad => {}
+        }
+    }
+
+    None
+}
+
+fn spans_position(record: &AlignmentRecord, pos: i64) -> bool {
+    pos >= record.start.saturating_sub(1) && pos <= record.end
+}
+
+fn record_overlaps_locus(record: &AlignmentRecord, locus: &GenomicLocus) -> bool {
+    record.end >= locus.start && record.start <= locus.end
+}
+
+fn indel_at_anchor(record: &AlignmentRecord, anchor_pos: i64) -> Option<(AlignmentOpKind, usize)> {
+    let mut ref_pos = record.start;
+
+    for op in &record.cigar {
+        match op.kind {
+            AlignmentOpKind::Match
+            | AlignmentOpKind::SequenceMatch
+            | AlignmentOpKind::SequenceMismatch
+            | AlignmentOpKind::Skip => {
+                ref_pos += len_as_i64(op.len)?;
+            }
+            AlignmentOpKind::Insertion => {
+                let anchor = ref_pos.saturating_sub(1);
+                if anchor == anchor_pos {
+                    return Some((AlignmentOpKind::Insertion, op.len));
+                }
+            }
+            AlignmentOpKind::Deletion => {
+                let anchor = ref_pos.saturating_sub(1);
+                if anchor == anchor_pos {
+                    return Some((AlignmentOpKind::Deletion, op.len));
+                }
+                ref_pos += len_as_i64(op.len)?;
+            }
+            AlignmentOpKind::SoftClip | AlignmentOpKind::HardClip | AlignmentOpKind::Pad => {}
+        }
+    }
+
+    None
+}
+
+fn classify_expected_indel(
+    record: &AlignmentRecord,
+    locus: &GenomicLocus,
+    reference_len: usize,
+    alternate: &str,
+) -> Result<IndelClassification, RuntimeError> {
+    let alt_len = alternate.len();
+    let anchor_start = locus.start.saturating_sub(1);
+    let anchor_end = locus.end;
+
+    let covering = record.start <= locus.start && record.end >= locus.end;
+    if !covering {
+        return Ok(IndelClassification {
+            covering: false,
+            reference_like: false,
+            matches_alt: false,
+            observed_len: reference_len,
+        });
+    }
+
+    let mut observed_len = reference_len;
+
+    for anchor in anchor_start..=anchor_end {
+        if let Some((kind, len)) = indel_at_anchor(record, anchor) {
+            observed_len = match kind {
+                AlignmentOpKind::Insertion => reference_len + len,
+                AlignmentOpKind::Deletion => reference_len.saturating_sub(len),
+                _ => reference_len,
+            };
+
+            return Ok(IndelClassification {
+                covering: true,
+                reference_like: false,
+                matches_alt: observed_len == alt_len,
+                observed_len,
+            });
+        }
+    }
+
+    Ok(IndelClassification {
+        covering: true,
+        reference_like: true,
+        matches_alt: false,
+        observed_len,
+    })
 }
 
 fn describe_query(variant: &VariantSpec) -> &'static str {
@@ -974,7 +1003,10 @@ impl RowParser {
         }
 
         let trimmed = strip_bom(trimmed);
-        if let Some(prefix) = COMMENT_PREFIXES.iter().find(|prefix| trimmed.starts_with(**prefix)) {
+        if let Some(prefix) = COMMENT_PREFIXES
+            .iter()
+            .find(|prefix| trimmed.starts_with(**prefix))
+        {
             let candidate = trimmed.trim_start_matches(prefix).trim();
             if !candidate.is_empty() {
                 let fields = self.parse_fields(candidate);
@@ -1011,9 +1043,15 @@ impl RowParser {
             row_map.insert(normalize_name(&header[idx]), strip_inline_comment(&value));
         }
 
-        let rsid = self.lookup(&row_map, "rsid").filter(|value| !value.is_empty());
-        let chrom = self.lookup(&row_map, "chromosome").filter(|value| !value.is_empty());
-        let position = self.lookup(&row_map, "position").and_then(|value| value.parse::<i64>().ok());
+        let rsid = self
+            .lookup(&row_map, "rsid")
+            .filter(|value| !value.is_empty());
+        let chrom = self
+            .lookup(&row_map, "chromosome")
+            .filter(|value| !value.is_empty());
+        let position = self
+            .lookup(&row_map, "position")
+            .and_then(|value| value.parse::<i64>().ok());
         if rsid.is_none() && (chrom.is_none() || position.is_none()) {
             return Ok(None);
         }
@@ -1036,7 +1074,10 @@ impl RowParser {
 
     fn parse_fields(&self, line: &str) -> Vec<String> {
         match self.delimiter {
-            Delimiter::Tab => line.split('\t').map(|field| field.trim().to_owned()).collect(),
+            Delimiter::Tab => line
+                .split('\t')
+                .map(|field| field.trim().to_owned())
+                .collect(),
             Delimiter::Space => line.split_whitespace().map(str::to_owned).collect(),
             Delimiter::Comma => split_csv_line(line),
         }
@@ -1054,7 +1095,9 @@ impl RowParser {
         let aliases = self.alias_map.get(key)?;
         for alias in aliases {
             let key = normalize_name(alias);
-            if let Some(value) = row_map.get(&key) && !value.is_empty() {
+            if let Some(value) = row_map.get(&key)
+                && !value.is_empty()
+            {
                 return Some(value.clone());
             }
         }
@@ -1064,7 +1107,10 @@ impl RowParser {
     fn default_header(&self, field_count: usize) -> Vec<String> {
         let base = ["rsid", "chromosome", "position", "genotype"];
         if field_count <= base.len() {
-            base[..field_count].iter().map(|s| (*s).to_owned()).collect()
+            base[..field_count]
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect()
         } else {
             let mut header: Vec<String> = base.iter().map(|s| (*s).to_owned()).collect();
             for idx in 0..(field_count - header.len()) {

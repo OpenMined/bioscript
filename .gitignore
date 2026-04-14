@@ -72,3 +72,7 @@ examples/**/work/*
 examples/**/.nextflow*
 # BioVault runtime config
 .biovault-runtime.config
+
+# Read-only reference material (htslib/rust-htslib source trees used during
+# the CRAM/noodles migration; not part of the build).
+context/
