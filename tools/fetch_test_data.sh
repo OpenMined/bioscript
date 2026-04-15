@@ -14,11 +14,12 @@ set -euo pipefail
 #   ./fetch_test_data.sh --exclude "*.fa,*.cram"  # skip matching files
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DEFAULT_REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="${BIOSCRIPT_TEST_DATA_REPO_ROOT:-${DEFAULT_REPO_ROOT}}"
 DATA_DIR="${REPO_ROOT}/test-data"
 DEFAULT_CACHE_ROOT="${HOME}/.bioscript/cache/test-data"
 CACHE_ROOT="${BIOSCRIPT_TEST_DATA_CACHE_DIR:-${DEFAULT_CACHE_ROOT}}"
-SOURCES="${SCRIPT_DIR}/sources.yaml"
+SOURCES="${BIOSCRIPT_TEST_DATA_SOURCES:-${SCRIPT_DIR}/sources.yaml}"
 
 # --- Helpers -----------------------------------------------------------------
 
