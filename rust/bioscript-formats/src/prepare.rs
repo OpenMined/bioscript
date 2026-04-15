@@ -242,7 +242,6 @@ fn create_reference_link(source: &Path, target: &Path) -> Result<(), String> {
     }
 }
 
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn stable_stem(path: &Path) -> String {
     let mut hasher = DefaultHasher::new();
     path.to_string_lossy().hash(&mut hasher);
@@ -254,8 +253,6 @@ fn stable_stem(path: &Path) -> String {
         .replace(['/', ' ', ':'], "_");
     format!("{file_name}-{hash:016x}")
 }
-
-#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn cache_reference_name(path: &Path) -> String {
     let file_name = path
         .file_name()
