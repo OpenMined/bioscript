@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs,
     io::Write,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
@@ -29,6 +29,35 @@ fn repo_root() -> PathBuf {
         .parent()
         .expect("bioscript repo root")
         .to_path_buf()
+}
+
+fn shared_test_data_root() -> Option<PathBuf> {
+    if let Some(path) = env::var_os("BIOSCRIPT_TEST_DATA_DIR") {
+        let candidate = PathBuf::from(path);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    let local = repo_root().join("test-data");
+    if local.exists() {
+        return Some(local);
+    }
+
+    let home_cache = env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".bioscript/cache/test-data"));
+    home_cache.filter(|path| path.exists())
+}
+
+fn shared_fixture_or_skip(test_name: &str, relative: &str) -> Option<PathBuf> {
+    let root = shared_test_data_root()?;
+    let path = root.join(relative);
+    if !path.exists() {
+        eprintln!("skipping {test_name}: missing {}", path.display());
+        return None;
+    }
+    Some(path)
 }
 
 #[test]
@@ -82,6 +111,112 @@ fn zip_genotype_file_can_be_forced_by_format() {
 }
 
 #[test]
+fn zip_vcf_entry_is_auto_detected_and_readable() {
+    let dir = temp_dir("zip-vcf");
+    let zip_path = dir.join("apol1-sample.zip");
+
+    let file = fs::File::create(&zip_path).unwrap();
+    let mut writer = zip::ZipWriter::new(file);
+    writer
+        .start_file("nested/sample.vcf", SimpleFileOptions::default())
+        .unwrap();
+    writer
+        .write_all(
+            b"##fileformat=VCFv4.2\n\
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+22\t36265860\trs73885319\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+        )
+        .unwrap();
+    writer.finish().unwrap();
+
+    let store = GenotypeStore::from_file(&zip_path).unwrap();
+    assert_eq!(store.get("rs73885319").unwrap().as_deref(), Some("AG"));
+}
+
+#[test]
+fn shared_real_world_zipped_genotype_exports_are_readable() {
+    struct FixtureExpectation {
+        relative: &'static str,
+        rsid: &'static str,
+        genotype: &'static str,
+    }
+
+    let fixtures = [
+        FixtureExpectation {
+            relative: "23andme/v2/hu0199C8/23data20100526.txt.zip",
+            rsid: "rs3094315",
+            genotype: "AA",
+        },
+        FixtureExpectation {
+            relative: "23andme/v3/huE4DAE4/huE4DAE4_20120522224129.txt.zip",
+            rsid: "rs3131972",
+            genotype: "GG",
+        },
+        FixtureExpectation {
+            relative: "23andme/v4/huE18D82/genome__v4_Full_2016.txt.zip",
+            rsid: "rs3131972",
+            genotype: "AG",
+        },
+        FixtureExpectation {
+            relative: "23andme/v5/hu50B3F5/genome_hu50B3F5_v5_Full.zip",
+            rsid: "rs116587930",
+            genotype: "GG",
+        },
+        FixtureExpectation {
+            relative: "dynamicdna/100001-synthetic/100001_X_X_GSAv3-DTC_GRCh38-07-12-2025.txt.zip",
+            rsid: "rs116587930",
+            genotype: "GG",
+        },
+        FixtureExpectation {
+            relative: "ancestrydna/huE922FC/AncestryDNA.txt.zip",
+            rsid: "rs3131972",
+            genotype: "GG",
+        },
+        FixtureExpectation {
+            relative: "familytreedna/hu17B792/2017-04-29_Family_Tree_DNA_Data.csv.zip",
+            rsid: "rs1000530",
+            genotype: "TT",
+        },
+        FixtureExpectation {
+            relative: "genesforgood/hu80B047/GFG0_filtered_imputed_genotypes_noY_noMT_23andMe.txt.zip",
+            rsid: "rs3094315",
+            genotype: "AA",
+        },
+        FixtureExpectation {
+            relative: "myheritage/hu33515F/MyHeritage_raw_dna_data.zip",
+            rsid: "rs3131972",
+            genotype: "GG",
+        },
+    ];
+
+    for fixture in fixtures {
+        let Some(path) = shared_fixture_or_skip(
+            "shared_real_world_zipped_genotype_exports_are_readable",
+            fixture.relative,
+        ) else {
+            return;
+        };
+
+        let store = GenotypeStore::from_file(&path).unwrap();
+        assert_eq!(
+            store.get(fixture.rsid).unwrap().as_deref(),
+            Some(fixture.genotype),
+            "fixture {}",
+            fixture.relative
+        );
+    }
+}
+
+#[test]
+fn bundled_dynamicdna_gsav3_plain_text_fixture_is_readable() {
+    let path = repo_root()
+        .join("old/examples/apol1/genotype_files/108179_G0G0_X_X_GSAv3-DTC_GRCh38-12-13-2025.txt");
+    let store = GenotypeStore::from_file(&path).unwrap();
+    assert_eq!(store.get("rs73885319").unwrap().as_deref(), Some("AA"));
+}
+
+#[test]
 fn vcf_variant_lookup_reads_single_sample_calls() {
     let dir = temp_dir("vcf");
     let vcf_path = dir.join("apol1_sample.vcf");
@@ -117,15 +252,51 @@ struct CramFixture {
     input_index: PathBuf,
 }
 
+fn run_large_cram_tests() -> bool {
+    env::var_os("BIOSCRIPT_RUN_LARGE_TESTS").is_some()
+}
+
+fn require_large_cram_tests(test_name: &str) -> bool {
+    if run_large_cram_tests() {
+        true
+    } else {
+        eprintln!("skipping {test_name}: set BIOSCRIPT_RUN_LARGE_TESTS=1 to enable");
+        false
+    }
+}
+
 fn cram_fixture_or_skip(test_name: &str) -> Option<CramFixture> {
-    let root = repo_root();
+    if !require_large_cram_tests(test_name) {
+        return None;
+    }
+    let root = shared_test_data_root()?;
     let fx = CramFixture {
-        cram: root.join("../test-data/1k-genomes/aligned/NA06985.final.cram"),
-        reference: root
-            .join("../test-data/1k-genomes/ref/GRCh38_full_analysis_set_plus_decoy_hla.fa"),
-        reference_index: root
-            .join("../test-data/1k-genomes/ref/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai"),
-        input_index: root.join("../test-data/1k-genomes/aligned/NA06985.final.cram.crai"),
+        cram: root.join("1k-genomes/aligned/NA06985.final.cram"),
+        reference: root.join("1k-genomes/ref/GRCh38_full_analysis_set_plus_decoy_hla.fa"),
+        reference_index: root.join("1k-genomes/ref/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai"),
+        input_index: root.join("1k-genomes/aligned/NA06985.final.cram.crai"),
+    };
+    for p in [
+        &fx.cram,
+        &fx.reference,
+        &fx.reference_index,
+        &fx.input_index,
+    ] {
+        if !p.exists() {
+            eprintln!("skipping {test_name}: missing {}", p.display());
+            return None;
+        }
+    }
+    Some(fx)
+}
+
+fn chr_y_cram_fixture_or_skip(test_name: &str) -> Option<CramFixture> {
+    let root = shared_test_data_root()?;
+    let fx = CramFixture {
+        cram: root.join("NA06985-chrY/aligned/NA06985.final.chrY.cram"),
+        reference: root.join("NA06985-chrY/ref/GRCh38_chrY.fa"),
+        reference_index: root.join("NA06985-chrY/ref/GRCh38_chrY.fa.fai"),
+        input_index: root.join("NA06985-chrY/aligned/NA06985.final.chrY.cram.crai"),
     };
     for p in [
         &fx.cram,
@@ -257,6 +428,49 @@ fn cram_mini_fixture_md5_mismatch_is_tolerated() {
     // fallback-decoded reads should still be ref-homozygous.
     assert_eq!(observation.ref_count.unwrap_or(0), 50);
     assert_eq!(observation.alt_count.unwrap_or(0), 0);
+}
+
+#[test]
+fn cram_chr_y_fixture_lookup_is_fast_and_correct() {
+    let Some(fx) = chr_y_cram_fixture_or_skip("cram_chr_y_fixture_lookup_is_fast_and_correct")
+    else {
+        return;
+    };
+    let store = open_cram_store(&fx);
+
+    let start = std::time::Instant::now();
+    let observation = store
+        .lookup_variant(&VariantSpec {
+            rsids: vec!["chrY_smoke_3449570".to_owned()],
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "chrY".to_owned(),
+                start: 3_449_570,
+                end: 3_449_570,
+            }),
+            reference: Some("A".to_owned()),
+            alternate: Some("G".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        })
+        .expect("chrY lookup");
+    let elapsed = start.elapsed();
+
+    assert_eq!(observation.backend, "cram");
+    let depth = observation.depth.unwrap_or(0);
+    assert!(
+        depth >= 8,
+        "expected >=8 reads at chrY smoke locus, got {depth}"
+    );
+    assert_eq!(observation.alt_count.unwrap_or(0), 0);
+    assert!(
+        observation.ref_count.unwrap_or(0) >= 8,
+        "expected ref-supporting reads at chrY smoke locus, got {:?}",
+        observation.ref_count
+    );
+    assert!(
+        elapsed.as_secs() < 5,
+        "chrY CRAM lookup took {elapsed:?}, expected <5s"
+    );
 }
 
 #[test]

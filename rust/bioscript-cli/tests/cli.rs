@@ -101,3 +101,28 @@ fn batch_lookup_query_plan_runs_and_preserves_requested_result_order() {
     assert!(stdout.contains("TC"));
     assert!(stdout.contains("II"));
 }
+
+#[test]
+fn inspect_subcommand_reports_detected_vendor_and_platform() {
+    let root = repo_root();
+    let path = root.join("rust/bioscript-formats/tests/fixtures/ancestrydna_v2_sample.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("inspect")
+        .arg(path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("kind\tgenotype_text"));
+    assert!(stdout.contains("vendor\tAncestryDNA"));
+    assert!(stdout.contains("platform_version\tV2.0"));
+    assert!(stdout.contains("assembly\tgrch37"));
+    assert!(stdout.contains("duration_ms\t"));
+}

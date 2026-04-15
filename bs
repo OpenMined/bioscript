@@ -4,4 +4,4 @@ if command -v xcrun >/dev/null 2>&1; then
   export SDKROOT="${SDKROOT:-$(xcrun --show-sdk-path)}"
   export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--isysroot ${SDKROOT}}"
 fi
-cargo run --manifest-path "$SCRIPT_DIR/rust/Cargo.toml" -p bioscript -- "$@"
+cargo run --manifest-path "$SCRIPT_DIR/rust/Cargo.toml" -p bioscript-cli --bin bioscript -- "$@"
