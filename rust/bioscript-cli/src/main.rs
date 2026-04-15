@@ -8,7 +8,8 @@ use std::{
 };
 
 use bioscript_formats::{
-    GenotypeLoadOptions, GenotypeSourceFormat, PrepareRequest, prepare_indexes, shell_flags,
+    GenotypeLoadOptions, GenotypeSourceFormat, InspectOptions, PrepareRequest, inspect_file,
+    prepare_indexes, shell_flags,
 };
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig, StageTiming};
 use bioscript_schema::validate_variants_path;
@@ -33,6 +34,9 @@ fn run_cli() -> Result<(), String> {
         }
         if first == "prepare" {
             return run_prepare(args.collect());
+        }
+        if first == "inspect" {
+            return run_inspect(args.collect());
         }
     }
 
@@ -160,7 +164,7 @@ fn run_cli() -> Result<(), String> {
 
     let Some(script_path) = script_path else {
         return Err(
-            "usage: bioscript <script.py> [--root <dir>] [--input-file <path>] [--output-file <path>] [--participant-id <id>] [--trace-report <path>] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|cram] [--cache-dir <path>]"
+            "usage: bioscript <script.py> [--root <dir>] [--input-file <path>] [--output-file <path>] [--participant-id <id>] [--trace-report <path>] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|cram] [--cache-dir <path>]\n       bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>]"
                 .to_owned(),
         );
     };
@@ -326,6 +330,49 @@ fn run_prepare(args: Vec<String>) -> Result<(), String> {
         println!("{flags}");
     }
 
+    Ok(())
+}
+
+fn run_inspect(args: Vec<String>) -> Result<(), String> {
+    let mut path: Option<PathBuf> = None;
+    let mut options = InspectOptions::default();
+
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--input-index" => {
+                options.input_index = Some(PathBuf::from(
+                    iter.next().ok_or("--input-index requires a path")?,
+                ));
+            }
+            "--reference-file" => {
+                options.reference_file = Some(PathBuf::from(
+                    iter.next().ok_or("--reference-file requires a path")?,
+                ));
+            }
+            "--reference-index" => {
+                options.reference_index = Some(PathBuf::from(
+                    iter.next().ok_or("--reference-index requires a path")?,
+                ));
+            }
+            other if path.is_none() => {
+                path = Some(PathBuf::from(other));
+            }
+            other => {
+                return Err(format!("unexpected argument: {other}"));
+            }
+        }
+    }
+
+    let Some(path) = path else {
+        return Err(
+            "usage: bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>]"
+                .to_owned(),
+        );
+    };
+
+    let inspection = inspect_file(&path, &options).map_err(|err| err.to_string())?;
+    println!("{}", inspection.render_text());
     Ok(())
 }
 
