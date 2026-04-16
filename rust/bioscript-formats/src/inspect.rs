@@ -2,8 +2,36 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, Cursor, Read},
     path::{Path, PathBuf},
-    time::Instant,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+
+// std::time::Instant::now() panics on wasm32-unknown-unknown ("time not
+// implemented on this platform"). duration_ms is diagnostic-only, so on wasm
+// we stub the timer instead of pulling in a perf/date shim crate.
+#[cfg(target_arch = "wasm32")]
+struct Instant;
+
+#[cfg(target_arch = "wasm32")]
+impl Instant {
+    fn now() -> Self {
+        Self
+    }
+    fn elapsed(&self) -> StubDuration {
+        StubDuration
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+struct StubDuration;
+
+#[cfg(target_arch = "wasm32")]
+impl StubDuration {
+    fn as_millis(&self) -> u128 {
+        0
+    }
+}
 
 use bioscript_core::{Assembly, RuntimeError};
 use noodles::bgzf;
@@ -120,6 +148,178 @@ impl FileInspection {
         lines.push(format!("duration_ms\t{}", self.duration_ms));
         lines.join("\n")
     }
+}
+
+/// Classify a file from in-memory bytes. Mirrors `inspect_file` but sources
+/// its sample lines / zip entries from a byte buffer instead of the
+/// filesystem. Needed by wasm targets where `std::fs` isn't available.
+///
+/// `name` is used for extension-based detection (.cram / .bam / .fa / .zip /
+/// .vcf.gz) and vendor sniffing from the filename. `bytes` is the file
+/// contents; for zips we scan the central directory out of these bytes.
+pub fn inspect_bytes(
+    name: &str,
+    bytes: &[u8],
+    options: &InspectOptions,
+) -> Result<FileInspection, RuntimeError> {
+    let started = Instant::now();
+    let lower = name.to_ascii_lowercase();
+    let mut evidence = Vec::new();
+    let mut warnings = Vec::new();
+    let path = Path::new(name);
+
+    if lower.ends_with(".zip") {
+        let selected_entry = select_zip_entry_from_bytes(bytes)?;
+        let sample_lines = read_zip_sample_lines_from_bytes(bytes, &selected_entry)?;
+        let mut inspection = inspect_from_textual_sample(
+            path,
+            FileContainer::Zip,
+            &selected_entry,
+            &sample_lines,
+            options,
+        );
+        inspection.duration_ms = started.elapsed().as_millis();
+        return Ok(inspection);
+    }
+
+    let detected_kind = if lower.ends_with(".cram") {
+        evidence.push("extension .cram".to_owned());
+        DetectedKind::AlignmentCram
+    } else if lower.ends_with(".bam") {
+        evidence.push("extension .bam".to_owned());
+        DetectedKind::AlignmentBam
+    } else if is_reference_path(path) {
+        evidence.push("reference fasta extension".to_owned());
+        DetectedKind::ReferenceFasta
+    } else {
+        let sample_lines = read_plain_sample_lines_from_bytes(&lower, bytes)?;
+        let sample_lower = sample_lines.join("\n").to_ascii_lowercase();
+        if looks_like_vcf_lines(&sample_lines) {
+            evidence.push("vcf header markers".to_owned());
+            DetectedKind::Vcf
+        } else if looks_like_genotype_text(&sample_lines) {
+            if sample_lower.contains("rsid") || sample_lower.contains("allele1") {
+                evidence.push("genotype-like sampled rows and headers".to_owned());
+            } else {
+                evidence.push("genotype-like sampled rows".to_owned());
+            }
+            DetectedKind::GenotypeText
+        } else {
+            warnings.push("file did not match known textual heuristics".to_owned());
+            DetectedKind::Unknown
+        }
+    };
+
+    let sample_lines = match detected_kind {
+        DetectedKind::AlignmentCram | DetectedKind::AlignmentBam | DetectedKind::ReferenceFasta => {
+            Vec::new()
+        }
+        _ => read_plain_sample_lines_from_bytes(&lower, bytes)?,
+    };
+    let source = detect_source(&lower, &sample_lines, detected_kind);
+    let assembly = detect_assembly(&lower, &sample_lines);
+    let phased = (detected_kind == DetectedKind::Vcf)
+        .then(|| detect_vcf_phasing(&sample_lines))
+        .flatten();
+    // Index discovery is filesystem-only; wasm callers pass indexes separately
+    // through `InspectOptions.input_index` / `reference_index` and we surface
+    // whichever is provided.
+    let has_index = options
+        .input_index
+        .as_ref()
+        .or(options.reference_index.as_ref())
+        .map(|_| true);
+    let index_path = options
+        .input_index
+        .clone()
+        .or_else(|| options.reference_index.clone());
+    let confidence = classify_confidence(detected_kind, &sample_lines, source.as_ref());
+
+    Ok(FileInspection {
+        path: path.to_path_buf(),
+        container: FileContainer::Plain,
+        detected_kind,
+        confidence,
+        source,
+        assembly,
+        phased,
+        selected_entry: None,
+        has_index,
+        index_path,
+        reference_matches: None,
+        evidence,
+        warnings,
+        duration_ms: started.elapsed().as_millis(),
+    })
+}
+
+fn read_plain_sample_lines_from_bytes(
+    lower_name: &str,
+    bytes: &[u8],
+) -> Result<Vec<String>, RuntimeError> {
+    if lower_name.ends_with(".vcf.gz") {
+        return read_sample_lines_from_reader(BufReader::new(bgzf::io::Reader::new(Cursor::new(
+            bytes,
+        ))));
+    }
+    read_sample_lines_from_reader(BufReader::new(Cursor::new(bytes)))
+}
+
+fn read_zip_sample_lines_from_bytes(
+    bytes: &[u8],
+    selected_entry: &str,
+) -> Result<Vec<String>, RuntimeError> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|err| RuntimeError::Io(format!("failed to read zip bytes: {err}")))?;
+    let mut entry = archive.by_name(selected_entry).map_err(|err| {
+        RuntimeError::Io(format!(
+            "failed to open zip entry {selected_entry} from bytes: {err}"
+        ))
+    })?;
+    if selected_entry.to_ascii_lowercase().ends_with(".vcf.gz") {
+        let mut inner = Vec::new();
+        entry.read_to_end(&mut inner).map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to read compressed zip entry {selected_entry}: {err}"
+            ))
+        })?;
+        let reader = bgzf::io::Reader::new(Cursor::new(inner));
+        return read_sample_lines_from_reader(BufReader::new(reader));
+    }
+    read_sample_lines_from_reader(BufReader::new(entry))
+}
+
+fn select_zip_entry_from_bytes(bytes: &[u8]) -> Result<String, RuntimeError> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|err| RuntimeError::Io(format!("failed to read zip bytes: {err}")))?;
+    let mut fallback = None;
+    for idx in 0..archive.len() {
+        let entry = archive
+            .by_index(idx)
+            .map_err(|err| RuntimeError::Io(format!("failed to inspect zip bytes: {err}")))?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().to_owned();
+        if name.starts_with("__MACOSX/") {
+            continue;
+        }
+        let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".vcf")
+            || lower.ends_with(".vcf.gz")
+            || lower.ends_with(".txt")
+            || lower.ends_with(".tsv")
+            || lower.ends_with(".csv")
+        {
+            return Ok(name);
+        }
+        if fallback.is_none() {
+            fallback = Some(name);
+        }
+    }
+    fallback.ok_or_else(|| {
+        RuntimeError::Unsupported("zip archive does not contain a supported file".to_owned())
+    })
 }
 
 pub fn inspect_file(path: &Path, options: &InspectOptions) -> Result<FileInspection, RuntimeError> {
