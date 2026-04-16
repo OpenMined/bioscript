@@ -245,6 +245,25 @@ fn vcf_variant_lookup_reads_single_sample_calls() {
     assert_eq!(observation.genotype.as_deref(), Some("DI"));
 }
 
+#[test]
+fn vcf_variant_lookup_ignores_symbolic_non_ref_alt_when_decoding_gt() {
+    let dir = temp_dir("vcf-non-ref");
+    let vcf_path = dir.join("sample.g.vcf");
+    fs::write(
+        &vcf_path,
+        "##fileformat=VCFv4.2\n\
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+6\t39016636\trs10305420\tC\tT,<NON_REF>\t.\tPASS\t.\tGT\t0/1\n\
+6\t38979128\trs9357296\tA\tG,<NON_REF>\t.\tPASS\t.\tGT\t0/1\n",
+    )
+    .unwrap();
+
+    let store = GenotypeStore::from_file(&vcf_path).unwrap();
+    assert_eq!(store.get("rs10305420").unwrap().as_deref(), Some("CT"));
+    assert_eq!(store.get("rs9357296").unwrap().as_deref(), Some("AG"));
+}
+
 struct CramFixture {
     cram: PathBuf,
     reference: PathBuf,
@@ -575,5 +594,63 @@ fn cram_md5_mismatch_is_tolerated_and_returns_correct_result() {
     assert!(
         (depth_i32 - samtools_depth).abs() <= 6,
         "depth {depth_i32} differs from samtools mpileup depth {samtools_depth} by >6"
+    );
+}
+
+#[test]
+fn cram_rs9357296_reports_heterozygous_counts_for_na06985() {
+    let Some(fx) = cram_fixture_or_skip("cram_rs9357296_reports_heterozygous_counts_for_na06985")
+    else {
+        return;
+    };
+    let store = open_cram_store(&fx);
+
+    let observation = store
+        .lookup_variant(&VariantSpec {
+            rsids: vec!["rs9357296".to_owned()],
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "6".to_owned(),
+                start: 39_011_352,
+                end: 39_011_352,
+            }),
+            reference: Some("A".to_owned()),
+            alternate: Some("G".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        })
+        .expect("rs9357296 lookup");
+
+    assert_eq!(observation.backend, "cram");
+    assert_eq!(observation.genotype.as_deref(), Some("AG"));
+    assert_eq!(observation.raw_counts.get("A").copied(), Some(18));
+    assert_eq!(observation.raw_counts.get("G").copied(), Some(12));
+    assert_eq!(observation.raw_counts.get("T").copied(), None);
+    assert_eq!(observation.depth, Some(29));
+    assert_eq!(observation.ref_count, Some(17));
+    assert_eq!(observation.alt_count, Some(12));
+    assert!(
+        observation
+            .decision
+            .as_deref()
+            .is_some_and(|text| text.contains("alt_fraction=0.414")),
+        "missing SNP decision summary: {:?}",
+        observation.decision
+    );
+    assert!(
+        observation
+            .evidence
+            .iter()
+            .any(|line| line.contains("raw pileup depth=30")),
+        "missing raw pileup evidence: {:?}",
+        observation.evidence
+    );
+    assert!(
+        observation.evidence.iter().any(|line| {
+            line.contains("filtered_duplicate=4")
+                && line.contains("filtered_low_base_quality=1")
+                && line.contains("filtered_improper_pair=0")
+        }),
+        "missing mpileup-style filter evidence: {:?}",
+        observation.evidence
     );
 }

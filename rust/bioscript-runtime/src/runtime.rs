@@ -272,8 +272,14 @@ impl BioscriptRuntime {
             ("Bioscript", "write_text") => self.method_write_text(args, kwargs),
             ("GenotypeFile", "get") => self.method_genotype_get(args, kwargs),
             ("GenotypeFile", "lookup_variant") => self.method_genotype_lookup_variant(args, kwargs),
+            ("GenotypeFile", "lookup_variant_details") => {
+                self.method_genotype_lookup_variant_details(args, kwargs)
+            }
             ("GenotypeFile", "lookup_variants") => {
                 self.method_genotype_lookup_variants(args, kwargs)
+            }
+            ("GenotypeFile", "lookup_variants_details") => {
+                self.method_genotype_lookup_variants_details(args, kwargs)
             }
             _ => Err(RuntimeError::Unsupported(format!(
                 "'{class_name}' object has no attribute '{method_name}'"
@@ -413,6 +419,39 @@ impl BioscriptRuntime {
         })
     }
 
+    fn method_genotype_lookup_variant_details(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        let started = Instant::now();
+        reject_kwargs(kwargs, "GenotypeFile.lookup_variant_details")?;
+        if args.len() != 2 {
+            return Err(RuntimeError::InvalidArguments(
+                "GenotypeFile.lookup_variant_details expects self and variant".to_owned(),
+            ));
+        }
+        let handle = dataclass_handle_id(&args[0], "GenotypeFile")?;
+        let spec = dataclass_to_variant_spec(&args[1])?;
+        let guard = self
+            .state
+            .genotype_files
+            .lock()
+            .expect("genotype mutex poisoned");
+        let Some(store) = guard.get(&handle) else {
+            return Err(RuntimeError::InvalidArguments(format!(
+                "unknown genotype handle: {handle}"
+            )));
+        };
+        let observation = store.lookup_variant(&spec)?;
+        self.record_timing(
+            "lookup_variant_details",
+            started.elapsed(),
+            format!("rsids={}", spec.rsids.join("|")),
+        );
+        Ok(variant_observation_object(&observation))
+    }
+
     fn method_genotype_lookup_variants(
         &self,
         args: &[MontyObject],
@@ -450,6 +489,44 @@ impl BioscriptRuntime {
                     Some(value) => MontyObject::String(value),
                     None => MontyObject::None,
                 })
+                .collect(),
+        ))
+    }
+
+    fn method_genotype_lookup_variants_details(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        let started = Instant::now();
+        reject_kwargs(kwargs, "GenotypeFile.lookup_variants_details")?;
+        if args.len() != 2 {
+            return Err(RuntimeError::InvalidArguments(
+                "GenotypeFile.lookup_variants_details expects self and a variant plan".to_owned(),
+            ));
+        }
+        let handle = dataclass_handle_id(&args[0], "GenotypeFile")?;
+        let specs = variant_specs_from_plan(&args[1])?;
+        let guard = self
+            .state
+            .genotype_files
+            .lock()
+            .expect("genotype mutex poisoned");
+        let Some(store) = guard.get(&handle) else {
+            return Err(RuntimeError::InvalidArguments(format!(
+                "unknown genotype handle: {handle}"
+            )));
+        };
+        let observations = store.lookup_variants(&specs)?;
+        self.record_timing(
+            "lookup_variants_details",
+            started.elapsed(),
+            format!("count={}", specs.len()),
+        );
+        Ok(MontyObject::List(
+            observations
+                .iter()
+                .map(variant_observation_object)
                 .collect(),
         ))
     }
@@ -807,6 +884,109 @@ fn variant_plan_object(variants: &[VariantSpec]) -> MontyObject {
             MontyObject::List(variants.iter().map(variant_object).collect()),
         )]
         .into(),
+        frozen: true,
+    }
+}
+
+fn variant_observation_object(observation: &bioscript_core::VariantObservation) -> MontyObject {
+    let mut attrs = vec![
+        (
+            MontyObject::String("backend".to_owned()),
+            MontyObject::String(observation.backend.clone()),
+        ),
+        (
+            MontyObject::String("matched_rsid".to_owned()),
+            match &observation.matched_rsid {
+                Some(value) => MontyObject::String(value.clone()),
+                None => MontyObject::None,
+            },
+        ),
+        (
+            MontyObject::String("assembly".to_owned()),
+            match observation.assembly {
+                Some(assembly) => MontyObject::String(match assembly {
+                    bioscript_core::Assembly::Grch37 => "grch37".to_owned(),
+                    bioscript_core::Assembly::Grch38 => "grch38".to_owned(),
+                }),
+                None => MontyObject::None,
+            },
+        ),
+        (
+            MontyObject::String("genotype".to_owned()),
+            match &observation.genotype {
+                Some(value) => MontyObject::String(value.clone()),
+                None => MontyObject::None,
+            },
+        ),
+        (
+            MontyObject::String("ref_count".to_owned()),
+            observation.ref_count.map_or(MontyObject::None, |value| {
+                MontyObject::Int(i64::from(value))
+            }),
+        ),
+        (
+            MontyObject::String("alt_count".to_owned()),
+            observation.alt_count.map_or(MontyObject::None, |value| {
+                MontyObject::Int(i64::from(value))
+            }),
+        ),
+        (
+            MontyObject::String("depth".to_owned()),
+            observation.depth.map_or(MontyObject::None, |value| {
+                MontyObject::Int(i64::from(value))
+            }),
+        ),
+        (
+            MontyObject::String("decision".to_owned()),
+            match &observation.decision {
+                Some(value) => MontyObject::String(value.clone()),
+                None => MontyObject::None,
+            },
+        ),
+        (
+            MontyObject::String("raw_counts".to_owned()),
+            MontyObject::Dict(
+                observation
+                    .raw_counts
+                    .iter()
+                    .map(|(base, count)| {
+                        (
+                            MontyObject::String(base.clone()),
+                            MontyObject::Int(i64::from(*count)),
+                        )
+                    })
+                    .collect(),
+            ),
+        ),
+        (
+            MontyObject::String("evidence".to_owned()),
+            MontyObject::List(
+                observation
+                    .evidence
+                    .iter()
+                    .cloned()
+                    .map(MontyObject::String)
+                    .collect(),
+            ),
+        ),
+    ];
+
+    MontyObject::Dataclass {
+        name: "VariantObservation".to_owned(),
+        type_id: 5,
+        field_names: vec![
+            "backend".to_owned(),
+            "matched_rsid".to_owned(),
+            "assembly".to_owned(),
+            "genotype".to_owned(),
+            "ref_count".to_owned(),
+            "alt_count".to_owned(),
+            "depth".to_owned(),
+            "decision".to_owned(),
+            "raw_counts".to_owned(),
+            "evidence".to_owned(),
+        ],
+        attrs: attrs.drain(..).collect(),
         frozen: true,
     }
 }

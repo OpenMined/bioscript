@@ -526,6 +526,10 @@ fn detect_source(
         vendor = Some("Sequencing.com".to_owned());
         confidence = DetectionConfidence::WeakHeuristic;
         evidence.push("sequencing.com header text".to_owned());
+    } else if normalized.contains("carigenetics") || normalized.contains("cari genetics") {
+        vendor = Some("CariGenetics".to_owned());
+        confidence = DetectionConfidence::StrongHeuristic;
+        evidence.push("CariGenetics path/header text".to_owned());
     }
 
     vendor.map(|vendor| SourceMetadata {
@@ -571,11 +575,21 @@ fn canonicalize_ancestry_version(value: &str) -> String {
 fn detect_assembly(lower_name: &str, sample_lines: &[String]) -> Option<Assembly> {
     let header = sample_lines.join("\n").to_ascii_lowercase();
     let combined = format!("{lower_name}\n{header}");
-    if combined.contains("build 38") || combined.contains("grch38") || combined.contains("hg38") {
+    let looks_like_grch38 = combined.contains("build 38")
+        || combined.contains("grch38")
+        || combined.contains("hg38")
+        || combined.contains("gca_000001405.15")
+        || combined.contains("grch38_no_alt_analysis_set")
+        || combined.contains("##contig=<id=chr1,length=248956422>");
+
+    if looks_like_grch38 {
         Some(Assembly::Grch38)
     } else if combined.contains("build 37")
         || combined.contains("grch37")
         || combined.contains("hg19")
+        || combined.contains("assembly=b37")
+        || combined.contains("assembly=\"b37\"")
+        || combined.contains("human_g1k_v37")
         || combined.contains("37.1")
     {
         Some(Assembly::Grch37)

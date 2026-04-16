@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenomicLocus {
     pub chrom: String,
@@ -41,6 +43,8 @@ pub struct VariantObservation {
     pub ref_count: Option<u32>,
     pub alt_count: Option<u32>,
     pub depth: Option<u32>,
+    pub raw_counts: BTreeMap<String, u32>,
+    pub decision: Option<String>,
     pub evidence: Vec<String>,
 }
 
