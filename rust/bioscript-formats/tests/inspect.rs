@@ -392,3 +392,62 @@ fn mixed_vcf_sampled_rows_prefer_true_when_pipe_is_seen() {
     assert_eq!(inspection.detected_kind, DetectedKind::Vcf);
     assert_eq!(inspection.phased, Some(true));
 }
+
+#[test]
+fn vcf_b37_contig_headers_report_grch37_assembly() {
+    let dir = temp_dir("b37-vcf");
+    let path = dir.join("sample.vcf");
+    std::fs::write(
+        &path,
+        "##fileformat=VCFv4.2\n\
+##contig=<ID=1,length=249250621,assembly=b37>\n\
+##SentieonCommandLine.Haplotyper=<ID=Haplotyper,CommandLine=\"--reference human_g1k_v37_decoy.fasta\">\n\
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+1\t100\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+    )
+    .unwrap();
+
+    let inspection = inspect_file(&path, &InspectOptions::default()).unwrap();
+    assert_eq!(inspection.detected_kind, DetectedKind::Vcf);
+    assert_eq!(inspection.assembly, Some(Assembly::Grch37));
+}
+
+#[test]
+fn vcf_grch38_reference_token_reports_grch38_assembly() {
+    let dir = temp_dir("grch38-vcf-reference");
+    let path = dir.join("sample.vcf");
+    std::fs::write(
+        &path,
+        "##fileformat=VCFv4.2\n\
+##reference=GCA_000001405.15_GRCh38_no_alt_analysis_set.fa\n\
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+chr1\t100\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+    )
+    .unwrap();
+
+    let inspection = inspect_file(&path, &InspectOptions::default()).unwrap();
+    assert_eq!(inspection.detected_kind, DetectedKind::Vcf);
+    assert_eq!(inspection.assembly, Some(Assembly::Grch38));
+}
+
+#[test]
+fn vcf_grch38_contig_lengths_report_grch38_assembly() {
+    let dir = temp_dir("grch38-vcf-contigs");
+    let path = dir.join("sample.vcf");
+    std::fs::write(
+        &path,
+        "##fileformat=VCFv4.2\n\
+##contig=<ID=chr1,length=248956422>\n\
+##contig=<ID=chr22,length=50818468>\n\
+##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+chr1\t100\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+    )
+    .unwrap();
+
+    let inspection = inspect_file(&path, &InspectOptions::default()).unwrap();
+    assert_eq!(inspection.detected_kind, DetectedKind::Vcf);
+    assert_eq!(inspection.assembly, Some(Assembly::Grch38));
+}

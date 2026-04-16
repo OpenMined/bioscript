@@ -103,6 +103,32 @@ fn batch_lookup_query_plan_runs_and_preserves_requested_result_order() {
 }
 
 #[test]
+fn lookup_variant_details_returns_counts_and_decision_fields() {
+    let root = repo_root();
+    let script = root.join("rust/bioscript-cli/tests/fixtures/lookup_details.py");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("old/examples/apol1/test_snps.txt")
+        .arg(script)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("VariantObservation"));
+    assert!(stdout.contains("genotype='AG'"));
+    assert!(stdout.contains("raw_counts={"));
+    assert!(stdout.contains("decision="));
+    assert!(stdout.contains("evidence=["));
+}
+
+#[test]
 fn inspect_subcommand_reports_detected_vendor_and_platform() {
     let root = repo_root();
     let path = root.join("rust/bioscript-formats/tests/fixtures/ancestrydna_v2_sample.txt");

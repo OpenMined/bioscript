@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt::Write as _,
     fs::File,
     io::{BufRead, BufReader},
@@ -8,6 +8,8 @@ use std::{
 };
 
 use noodles::bgzf;
+use noodles::core::Position;
+use noodles::sam::alignment::Record as _;
 use zip::ZipArchive;
 
 use bioscript_core::{
@@ -17,6 +19,8 @@ use bioscript_core::{
 use crate::alignment::{self, AlignmentOpKind, AlignmentRecord};
 
 const COMMENT_PREFIXES: [&str; 2] = ["#", "//"];
+const DEFAULT_MPILEUP_MIN_BASE_QUALITY: u8 = 13;
+const DEFAULT_MPILEUP_MIN_MAPPING_QUALITY: u8 = 0;
 
 const RSID_ALIASES: &[&str] = &["rsid", "name", "snp", "marker", "id", "snpid"];
 const CHROM_ALIASES: &[&str] = &["chromosome", "chr", "chrom"];
@@ -472,32 +476,19 @@ impl CramBackend {
             })?;
 
         let target_pos = locus.start;
-        let mut alt_count = 0u32;
-        let mut ref_count = 0u32;
-        let mut depth = 0u32;
-
-        alignment::for_each_cram_record(
+        let pileup = observe_snp_pileup(
             &self.path,
             &self.options,
             reference_file,
             locus,
-            |record| {
-                if record.is_unmapped {
-                    return Ok(true);
-                }
-                let Some(base) = base_at_position(&record, target_pos) else {
-                    return Ok(true);
-                };
-                let base = (base as char).to_ascii_uppercase();
-                depth += 1;
-                if base == reference {
-                    ref_count += 1;
-                } else if base == alternate {
-                    alt_count += 1;
-                }
-                Ok(true)
-            },
+            reference,
+            alternate,
         )?;
+        let ref_count = pileup.filtered_ref_count;
+        let alt_count = pileup.filtered_alt_count;
+        let depth = pileup.filtered_depth;
+
+        let evidence = pileup.evidence_lines(&describe_locus(locus), target_pos);
 
         Ok(VariantObservation {
             backend: self.backend_name().to_owned(),
@@ -507,10 +498,11 @@ impl CramBackend {
             ref_count: Some(ref_count),
             alt_count: Some(alt_count),
             depth: Some(depth),
-            evidence: vec![format!(
-                "observed SNP at {}:{} depth={} ref_count={} alt_count={}",
-                locus.chrom, target_pos, depth, ref_count, alt_count
-            )],
+            raw_counts: pileup.raw_base_counts,
+            decision: Some(describe_snp_decision_rule(
+                reference, alternate, ref_count, alt_count, depth,
+            )),
+            evidence,
         })
     }
 
@@ -562,6 +554,10 @@ impl CramBackend {
             ref_count: Some(ref_count),
             alt_count: Some(alt_count),
             depth: Some(depth),
+            raw_counts: BTreeMap::new(),
+            decision: Some(describe_copy_number_decision_rule(
+                &reference, &alternate, ref_count, alt_count, depth,
+            )),
             evidence: vec![format!(
                 "observed deletion anchor {}:{} len={} depth={} ref_count={} alt_count={}",
                 locus.chrom, anchor_pos, deletion_length, depth, ref_count, alt_count
@@ -631,6 +627,10 @@ impl CramBackend {
             ref_count: Some(ref_count),
             alt_count: Some(alt_count),
             depth: Some(depth),
+            raw_counts: BTreeMap::new(),
+            decision: Some(describe_copy_number_decision_rule(
+                &reference, &alternate, ref_count, alt_count, depth,
+            )),
             evidence: vec![format!(
                 "observed indel at {} depth={} ref_count={} alt_count={} matching_alt_lengths={}",
                 describe_locus(locus),
@@ -733,6 +733,25 @@ fn infer_snp_genotype(
     }
 }
 
+fn describe_snp_decision_rule(
+    reference: char,
+    alternate: char,
+    ref_count: u32,
+    alt_count: u32,
+    depth: u32,
+) -> String {
+    if depth == 0 {
+        return format!(
+            "no covering reads for SNP; genotype unresolved (ref={reference}, alt={alternate})"
+        );
+    }
+
+    let alt_fraction = f64::from(alt_count) / f64::from(depth);
+    format!(
+        "SNP genotype rule: alt_fraction={alt_fraction:.3} with thresholds ref<=0.200, het=(0.200,0.800), alt>=0.800; counts ref={ref_count} alt={alt_count} depth={depth} for {reference}>{alternate}"
+    )
+}
+
 fn infer_copy_number_genotype(
     reference: &str,
     alternate: &str,
@@ -753,6 +772,179 @@ fn infer_copy_number_genotype(
     }
 }
 
+fn describe_copy_number_decision_rule(
+    reference: &str,
+    alternate: &str,
+    ref_count: u32,
+    alt_count: u32,
+    depth: u32,
+) -> String {
+    if depth == 0 {
+        return format!(
+            "no covering reads for copy-number style variant; genotype unresolved (ref={reference}, alt={alternate})"
+        );
+    }
+
+    let alt_fraction = f64::from(alt_count) / f64::from(depth);
+    format!(
+        "copy-number genotype rule: alt_fraction={alt_fraction:.3} with thresholds ref<=0.200, het=(0.200,0.800), alt>=0.800; counts ref={ref_count} alt={alt_count} depth={depth} for {reference}->{alternate}"
+    )
+}
+
+#[derive(Debug, Clone, Default)]
+struct SnpPileupCounts {
+    filtered_depth: u32,
+    filtered_ref_count: u32,
+    filtered_alt_count: u32,
+    filtered_base_counts: BTreeMap<String, u32>,
+    raw_depth: u32,
+    raw_ref_count: u32,
+    raw_alt_count: u32,
+    raw_base_counts: BTreeMap<String, u32>,
+    filtered_low_base_quality: u32,
+    filtered_low_mapping_quality: u32,
+    filtered_non_acgt: u32,
+    filtered_unmapped: u32,
+    filtered_secondary: u32,
+    filtered_qc_fail: u32,
+    filtered_duplicate: u32,
+    filtered_improper_pair: u32,
+    raw_forward_counts: BTreeMap<String, u32>,
+    raw_reverse_counts: BTreeMap<String, u32>,
+}
+
+impl SnpPileupCounts {
+    fn evidence_lines(&self, locus: &str, target_pos: i64) -> Vec<String> {
+        vec![
+            format!(
+                "observed SNP pileup at {locus} target_pos={target_pos} filtered_depth={} ref_count={} alt_count={}",
+                self.filtered_depth, self.filtered_ref_count, self.filtered_alt_count
+            ),
+            format!(
+                "raw pileup depth={} ref_count={} alt_count={} raw_counts={:?}",
+                self.raw_depth, self.raw_ref_count, self.raw_alt_count, self.raw_base_counts
+            ),
+            format!(
+                "raw strand counts: forward={:?} reverse={:?}",
+                self.raw_forward_counts, self.raw_reverse_counts
+            ),
+            format!(
+                "filters applied: min_base_quality={} min_mapping_quality={} filtered_low_base_quality={} filtered_low_mapping_quality={} filtered_non_acgt={} filtered_unmapped={} filtered_secondary={} filtered_qc_fail={} filtered_duplicate={} filtered_improper_pair={}",
+                DEFAULT_MPILEUP_MIN_BASE_QUALITY,
+                DEFAULT_MPILEUP_MIN_MAPPING_QUALITY,
+                self.filtered_low_base_quality,
+                self.filtered_low_mapping_quality,
+                self.filtered_non_acgt,
+                self.filtered_unmapped,
+                self.filtered_secondary,
+                self.filtered_qc_fail,
+                self.filtered_duplicate,
+                self.filtered_improper_pair
+            ),
+        ]
+    }
+}
+
+fn observe_snp_pileup(
+    cram_path: &Path,
+    options: &GenotypeLoadOptions,
+    reference_file: &Path,
+    locus: &GenomicLocus,
+    reference: char,
+    alternate: char,
+) -> Result<SnpPileupCounts, RuntimeError> {
+    let mut counts = SnpPileupCounts::default();
+    let target_position = Position::try_from(usize::try_from(locus.start).map_err(|_| {
+        RuntimeError::InvalidArguments("SNP locus start is out of range".to_owned())
+    })?)
+    .map_err(|_| RuntimeError::InvalidArguments("SNP locus start is out of range".to_owned()))?;
+    let reference_base = reference as u8;
+
+    alignment::for_each_raw_cram_record(cram_path, options, reference_file, locus, |record| {
+        let flags = record
+            .flags()
+            .map_err(|err| RuntimeError::Io(format!("failed to read CRAM flags: {err}")))?;
+        if flags.is_unmapped() {
+            counts.filtered_unmapped += 1;
+            return Ok(true);
+        }
+        if flags.is_secondary() {
+            counts.filtered_secondary += 1;
+            return Ok(true);
+        }
+        if flags.is_qc_fail() {
+            counts.filtered_qc_fail += 1;
+            return Ok(true);
+        }
+        if flags.is_duplicate() {
+            counts.filtered_duplicate += 1;
+            return Ok(true);
+        }
+        if flags.is_segmented() && !flags.is_properly_segmented() {
+            counts.filtered_improper_pair += 1;
+            return Ok(true);
+        }
+
+        let Some((base, base_quality)) =
+            record.base_quality_at_reference_position(target_position, reference_base)
+        else {
+            return Ok(true);
+        };
+
+        let normalized_base = normalize_pileup_base(base);
+        record.mapping_quality().transpose().map_err(|err| {
+            RuntimeError::Io(format!("failed to read CRAM mapping quality: {err}"))
+        })?;
+        let is_reverse = flags.is_reverse_complemented();
+        if let Some(base) = normalized_base {
+            counts.raw_depth += 1;
+            *counts.raw_base_counts.entry(base.to_string()).or_insert(0) += 1;
+            let strand_counts = if is_reverse {
+                &mut counts.raw_reverse_counts
+            } else {
+                &mut counts.raw_forward_counts
+            };
+            *strand_counts.entry(base.to_string()).or_insert(0) += 1;
+            if base == reference {
+                counts.raw_ref_count += 1;
+            } else if base == alternate {
+                counts.raw_alt_count += 1;
+            }
+        }
+
+        if base_quality < DEFAULT_MPILEUP_MIN_BASE_QUALITY {
+            counts.filtered_low_base_quality += 1;
+            return Ok(true);
+        }
+
+        let Some(base) = normalized_base else {
+            counts.filtered_non_acgt += 1;
+            return Ok(true);
+        };
+
+        counts.filtered_depth += 1;
+        *counts
+            .filtered_base_counts
+            .entry(base.to_string())
+            .or_insert(0) += 1;
+        if base == reference {
+            counts.filtered_ref_count += 1;
+        } else if base == alternate {
+            counts.filtered_alt_count += 1;
+        }
+        Ok(true)
+    })?;
+
+    Ok(counts)
+}
+
+fn normalize_pileup_base(base: u8) -> Option<char> {
+    match (base as char).to_ascii_uppercase() {
+        'A' | 'C' | 'G' | 'T' => Some((base as char).to_ascii_uppercase()),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct IndelClassification {
     covering: bool,
@@ -763,40 +955,6 @@ struct IndelClassification {
 
 fn len_as_i64(len: usize) -> Option<i64> {
     i64::try_from(len).ok()
-}
-
-fn base_at_position(record: &AlignmentRecord, target_pos: i64) -> Option<u8> {
-    let mut ref_pos = record.start;
-    let mut read_pos = 0usize;
-
-    for op in &record.cigar {
-        match op.kind {
-            AlignmentOpKind::Match
-            | AlignmentOpKind::SequenceMatch
-            | AlignmentOpKind::SequenceMismatch => {
-                let op_len = len_as_i64(op.len)?;
-                if target_pos >= ref_pos && target_pos < ref_pos + op_len {
-                    let offset = usize::try_from(target_pos - ref_pos).ok()?;
-                    return record.sequence.get(read_pos + offset).copied();
-                }
-                ref_pos += op_len;
-                read_pos += op.len;
-            }
-            AlignmentOpKind::Insertion | AlignmentOpKind::SoftClip => {
-                read_pos += op.len;
-            }
-            AlignmentOpKind::Deletion | AlignmentOpKind::Skip => {
-                let op_len = len_as_i64(op.len)?;
-                if target_pos >= ref_pos && target_pos < ref_pos + op_len {
-                    return None;
-                }
-                ref_pos += op_len;
-            }
-            AlignmentOpKind::HardClip | AlignmentOpKind::Pad => {}
-        }
-    }
-
-    None
 }
 
 fn spans_position(record: &AlignmentRecord, pos: i64) -> bool {
@@ -1664,6 +1822,9 @@ fn vcf_reference_token(reference: &str, alternates: &[&str]) -> String {
     let mut saw_longer = false;
 
     for alt in alternates {
+        if is_symbolic_vcf_alt(alt) {
+            continue;
+        }
         match alt.len().cmp(&reference.len()) {
             std::cmp::Ordering::Less => saw_shorter = true,
             std::cmp::Ordering::Greater => saw_longer = true,
@@ -1679,11 +1840,19 @@ fn vcf_reference_token(reference: &str, alternates: &[&str]) -> String {
 }
 
 fn vcf_alt_token(reference: &str, alternate: &str) -> String {
+    if is_symbolic_vcf_alt(alternate) {
+        return "--".to_owned();
+    }
     match alternate.len().cmp(&reference.len()) {
         std::cmp::Ordering::Less => "D".to_owned(),
         std::cmp::Ordering::Greater => "I".to_owned(),
         std::cmp::Ordering::Equal => normalize_sequence_token(alternate),
     }
+}
+
+fn is_symbolic_vcf_alt(alternate: &str) -> bool {
+    let trimmed = alternate.trim();
+    trimmed.starts_with('<') && trimmed.ends_with('>')
 }
 
 fn normalize_sequence_token(value: &str) -> String {

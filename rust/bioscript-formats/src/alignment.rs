@@ -10,10 +10,7 @@ use noodles::{
     fasta::{self, repository::adapters::IndexedReader as FastaIndexedReader},
     sam::{
         self,
-        alignment::{
-            Record as _,
-            record::{Cigar as _, Sequence as _},
-        },
+        alignment::{Record as _, record::Cigar as _},
     },
 };
 
@@ -45,7 +42,6 @@ pub(crate) struct AlignmentRecord {
     pub start: i64,
     pub end: i64,
     pub is_unmapped: bool,
-    pub sequence: Vec<u8>,
     pub cigar: Vec<AlignmentOp>,
 }
 
@@ -103,7 +99,68 @@ where
 
     let selected_containers = select_query_containers(reader.index(), &header, &region)?;
 
-    stream_selected_containers(
+    stream_selected_alignment_records(
+        path,
+        &mut reader,
+        &header,
+        &region,
+        locus.end,
+        &selected_containers,
+        &mut on_record,
+    )?;
+
+    Ok(())
+}
+
+pub(crate) fn for_each_raw_cram_record<F>(
+    path: &Path,
+    options: &GenotypeLoadOptions,
+    reference_file: &Path,
+    locus: &GenomicLocus,
+    mut on_record: F,
+) -> Result<(), RuntimeError>
+where
+    F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
+{
+    let repository = build_reference_repository(reference_file)?;
+    let mut builder =
+        cram::io::indexed_reader::Builder::default().set_reference_sequence_repository(repository);
+
+    if let Some(index_path) = options.input_index.as_ref() {
+        let index = crai::fs::read(index_path).map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to read CRAM index {} for {}: {err}",
+                index_path.display(),
+                path.display()
+            ))
+        })?;
+        builder = builder.set_index(index);
+    }
+
+    let mut reader = builder.build_from_path(path).map_err(|err| {
+        RuntimeError::Io(format!(
+            "failed to open indexed CRAM {}: {err}",
+            path.display()
+        ))
+    })?;
+
+    let header = reader.read_header().map_err(|err| {
+        RuntimeError::Io(format!(
+            "failed to read CRAM header {}: {err}",
+            path.display()
+        ))
+    })?;
+
+    let region = build_region(&header, locus).ok_or_else(|| {
+        RuntimeError::Unsupported(format!(
+            "indexed CRAM does not contain contig {} for {}:{}-{}",
+            locus.chrom, locus.chrom, locus.start, locus.end
+        ))
+    })?;
+
+    let selected_containers = select_query_containers(reader.index(), &header, &region)?;
+
+    stream_selected_cram_records(
         path,
         &mut reader,
         &header,
@@ -188,7 +245,7 @@ fn select_query_containers(
         .collect())
 }
 
-fn stream_selected_containers<F>(
+fn stream_selected_alignment_records<F>(
     path: &Path,
     reader: &mut cram::io::indexed_reader::IndexedReader<std::fs::File>,
     header: &sam::Header,
@@ -199,6 +256,32 @@ fn stream_selected_containers<F>(
 ) -> Result<(), RuntimeError>
 where
     F: FnMut(AlignmentRecord) -> Result<bool, RuntimeError>,
+{
+    stream_selected_cram_records(
+        path,
+        reader,
+        header,
+        region,
+        locus_end,
+        selected_containers,
+        &mut |record| {
+            let alignment_record = build_alignment_record_from_cram(path, &record)?;
+            on_record(alignment_record)
+        },
+    )
+}
+
+fn stream_selected_cram_records<F>(
+    path: &Path,
+    reader: &mut cram::io::indexed_reader::IndexedReader<std::fs::File>,
+    header: &sam::Header,
+    region: &Region,
+    locus_end: i64,
+    selected_containers: &[SelectedContainer],
+    on_record: &mut F,
+) -> Result<(), RuntimeError>
+where
+    F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
 {
     let interval = region.interval();
 
@@ -293,7 +376,7 @@ where
                         return Ok(true);
                     }
 
-                    match on_record(alignment_record) {
+                    match on_record(record.clone()) {
                         Ok(true) => Ok(true),
                         Ok(false) => {
                             stop = true;
@@ -351,7 +434,7 @@ where
                                     return Ok(true);
                                 }
 
-                                match on_record(alignment_record) {
+                                match on_record(record.clone()) {
                                     Ok(true) => Ok(true),
                                     Ok(false) => {
                                         stop = true;
@@ -445,7 +528,6 @@ fn build_alignment_record_from_cram(
         None => start,
     };
 
-    let sequence: Vec<u8> = record.sequence().iter().collect();
     let cigar = record
         .cigar()
         .iter()
@@ -463,7 +545,6 @@ fn build_alignment_record_from_cram(
         start,
         end,
         is_unmapped,
-        sequence,
         cigar,
     })
 }
