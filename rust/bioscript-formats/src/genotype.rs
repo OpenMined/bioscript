@@ -2,13 +2,14 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt::Write as _,
     fs::File,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read, Seek},
     path::{Path, PathBuf},
     str::FromStr,
 };
 
 use noodles::bgzf;
 use noodles::core::Position;
+use noodles::cram;
 use noodles::sam::alignment::Record as _;
 use zip::ZipArchive;
 
@@ -853,6 +854,20 @@ fn observe_snp_pileup(
     reference: char,
     alternate: char,
 ) -> Result<SnpPileupCounts, RuntimeError> {
+    let repository = alignment::build_reference_repository(reference_file)?;
+    let mut reader =
+        alignment::build_cram_indexed_reader_from_path(cram_path, options, repository)?;
+    let label = cram_path.display().to_string();
+    snp_pileup_with_reader(&mut reader, &label, locus, reference, alternate)
+}
+
+fn snp_pileup_with_reader<R: Read + Seek>(
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
+    label: &str,
+    locus: &GenomicLocus,
+    reference: char,
+    alternate: char,
+) -> Result<SnpPileupCounts, RuntimeError> {
     let mut counts = SnpPileupCounts::default();
     let target_position = Position::try_from(usize::try_from(locus.start).map_err(|_| {
         RuntimeError::InvalidArguments("SNP locus start is out of range".to_owned())
@@ -860,7 +875,7 @@ fn observe_snp_pileup(
     .map_err(|_| RuntimeError::InvalidArguments("SNP locus start is out of range".to_owned()))?;
     let reference_base = reference as u8;
 
-    alignment::for_each_raw_cram_record(cram_path, options, reference_file, locus, |record| {
+    alignment::for_each_raw_cram_record_with_reader(reader, label, locus, |record| {
         let flags = record
             .flags()
             .map_err(|err| RuntimeError::Io(format!("failed to read CRAM flags: {err}")))?;
@@ -936,6 +951,45 @@ fn observe_snp_pileup(
     })?;
 
     Ok(counts)
+}
+
+/// Observe a SNP at `locus` over an already-built CRAM `IndexedReader` and
+/// reference repository (held by the reader). Mirrors the internal
+/// `CramBackend::observe_snp` but reader-based, so non-filesystem callers
+/// (e.g. wasm with a JS-backed reader) don't need a `GenotypeStore` or paths.
+///
+/// `matched_rsid` and `assembly` are passed through to the returned
+/// observation unchanged — callers that already know them (e.g. from
+/// compiling a YAML variant) should supply them; otherwise `None`.
+pub fn observe_cram_snp_with_reader<R: Read + Seek>(
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
+    label: &str,
+    locus: &GenomicLocus,
+    reference: char,
+    alternate: char,
+    matched_rsid: Option<String>,
+    assembly: Option<Assembly>,
+) -> Result<VariantObservation, RuntimeError> {
+    let pileup = snp_pileup_with_reader(reader, label, locus, reference, alternate)?;
+    let ref_count = pileup.filtered_ref_count;
+    let alt_count = pileup.filtered_alt_count;
+    let depth = pileup.filtered_depth;
+    let evidence = pileup.evidence_lines(&describe_locus(locus), locus.start);
+
+    Ok(VariantObservation {
+        backend: "cram".to_owned(),
+        matched_rsid,
+        assembly,
+        genotype: infer_snp_genotype(reference, alternate, ref_count, alt_count, depth),
+        ref_count: Some(ref_count),
+        alt_count: Some(alt_count),
+        depth: Some(depth),
+        raw_counts: pileup.raw_base_counts,
+        decision: Some(describe_snp_decision_rule(
+            reference, alternate, ref_count, alt_count, depth,
+        )),
+        evidence,
+    })
 }
 
 fn normalize_pileup_base(base: u8) -> Option<char> {

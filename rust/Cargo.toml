@@ -7,6 +7,7 @@ members = [
     "bioscript-formats",
     "bioscript-runtime",
     "bioscript-schema",
+    "bioscript-wasm",
 ]
 
 [profile.dev]

@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    io::Seek as _,
+    io::{BufRead, Read, Seek},
     path::Path,
 };
 
@@ -19,7 +19,7 @@ use bioscript_core::{GenomicLocus, RuntimeError};
 use crate::genotype::GenotypeLoadOptions;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AlignmentOpKind {
+pub enum AlignmentOpKind {
     Match,
     Insertion,
     Deletion,
@@ -32,13 +32,13 @@ pub(crate) enum AlignmentOpKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AlignmentOp {
+pub struct AlignmentOp {
     pub kind: AlignmentOpKind,
     pub len: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct AlignmentRecord {
+pub struct AlignmentRecord {
     pub start: i64,
     pub end: i64,
     pub is_unmapped: bool,
@@ -56,121 +56,15 @@ pub(crate) fn for_each_cram_record<F>(
     options: &GenotypeLoadOptions,
     reference_file: &Path,
     locus: &GenomicLocus,
-    mut on_record: F,
+    on_record: F,
 ) -> Result<(), RuntimeError>
 where
     F: FnMut(AlignmentRecord) -> Result<bool, RuntimeError>,
 {
     let repository = build_reference_repository(reference_file)?;
-    let mut builder =
-        cram::io::indexed_reader::Builder::default().set_reference_sequence_repository(repository);
-
-    if let Some(index_path) = options.input_index.as_ref() {
-        let index = crai::fs::read(index_path).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to read CRAM index {} for {}: {err}",
-                index_path.display(),
-                path.display()
-            ))
-        })?;
-        builder = builder.set_index(index);
-    }
-
-    let mut reader = builder.build_from_path(path).map_err(|err| {
-        RuntimeError::Io(format!(
-            "failed to open indexed CRAM {}: {err}",
-            path.display()
-        ))
-    })?;
-
-    let header = reader.read_header().map_err(|err| {
-        RuntimeError::Io(format!(
-            "failed to read CRAM header {}: {err}",
-            path.display()
-        ))
-    })?;
-
-    let region = build_region(&header, locus).ok_or_else(|| {
-        RuntimeError::Unsupported(format!(
-            "indexed CRAM does not contain contig {} for {}:{}-{}",
-            locus.chrom, locus.chrom, locus.start, locus.end
-        ))
-    })?;
-
-    let selected_containers = select_query_containers(reader.index(), &header, &region)?;
-
-    stream_selected_alignment_records(
-        path,
-        &mut reader,
-        &header,
-        &region,
-        locus.end,
-        &selected_containers,
-        &mut on_record,
-    )?;
-
-    Ok(())
-}
-
-pub(crate) fn for_each_raw_cram_record<F>(
-    path: &Path,
-    options: &GenotypeLoadOptions,
-    reference_file: &Path,
-    locus: &GenomicLocus,
-    mut on_record: F,
-) -> Result<(), RuntimeError>
-where
-    F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
-{
-    let repository = build_reference_repository(reference_file)?;
-    let mut builder =
-        cram::io::indexed_reader::Builder::default().set_reference_sequence_repository(repository);
-
-    if let Some(index_path) = options.input_index.as_ref() {
-        let index = crai::fs::read(index_path).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to read CRAM index {} for {}: {err}",
-                index_path.display(),
-                path.display()
-            ))
-        })?;
-        builder = builder.set_index(index);
-    }
-
-    let mut reader = builder.build_from_path(path).map_err(|err| {
-        RuntimeError::Io(format!(
-            "failed to open indexed CRAM {}: {err}",
-            path.display()
-        ))
-    })?;
-
-    let header = reader.read_header().map_err(|err| {
-        RuntimeError::Io(format!(
-            "failed to read CRAM header {}: {err}",
-            path.display()
-        ))
-    })?;
-
-    let region = build_region(&header, locus).ok_or_else(|| {
-        RuntimeError::Unsupported(format!(
-            "indexed CRAM does not contain contig {} for {}:{}-{}",
-            locus.chrom, locus.chrom, locus.start, locus.end
-        ))
-    })?;
-
-    let selected_containers = select_query_containers(reader.index(), &header, &region)?;
-
-    stream_selected_cram_records(
-        path,
-        &mut reader,
-        &header,
-        &region,
-        locus.end,
-        &selected_containers,
-        &mut on_record,
-    )?;
-
-    Ok(())
+    let mut reader = build_cram_indexed_reader_from_path(path, options, repository)?;
+    let label = path.display().to_string();
+    for_each_cram_record_with_reader(&mut reader, &label, locus, on_record)
 }
 
 pub(crate) fn query_cram_records(
@@ -187,7 +81,159 @@ pub(crate) fn query_cram_records(
     Ok(records)
 }
 
-fn build_reference_repository(reference_file: &Path) -> Result<fasta::Repository, RuntimeError> {
+/// Iterate decoded alignment records intersecting `locus`, streaming from an
+/// already-built CRAM `IndexedReader`. This is the reader-based entry point
+/// used by non-filesystem callers (e.g. wasm with a JS ReadAt shim).
+pub fn for_each_cram_record_with_reader<R, F>(
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
+    label: &str,
+    locus: &GenomicLocus,
+    mut on_record: F,
+) -> Result<(), RuntimeError>
+where
+    R: Read + Seek,
+    F: FnMut(AlignmentRecord) -> Result<bool, RuntimeError>,
+{
+    let header = reader.read_header().map_err(|err| {
+        RuntimeError::Io(format!("failed to read CRAM header {label}: {err}"))
+    })?;
+
+    let region = build_region(&header, locus).ok_or_else(|| {
+        RuntimeError::Unsupported(format!(
+            "indexed CRAM does not contain contig {} for {}:{}-{}",
+            locus.chrom, locus.chrom, locus.start, locus.end
+        ))
+    })?;
+
+    let selected_containers = select_query_containers(reader.index(), &header, &region)?;
+
+    stream_selected_alignment_records(
+        label,
+        reader,
+        &header,
+        &region,
+        locus.end,
+        &selected_containers,
+        &mut on_record,
+    )
+}
+
+/// Iterate raw CRAM records intersecting `locus`, streaming from an
+/// already-built CRAM `IndexedReader`. The raw variant preserves the
+/// `cram::Record` handle so callers can pull base+quality at a specific
+/// reference position (needed for SNP pileups).
+pub fn for_each_raw_cram_record_with_reader<R, F>(
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
+    label: &str,
+    locus: &GenomicLocus,
+    mut on_record: F,
+) -> Result<(), RuntimeError>
+where
+    R: Read + Seek,
+    F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
+{
+    let header = reader.read_header().map_err(|err| {
+        RuntimeError::Io(format!("failed to read CRAM header {label}: {err}"))
+    })?;
+
+    let region = build_region(&header, locus).ok_or_else(|| {
+        RuntimeError::Unsupported(format!(
+            "indexed CRAM does not contain contig {} for {}:{}-{}",
+            locus.chrom, locus.chrom, locus.start, locus.end
+        ))
+    })?;
+
+    let selected_containers = select_query_containers(reader.index(), &header, &region)?;
+
+    stream_selected_cram_records(
+        label,
+        reader,
+        &header,
+        &region,
+        locus.end,
+        &selected_containers,
+        &mut on_record,
+    )
+}
+
+/// Build a CRAM `IndexedReader` over any `Read + Seek` source given a parsed
+/// CRAI index and a reference repository. Mirrors `build_from_path` but with
+/// an externally-provided reader — the wasm path uses this with a JS-backed
+/// reader; native paths still go through the path-based helper below.
+pub fn build_cram_indexed_reader_from_reader<R>(
+    reader: R,
+    crai_index: crai::Index,
+    repository: fasta::Repository,
+) -> Result<cram::io::indexed_reader::IndexedReader<R>, RuntimeError>
+where
+    R: Read,
+{
+    cram::io::indexed_reader::Builder::default()
+        .set_reference_sequence_repository(repository)
+        .set_index(crai_index)
+        .build_from_reader(reader)
+        .map_err(|err| RuntimeError::Io(format!("failed to build indexed CRAM reader: {err}")))
+}
+
+/// Build a FASTA `Repository` over any `BufRead + Seek + Send + Sync` source
+/// given a parsed FAI index. The `Send + Sync + 'static` bounds come from
+/// `fasta::Repository`'s internal `Arc<RwLock<dyn Adapter + Send + Sync>>`
+/// cache — on single-threaded wasm32 these can be met via `unsafe impl`.
+pub fn build_reference_repository_from_readers<R>(
+    reader: R,
+    fai_index: fasta::fai::Index,
+) -> fasta::Repository
+where
+    R: BufRead + Seek + Send + Sync + 'static,
+{
+    let indexed = fasta::io::IndexedReader::new(reader, fai_index);
+    fasta::Repository::new(FastaIndexedReader::new(indexed))
+}
+
+/// Parse a CRAM index (`.crai`) from an in-memory byte buffer. Used by wasm
+/// callers that receive the small index inline while the big CRAM stays on a
+/// JS-backed reader.
+pub fn parse_crai_bytes(bytes: &[u8]) -> Result<crai::Index, RuntimeError> {
+    crai::io::Reader::new(std::io::Cursor::new(bytes))
+        .read_index()
+        .map_err(|err| RuntimeError::Io(format!("failed to parse CRAM index bytes: {err}")))
+}
+
+/// Parse a FASTA index (`.fai`) from an in-memory byte buffer.
+pub fn parse_fai_bytes(bytes: &[u8]) -> Result<fasta::fai::Index, RuntimeError> {
+    fasta::fai::io::Reader::new(std::io::Cursor::new(bytes))
+        .read_index()
+        .map_err(|err| RuntimeError::Io(format!("failed to parse FASTA index bytes: {err}")))
+}
+
+pub(crate) fn build_cram_indexed_reader_from_path(
+    path: &Path,
+    options: &GenotypeLoadOptions,
+    repository: fasta::Repository,
+) -> Result<cram::io::indexed_reader::IndexedReader<std::fs::File>, RuntimeError> {
+    let mut builder =
+        cram::io::indexed_reader::Builder::default().set_reference_sequence_repository(repository);
+
+    if let Some(index_path) = options.input_index.as_ref() {
+        let index = crai::fs::read(index_path).map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to read CRAM index {} for {}: {err}",
+                index_path.display(),
+                path.display()
+            ))
+        })?;
+        builder = builder.set_index(index);
+    }
+
+    builder.build_from_path(path).map_err(|err| {
+        RuntimeError::Io(format!(
+            "failed to open indexed CRAM {}: {err}",
+            path.display()
+        ))
+    })
+}
+
+pub(crate) fn build_reference_repository(reference_file: &Path) -> Result<fasta::Repository, RuntimeError> {
     let reader = fasta::io::indexed_reader::Builder::default()
         .build_from_path(reference_file)
         .map_err(|err| {
@@ -245,9 +291,9 @@ fn select_query_containers(
         .collect())
 }
 
-fn stream_selected_alignment_records<F>(
-    path: &Path,
-    reader: &mut cram::io::indexed_reader::IndexedReader<std::fs::File>,
+fn stream_selected_alignment_records<R, F>(
+    label: &str,
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
     header: &sam::Header,
     region: &Region,
     locus_end: i64,
@@ -255,25 +301,26 @@ fn stream_selected_alignment_records<F>(
     on_record: &mut F,
 ) -> Result<(), RuntimeError>
 where
+    R: Read + Seek,
     F: FnMut(AlignmentRecord) -> Result<bool, RuntimeError>,
 {
     stream_selected_cram_records(
-        path,
+        label,
         reader,
         header,
         region,
         locus_end,
         selected_containers,
         &mut |record| {
-            let alignment_record = build_alignment_record_from_cram(path, &record)?;
+            let alignment_record = build_alignment_record_from_cram(label, &record)?;
             on_record(alignment_record)
         },
     )
 }
 
-fn stream_selected_cram_records<F>(
-    path: &Path,
-    reader: &mut cram::io::indexed_reader::IndexedReader<std::fs::File>,
+fn stream_selected_cram_records<R, F>(
+    label: &str,
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
     header: &sam::Header,
     region: &Region,
     locus_end: i64,
@@ -281,6 +328,7 @@ fn stream_selected_cram_records<F>(
     on_record: &mut F,
 ) -> Result<(), RuntimeError>
 where
+    R: Read + Seek,
     F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
 {
     let interval = region.interval();
@@ -292,16 +340,14 @@ where
             .seek(std::io::SeekFrom::Start(offset))
             .map_err(|err| {
                 RuntimeError::Io(format!(
-                    "failed to seek CRAM container at offset {offset} in {}: {err}",
-                    path.display()
+                    "failed to seek CRAM container at offset {offset} in {label}: {err}"
                 ))
             })?;
 
         let mut container = Container::default();
         let len = reader.read_container(&mut container).map_err(|err| {
             RuntimeError::Io(format!(
-                "failed to read CRAM container at offset {offset} in {}: {err}",
-                path.display()
+                "failed to read CRAM container at offset {offset} in {label}: {err}"
             ))
         })?;
 
@@ -311,8 +357,7 @@ where
 
         let compression_header = container.compression_header().map_err(|err| {
             RuntimeError::Io(format!(
-                "failed to decode CRAM compression header from {}: {err}",
-                path.display()
+                "failed to decode CRAM compression header from {label}: {err}"
             ))
         })?;
 
@@ -324,16 +369,13 @@ where
         for (index, slice_result) in container.slices().enumerate() {
             let slice = slice_result.map_err(|err| {
                 RuntimeError::Io(format!(
-                    "failed to read CRAM slice from {}: {err}",
-                    path.display()
+                    "failed to read CRAM slice from {label}: {err}"
                 ))
             })?;
 
             let Some(&landmark_i32) = landmarks.get(index) else {
                 return Err(RuntimeError::Io(format!(
-                    "missing CRAM slice landmark {} in {}",
-                    index,
-                    path.display()
+                    "missing CRAM slice landmark {index} in {label}"
                 )));
             };
             let Ok(landmark) = u64::try_from(landmark_i32) else {
@@ -345,8 +387,7 @@ where
 
             let (core_data_src, external_data_srcs) = slice.decode_blocks().map_err(|err| {
                 RuntimeError::Io(format!(
-                    "failed to decode CRAM slice blocks from {}: {err}",
-                    path.display()
+                    "failed to decode CRAM slice blocks from {label}: {err}"
                 ))
             })?;
 
@@ -359,7 +400,7 @@ where
                 &external_data_srcs,
                 true,
                 |record| {
-                    let alignment_record = match build_alignment_record_from_cram(path, record) {
+                    let alignment_record = match build_alignment_record_from_cram(label, record) {
                         Ok(r) => r,
                         Err(e) => {
                             callback_err = Some(e);
@@ -394,13 +435,10 @@ where
                 Ok(()) => {}
                 Err(err) if is_reference_md5_mismatch(&err) => {
                     eprintln!(
-                        "[bioscript] warning: CRAM reference MD5 mismatch for {} slice landmark {} — \
+                        "[bioscript] warning: CRAM reference MD5 mismatch for {label} slice landmark {landmark} — \
                          retrying without checksum validation. Results may be incorrect if the \
                          supplied reference differs from the one used to encode this CRAM. \
-                         Details: {}",
-                        path.display(),
-                        landmark,
-                        err
+                         Details: {err}"
                     );
                     callback_err = None;
                     stop = false;
@@ -414,7 +452,7 @@ where
                             false,
                             |record| {
                                 let alignment_record =
-                                    match build_alignment_record_from_cram(path, record) {
+                                    match build_alignment_record_from_cram(label, record) {
                                         Ok(r) => r,
                                         Err(e) => {
                                             callback_err = Some(e);
@@ -449,15 +487,13 @@ where
                         )
                         .map_err(|err| {
                             RuntimeError::Io(format!(
-                                "failed to decode CRAM slice records from {} (unchecked): {err}",
-                                path.display()
+                                "failed to decode CRAM slice records from {label} (unchecked): {err}"
                             ))
                         })?;
                 }
                 Err(err) => {
                     return Err(RuntimeError::Io(format!(
-                        "failed to decode CRAM slice records from {}: {err}",
-                        path.display()
+                        "failed to decode CRAM slice records from {label}: {err}"
                     )));
                 }
             }
@@ -485,13 +521,12 @@ fn is_reference_md5_mismatch(err: &std::io::Error) -> bool {
 }
 
 fn build_alignment_record_from_cram(
-    path: &Path,
+    label: &str,
     record: &cram::Record<'_>,
 ) -> Result<AlignmentRecord, RuntimeError> {
     let flags = record.flags().map_err(|err| {
         RuntimeError::Io(format!(
-            "failed to read CRAM record flags from {}: {err}",
-            path.display()
+            "failed to read CRAM record flags from {label}: {err}"
         ))
     })?;
     let is_unmapped = flags.is_unmapped();
@@ -499,14 +534,12 @@ fn build_alignment_record_from_cram(
     let start = match record.alignment_start() {
         Some(Ok(pos)) => i64::try_from(usize::from(pos)).map_err(|_| {
             RuntimeError::Unsupported(format!(
-                "record alignment start exceeds i64 range in {}",
-                path.display()
+                "record alignment start exceeds i64 range in {label}"
             ))
         })?,
         Some(Err(err)) => {
             return Err(RuntimeError::Io(format!(
-                "failed to read CRAM alignment_start from {}: {err}",
-                path.display()
+                "failed to read CRAM alignment_start from {label}: {err}"
             )));
         }
         None => 0,
@@ -515,14 +548,12 @@ fn build_alignment_record_from_cram(
     let end = match record.alignment_end() {
         Some(Ok(pos)) => i64::try_from(usize::from(pos)).map_err(|_| {
             RuntimeError::Unsupported(format!(
-                "record alignment end exceeds i64 range in {}",
-                path.display()
+                "record alignment end exceeds i64 range in {label}"
             ))
         })?,
         Some(Err(err)) => {
             return Err(RuntimeError::Io(format!(
-                "failed to read CRAM alignment_end from {}: {err}",
-                path.display()
+                "failed to read CRAM alignment_end from {label}: {err}"
             )));
         }
         None => start,
@@ -534,8 +565,7 @@ fn build_alignment_record_from_cram(
         .map(|result| {
             result.map(map_op).map_err(|err| {
                 RuntimeError::Io(format!(
-                    "failed to read record CIGAR from {}: {err}",
-                    path.display()
+                    "failed to read record CIGAR from {label}: {err}"
                 ))
             })
         })

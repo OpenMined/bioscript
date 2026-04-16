@@ -7,16 +7,17 @@
     clippy::unused_self
 )]
 
-mod alignment;
+pub mod alignment;
 mod genotype;
 mod inspect;
 mod prepare;
 
 pub use genotype::{
     BackendCapabilities, GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind,
+    observe_cram_snp_with_reader,
 };
 pub use inspect::{
     DetectedKind, DetectionConfidence, FileContainer, FileInspection, InspectOptions,
-    SourceMetadata, inspect_file,
+    SourceMetadata, inspect_bytes, inspect_file,
 };
 pub use prepare::{PrepareRequest, PreparedPaths, prepare_indexes, shell_flags};
