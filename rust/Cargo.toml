@@ -22,3 +22,5 @@ noodles-cram = { path = "../noodles/noodles-cram" }
 noodles-csi = { path = "../noodles/noodles-csi" }
 noodles-fasta = { path = "../noodles/noodles-fasta" }
 noodles-sam = { path = "../noodles/noodles-sam" }
+noodles-tabix = { path = "../noodles/noodles-tabix" }
+noodles-vcf = { path = "../noodles/noodles-vcf" }

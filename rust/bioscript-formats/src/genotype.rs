@@ -8,9 +8,11 @@ use std::{
 };
 
 use noodles::bgzf;
-use noodles::core::Position;
+use noodles::core::{Position, Region};
 use noodles::cram;
+use noodles::csi::{self, BinningIndex};
 use noodles::sam::alignment::Record as _;
+use noodles::tabix;
 use zip::ZipArchive;
 
 use bioscript_core::{
@@ -1026,6 +1028,147 @@ pub fn observe_cram_snp_with_reader<R: Read + Seek>(
         )),
         evidence,
     })
+}
+
+/// Observe a SNP at `locus` over an already-built tabix-indexed bgzipped VCF
+/// reader. Mirrors the CRAM variant for VCF: caller builds
+/// `csi::io::IndexedReader::new(reader, tabix_index)` once and calls this per
+/// variant. Non-filesystem callers (wasm with a JS-backed reader) go through
+/// this path.
+///
+/// Only the locus-based match path is implemented — rsid-only variants would
+/// need a linear scan, which is a follow-up. Pass `matched_rsid` through if
+/// the caller already resolved it.
+pub fn observe_vcf_snp_with_reader<R>(
+    indexed: &mut csi::io::IndexedReader<bgzf::io::Reader<R>, tabix::Index>,
+    label: &str,
+    locus: &GenomicLocus,
+    reference: char,
+    alternate: char,
+    matched_rsid: Option<String>,
+    assembly: Option<Assembly>,
+) -> Result<VariantObservation, RuntimeError>
+where
+    R: Read + Seek,
+{
+    let locus_label = format!("{}:{}", locus.chrom, locus.start);
+
+    let Some(seq_name) = resolve_vcf_chrom_name(indexed.index(), &locus.chrom) else {
+        return Ok(VariantObservation {
+            backend: "vcf".to_owned(),
+            matched_rsid,
+            assembly,
+            evidence: vec![format!(
+                "{label}: tabix index has no contig matching {} (tried chr-prefixed and bare forms)",
+                locus.chrom
+            )],
+            ..VariantObservation::default()
+        });
+    };
+
+    let pos_usize = usize::try_from(locus.start).map_err(|err| {
+        RuntimeError::Io(format!(
+            "{label}: invalid VCF position {} for {locus_label}: {err}",
+            locus.start
+        ))
+    })?;
+    let position = Position::try_from(pos_usize).map_err(|err| {
+        RuntimeError::Io(format!(
+            "{label}: invalid VCF position {} for {locus_label}: {err}",
+            locus.start
+        ))
+    })?;
+    let region = Region::new(seq_name.as_str(), position..=position);
+
+    let query = indexed
+        .query(&region)
+        .map_err(|err| RuntimeError::Io(format!("{label}: tabix query for {locus_label}: {err}")))?;
+
+    let reference_str = reference.to_ascii_uppercase().to_string();
+    let alternate_str = alternate.to_ascii_uppercase().to_string();
+
+    let mut saw_any = false;
+    for record_result in query {
+        let record = record_result
+            .map_err(|err| RuntimeError::Io(format!("{label}: tabix record iter: {err}")))?;
+        let line: &str = record.as_ref();
+        let Some(row) = parse_vcf_record(line)? else {
+            continue;
+        };
+        if row.position != locus.start {
+            continue;
+        }
+        saw_any = true;
+        if !row.reference.eq_ignore_ascii_case(&reference_str) {
+            continue;
+        }
+        if !row
+            .alternates
+            .iter()
+            .any(|alt| alt.eq_ignore_ascii_case(&alternate_str))
+        {
+            continue;
+        }
+
+        return Ok(VariantObservation {
+            backend: "vcf".to_owned(),
+            matched_rsid: matched_rsid.or_else(|| row.rsid.clone()),
+            assembly,
+            genotype: Some(row.genotype.clone()),
+            evidence: vec![format!("{label}: resolved by locus {locus_label}")],
+            ..VariantObservation::default()
+        });
+    }
+
+    let evidence = if saw_any {
+        vec![format!(
+            "{label}: {locus_label} present but ref={reference}/alt={alternate} did not match any record"
+        )]
+    } else {
+        vec![format!(
+            "{label}: no VCF record at {locus_label}"
+        )]
+    };
+    Ok(VariantObservation {
+        backend: "vcf".to_owned(),
+        matched_rsid,
+        assembly,
+        evidence,
+        ..VariantObservation::default()
+    })
+}
+
+/// Match the user-provided chromosome name against the tabix index's set of
+/// reference sequence names. VCFs vary: some use `chr22`, others `22`. Try
+/// the user's spelling verbatim, then toggle the `chr` prefix, then fall back
+/// to a case-insensitive compare against the normalized suffix.
+fn resolve_vcf_chrom_name(index: &tabix::Index, user_chrom: &str) -> Option<String> {
+    let header = index.header()?;
+    let names = header.reference_sequence_names();
+
+    let trimmed = user_chrom.trim();
+    let stripped = trimmed.strip_prefix("chr").unwrap_or(trimmed);
+
+    let candidates = [
+        trimmed.to_owned(),
+        stripped.to_owned(),
+        format!("chr{stripped}"),
+    ];
+    for cand in &candidates {
+        if names.contains(cand.as_bytes()) {
+            return Some(cand.clone());
+        }
+    }
+    // Case-insensitive fallback against the full set.
+    let target = stripped.to_ascii_lowercase();
+    for name in names {
+        let as_str = std::str::from_utf8(name.as_ref()).ok()?;
+        let as_stripped = as_str.strip_prefix("chr").unwrap_or(as_str);
+        if as_stripped.eq_ignore_ascii_case(&target) {
+            return Some(as_str.to_owned());
+        }
+    }
+    None
 }
 
 fn normalize_pileup_base(base: u8) -> Option<char> {

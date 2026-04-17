@@ -22,7 +22,9 @@ use bioscript_core::GenomicLocus;
 use bioscript_formats::{
     DetectedKind, DetectionConfidence, FileContainer, FileInspection, InspectOptions,
     SourceMetadata, alignment, inspect_bytes as inspect_bytes_rs, observe_cram_snp_with_reader,
+    observe_vcf_snp_with_reader,
 };
+use noodles::csi as noodles_csi;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -170,6 +172,76 @@ pub fn lookup_cram_variants(
             assembly,
         )
         .map_err(|err| JsError::new(&format!("lookup {}: {err:?}", variant.name)))?;
+        results.push(VariantObservationJs {
+            name: variant.name,
+            backend: observation.backend,
+            matched_rsid: observation.matched_rsid,
+            assembly: observation.assembly.map(|a| render_assembly(a).to_owned()),
+            genotype: observation.genotype,
+            ref_count: observation.ref_count,
+            alt_count: observation.alt_count,
+            depth: observation.depth,
+            raw_counts: observation.raw_counts,
+            decision: observation.decision,
+            evidence: observation.evidence,
+        });
+    }
+
+    serde_json::to_string(&results).map_err(|err| JsError::new(&format!("encode results: {err}")))
+}
+
+/// Observe a list of SNP variants against a bgzipped + tabix-indexed VCF,
+/// with the bulk bytes pulled on demand via a JS-supplied `readAt(offset, len)`
+/// callback. The small `.tbi` payload is passed inline.
+///
+/// The reader must provide the VCF synchronously — on web this is a
+/// `FileReaderSync`-backed callback running inside a Web Worker.
+#[wasm_bindgen(js_name = lookupVcfVariants)]
+pub fn lookup_vcf_variants(
+    vcf_read_at: js_sys::Function,
+    vcf_len: f64,
+    tbi_bytes: &[u8],
+    variants_json: &str,
+) -> Result<String, JsError> {
+    let tabix_index = alignment::parse_tbi_bytes(tbi_bytes)
+        .map_err(|err| JsError::new(&format!("parse tbi: {err:?}")))?;
+    let vcf_reader = JsReader::new(vcf_read_at, vcf_len as u64, "vcf");
+    let mut indexed = noodles_csi::io::IndexedReader::new(vcf_reader, tabix_index);
+
+    let variants: Vec<VariantInput> = serde_json::from_str(variants_json)
+        .map_err(|err| JsError::new(&format!("parse variantsJson: {err}")))?;
+
+    let mut results = Vec::with_capacity(variants.len());
+    for variant in variants {
+        let ref_char = variant
+            .ref_base
+            .chars()
+            .next()
+            .ok_or_else(|| JsError::new(&format!("variant {}: empty ref", variant.name)))?;
+        let alt_char = variant
+            .alt_base
+            .chars()
+            .next()
+            .ok_or_else(|| JsError::new(&format!("variant {}: empty alt", variant.name)))?;
+        let assembly = variant
+            .assembly
+            .as_deref()
+            .and_then(parse_assembly_str);
+        let locus = GenomicLocus {
+            chrom: variant.chrom.clone(),
+            start: variant.pos,
+            end: variant.pos,
+        };
+        let observation = observe_vcf_snp_with_reader(
+            &mut indexed,
+            &variant.name,
+            &locus,
+            ref_char,
+            alt_char,
+            variant.rsid.clone(),
+            assembly,
+        )
+        .map_err(|err| JsError::new(&format!("vcf lookup {}: {err:?}", variant.name)))?;
         results.push(VariantObservationJs {
             name: variant.name,
             backend: observation.backend,

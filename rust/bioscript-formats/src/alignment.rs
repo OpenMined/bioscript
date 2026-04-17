@@ -12,6 +12,7 @@ use noodles::{
         self,
         alignment::{Record as _, record::Cigar as _},
     },
+    tabix,
 };
 
 use bioscript_core::{GenomicLocus, RuntimeError};
@@ -94,6 +95,13 @@ where
     R: Read + Seek,
     F: FnMut(AlignmentRecord) -> Result<bool, RuntimeError>,
 {
+    // Same idempotent-rewind rationale as `for_each_raw_cram_record_with_reader`
+    // — the CRAM header lives at offset 0; we must rewind before each call so
+    // callers can iterate over multiple loci with the same `IndexedReader`.
+    reader
+        .get_mut()
+        .seek(std::io::SeekFrom::Start(0))
+        .map_err(|err| RuntimeError::Io(format!("failed to rewind CRAM {label}: {err}")))?;
     let header = reader.read_header().map_err(|err| {
         RuntimeError::Io(format!("failed to read CRAM header {label}: {err}"))
     })?;
@@ -132,6 +140,15 @@ where
     R: Read + Seek,
     F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
 {
+    // Re-seeks to position 0 before reading the header so this helper is
+    // idempotent across repeated calls on the same indexed reader (e.g. a
+    // wasm caller looking up N variants in a loop). Otherwise the second
+    // call reads garbage because the stream position is wherever the
+    // previous container iteration left it.
+    reader
+        .get_mut()
+        .seek(std::io::SeekFrom::Start(0))
+        .map_err(|err| RuntimeError::Io(format!("failed to rewind CRAM {label}: {err}")))?;
     let header = reader.read_header().map_err(|err| {
         RuntimeError::Io(format!("failed to read CRAM header {label}: {err}"))
     })?;
@@ -204,6 +221,15 @@ pub fn parse_fai_bytes(bytes: &[u8]) -> Result<fasta::fai::Index, RuntimeError> 
     fasta::fai::io::Reader::new(std::io::Cursor::new(bytes))
         .read_index()
         .map_err(|err| RuntimeError::Io(format!("failed to parse FASTA index bytes: {err}")))
+}
+
+/// Parse a tabix index (`.tbi`) from an in-memory byte buffer. Used by wasm
+/// callers that pass the small index inline while the bgzipped VCF stays on
+/// a JS-backed `Read + Seek` reader.
+pub fn parse_tbi_bytes(bytes: &[u8]) -> Result<tabix::Index, RuntimeError> {
+    tabix::io::Reader::new(std::io::Cursor::new(bytes))
+        .read_index()
+        .map_err(|err| RuntimeError::Io(format!("failed to parse tabix index bytes: {err}")))
 }
 
 pub(crate) fn build_cram_indexed_reader_from_path(

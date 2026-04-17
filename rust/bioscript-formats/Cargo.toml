@@ -8,7 +8,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 bioscript-core = { path = "../bioscript-core" }
-noodles = { version = "0.109.0", features = ["bgzf", "core", "cram", "csi", "fasta", "sam"] }
+noodles = { version = "0.109.0", features = ["bgzf", "core", "cram", "csi", "fasta", "sam", "tabix", "vcf"] }
 zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
 
 [lints.clippy]
