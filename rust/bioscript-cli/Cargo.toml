@@ -8,10 +8,12 @@ name = "bioscript"
 path = "src/main.rs"
 
 [dependencies]
+bioscript-core = { path = "../bioscript-core" }
 bioscript-formats = { path = "../bioscript-formats" }
 bioscript-runtime = { path = "../bioscript-runtime" }
 bioscript-schema = { path = "../bioscript-schema" }
 monty = { path = "../../monty/crates/monty" }
+serde_yaml = "0.9.34"
 
 [dev-dependencies]
 zip = { version = "2.2.0", default-features = false, features = ["deflate"] }

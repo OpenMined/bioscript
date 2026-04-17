@@ -1,18 +1,22 @@
 use std::{
+    collections::BTreeMap,
     env,
     fmt::Write as _,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitCode,
     time::{Duration, Instant},
 };
 
 use bioscript_formats::{
-    GenotypeLoadOptions, GenotypeSourceFormat, InspectOptions, PrepareRequest, inspect_file,
-    prepare_indexes, shell_flags,
+    GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, InspectOptions, PrepareRequest,
+    inspect_file, prepare_indexes, shell_flags,
 };
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig, StageTiming};
-use bioscript_schema::validate_variants_path;
+use bioscript_schema::{
+    PanelManifest, VariantManifest, load_panel_manifest, load_variant_manifest, validate_panels_path,
+    validate_variants_path,
+};
 use monty::ResourceLimits;
 
 fn main() -> ExitCode {
@@ -32,6 +36,9 @@ fn run_cli() -> Result<(), String> {
         if first == "validate-variants" {
             return run_validate_variants(args.collect());
         }
+        if first == "validate-panels" {
+            return run_validate_panels(args.collect());
+        }
         if first == "prepare" {
             return run_prepare(args.collect());
         }
@@ -48,6 +55,7 @@ fn run_cli() -> Result<(), String> {
     let mut participant_id: Option<String> = None;
     let mut trace_report: Option<PathBuf> = None;
     let mut timing_report: Option<PathBuf> = None;
+    let mut filters: Vec<String> = Vec::new();
     let mut auto_index = false;
     let mut cache_dir: Option<PathBuf> = None;
     let mut loader = GenotypeLoadOptions::default();
@@ -89,6 +97,11 @@ fn run_cli() -> Result<(), String> {
                 return Err("--timing-report requires a path".to_owned());
             };
             timing_report = Some(PathBuf::from(value));
+        } else if arg == "--filter" {
+            let Some(value) = args.next() else {
+                return Err("--filter requires key=value".to_owned());
+            };
+            filters.push(value);
         } else if arg == "--input-format" {
             let Some(value) = args.next() else {
                 return Err("--input-format requires a value".to_owned());
@@ -164,7 +177,7 @@ fn run_cli() -> Result<(), String> {
 
     let Some(script_path) = script_path else {
         return Err(
-            "usage: bioscript <script.py> [--root <dir>] [--input-file <path>] [--output-file <path>] [--participant-id <id>] [--trace-report <path>] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|cram] [--cache-dir <path>]\n       bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>]"
+            "usage: bioscript <script.py|manifest.yaml> [--root <dir>] [--input-file <path>] [--output-file <path>] [--participant-id <id>] [--trace-report <path>] [--timing-report <path>] [--filter key=value] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript validate-variants <path> [--report <file>]\n       bioscript validate-panels <path> [--report <file>]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|cram] [--cache-dir <path>]\n       bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>]"
                 .to_owned(),
         );
     };
@@ -175,6 +188,7 @@ fn run_cli() -> Result<(), String> {
             env::current_dir().map_err(|err| format!("failed to get current directory: {err}"))?
         }
     };
+    normalize_loader_paths(&runtime_root, &mut loader);
 
     // auto-index: detect and build missing indexes for CRAM/BAM/FASTA
     let mut cli_timings: Vec<StageTiming> = Vec::new();
@@ -216,6 +230,29 @@ fn run_cli() -> Result<(), String> {
             duration_ms: auto_index_started.elapsed().as_millis(),
             detail: "prepare_indexes".to_owned(),
         });
+    }
+
+    if is_yaml_manifest(&script_path) {
+        let manifest_started = Instant::now();
+        run_manifest(
+            &runtime_root,
+            &script_path,
+            input_file.as_deref(),
+            output_file.as_deref(),
+            participant_id.as_deref(),
+            trace_report.as_deref(),
+            &loader,
+            &filters,
+        )?;
+        cli_timings.push(StageTiming {
+            stage: "manifest_run".to_owned(),
+            duration_ms: manifest_started.elapsed().as_millis(),
+            detail: script_path.display().to_string(),
+        });
+        if let Some(timing_path) = timing_report {
+            write_timing_report(&timing_path, &cli_timings)?;
+        }
+        return Ok(());
     }
 
     let runtime = BioscriptRuntime::with_config(runtime_root, RuntimeConfig { limits, loader })
@@ -421,4 +458,371 @@ fn run_validate_variants(args: Vec<String>) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn run_validate_panels(args: Vec<String>) -> Result<(), String> {
+    let mut path: Option<PathBuf> = None;
+    let mut report_path: Option<PathBuf> = None;
+
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--report" {
+            let Some(value) = iter.next() else {
+                return Err("--report requires a path".to_owned());
+            };
+            report_path = Some(PathBuf::from(value));
+        } else if path.is_none() {
+            path = Some(PathBuf::from(arg));
+        } else {
+            return Err(format!("unexpected argument: {arg}"));
+        }
+    }
+
+    let Some(path) = path else {
+        return Err("usage: bioscript validate-panels <path> [--report <file>]".to_owned());
+    };
+
+    let report = validate_panels_path(&path)?;
+    let text = report.render_text();
+    print!("{text}");
+
+    if let Some(report_path) = report_path {
+        if let Some(parent) = report_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| {
+                format!("failed to create report dir {}: {err}", parent.display())
+            })?;
+        }
+        std::fs::write(&report_path, text)
+            .map_err(|err| format!("failed to write {}: {err}", report_path.display()))?;
+    }
+
+    if report.has_errors() {
+        return Err(format!(
+            "validation found {} errors and {} warnings",
+            report.total_errors(),
+            report.total_warnings()
+        ));
+    }
+
+    Ok(())
+}
+
+fn is_yaml_manifest(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext, "yaml" | "yml"))
+}
+
+fn run_manifest(
+    runtime_root: &Path,
+    manifest_path: &Path,
+    input_file: Option<&str>,
+    output_file: Option<&str>,
+    participant_id: Option<&str>,
+    trace_report: Option<&Path>,
+    loader: &GenotypeLoadOptions,
+    filters: &[String],
+) -> Result<(), String> {
+    let schema = manifest_schema(manifest_path)?;
+    let resolved_input = input_file.map(|value| resolve_cli_path(runtime_root, value));
+    let resolved_output = output_file.map(|value| resolve_cli_path_buf(runtime_root, Path::new(value)));
+    let resolved_trace = trace_report.map(|value| resolve_cli_path_buf(runtime_root, value));
+    match schema.as_str() {
+        "bioscript:variant:1.0" | "bioscript:variant" => {
+            let manifest = load_variant_manifest(manifest_path)?;
+            let row = run_variant_manifest(
+                runtime_root,
+                &manifest,
+                resolved_input.as_deref(),
+                participant_id,
+                loader,
+            )?;
+            write_manifest_outputs(
+                std::slice::from_ref(&row),
+                resolved_output.as_deref(),
+                resolved_trace.as_deref(),
+            )?;
+            Ok(())
+        }
+        "bioscript:panel:1.0" => {
+            let manifest = load_panel_manifest(manifest_path)?;
+            let rows = run_panel_manifest(
+                runtime_root,
+                &manifest,
+                resolved_input.as_deref(),
+                participant_id,
+                loader,
+                filters,
+            )?;
+            write_manifest_outputs(&rows, resolved_output.as_deref(), resolved_trace.as_deref())?;
+            Ok(())
+        }
+        other => Err(format!("unsupported manifest schema '{other}'")),
+    }
+}
+
+fn run_variant_manifest(
+    runtime_root: &Path,
+    manifest: &VariantManifest,
+    input_file: Option<&str>,
+    participant_id: Option<&str>,
+    loader: &GenotypeLoadOptions,
+) -> Result<BTreeMap<String, String>, String> {
+    let input_file = input_file.ok_or("manifest execution requires --input-file")?;
+    let store = GenotypeStore::from_file_with_options(Path::new(input_file), loader)
+        .map_err(|err| err.to_string())?;
+    let observation = store
+        .lookup_variant(&manifest.spec)
+        .map_err(|err| err.to_string())?;
+    Ok(variant_row(
+        runtime_root,
+        &manifest.path,
+        &manifest.name,
+        &manifest.tags,
+        &observation,
+        participant_id,
+    ))
+}
+
+fn run_panel_manifest(
+    runtime_root: &Path,
+    panel: &PanelManifest,
+    input_file: Option<&str>,
+    participant_id: Option<&str>,
+    loader: &GenotypeLoadOptions,
+    filters: &[String],
+) -> Result<Vec<BTreeMap<String, String>>, String> {
+    let input_file = input_file.ok_or("manifest execution requires --input-file")?;
+    let store = GenotypeStore::from_file_with_options(Path::new(input_file), loader)
+        .map_err(|err| err.to_string())?;
+    let mut rows = Vec::new();
+
+    for member in &panel.members {
+        if member.kind != "variant" {
+            return Err(format!(
+                "panel member kind '{}' is not executable yet; panel execution is currently variant-only",
+                member.kind
+            ));
+        }
+        let Some(path) = &member.path else {
+            return Err("remote panel members are not executable yet".to_owned());
+        };
+        let resolved = resolve_manifest_path(runtime_root, &panel.path, path)?;
+        let manifest = load_variant_manifest(&resolved)?;
+        if !matches_filters(&manifest, &resolved, filters) {
+            continue;
+        }
+        let observation = store
+            .lookup_variant(&manifest.spec)
+            .map_err(|err| err.to_string())?;
+        rows.push(variant_row(
+            runtime_root,
+            &resolved,
+            &manifest.name,
+            &manifest.tags,
+            &observation,
+            participant_id,
+        ));
+    }
+
+    Ok(rows)
+}
+
+fn variant_row(
+    runtime_root: &Path,
+    path: &Path,
+    name: &str,
+    tags: &[String],
+    observation: &bioscript_core::VariantObservation,
+    participant_id: Option<&str>,
+) -> BTreeMap<String, String> {
+    let mut row = BTreeMap::new();
+    row.insert("kind".to_owned(), "variant".to_owned());
+    row.insert("name".to_owned(), name.to_owned());
+    row.insert(
+        "path".to_owned(),
+        path.strip_prefix(runtime_root)
+            .unwrap_or(path)
+            .display()
+            .to_string(),
+    );
+    row.insert("tags".to_owned(), tags.join(","));
+    row.insert("backend".to_owned(), observation.backend.clone());
+    row.insert(
+        "participant_id".to_owned(),
+        participant_id.unwrap_or_default().to_owned(),
+    );
+    row.insert(
+        "matched_rsid".to_owned(),
+        observation.matched_rsid.clone().unwrap_or_default(),
+    );
+    row.insert(
+        "assembly".to_owned(),
+        observation
+            .assembly
+            .map(|value| match value {
+                bioscript_core::Assembly::Grch37 => "grch37".to_owned(),
+                bioscript_core::Assembly::Grch38 => "grch38".to_owned(),
+            })
+            .unwrap_or_default(),
+    );
+    row.insert(
+        "genotype".to_owned(),
+        observation.genotype.clone().unwrap_or_default(),
+    );
+    row.insert(
+        "ref_count".to_owned(),
+        observation.ref_count.map_or_else(String::new, |value| value.to_string()),
+    );
+    row.insert(
+        "alt_count".to_owned(),
+        observation.alt_count.map_or_else(String::new, |value| value.to_string()),
+    );
+    row.insert(
+        "depth".to_owned(),
+        observation.depth.map_or_else(String::new, |value| value.to_string()),
+    );
+    row.insert("evidence".to_owned(), observation.evidence.join(" | "));
+    row
+}
+
+fn write_manifest_outputs(
+    rows: &[BTreeMap<String, String>],
+    output_file: Option<&Path>,
+    trace_report: Option<&Path>,
+) -> Result<(), String> {
+    let text = render_rows_as_tsv(rows);
+    if let Some(output_file) = output_file {
+        if let Some(parent) = output_file.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("failed to create output dir {}: {err}", parent.display()))?;
+        }
+        fs::write(output_file, &text)
+            .map_err(|err| format!("failed to write output {}: {err}", output_file.display()))?;
+    } else {
+        print!("{text}");
+    }
+
+    if let Some(trace_report) = trace_report {
+        if let Some(parent) = trace_report.parent() {
+            fs::create_dir_all(parent).map_err(|err| {
+                format!("failed to create trace dir {}: {err}", parent.display())
+            })?;
+        }
+        let mut trace = String::from("step\tline\tcode\n");
+        for (idx, row) in rows.iter().enumerate() {
+            let _ = writeln!(
+                trace,
+                "{}\t{}\t{}",
+                idx + 1,
+                idx + 1,
+                row.get("path").cloned().unwrap_or_default()
+            );
+        }
+        fs::write(trace_report, trace)
+            .map_err(|err| format!("failed to write trace {}: {err}", trace_report.display()))?;
+    }
+
+    Ok(())
+}
+
+fn resolve_cli_path(root: &Path, value: &str) -> String {
+    resolve_cli_path_buf(root, Path::new(value)).display().to_string()
+}
+
+fn resolve_cli_path_buf(root: &Path, value: &Path) -> PathBuf {
+    if value.is_absolute() {
+        value.to_path_buf()
+    } else {
+        root.join(value)
+    }
+}
+
+fn render_rows_as_tsv(rows: &[BTreeMap<String, String>]) -> String {
+    let headers = [
+        "kind",
+        "name",
+        "path",
+        "tags",
+        "participant_id",
+        "backend",
+        "matched_rsid",
+        "assembly",
+        "genotype",
+        "ref_count",
+        "alt_count",
+        "depth",
+        "evidence",
+    ];
+    let mut out = headers.join("\t");
+    out.push('\n');
+    for row in rows {
+        let line = headers
+            .iter()
+            .map(|header| row.get(*header).cloned().unwrap_or_default().replace('\t', " "))
+            .collect::<Vec<_>>()
+            .join("\t");
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
+}
+
+fn matches_filters(manifest: &VariantManifest, path: &Path, filters: &[String]) -> bool {
+    filters.iter().all(|filter| match filter.split_once('=') {
+        Some(("kind", value)) => value == "variant",
+        Some(("name", value)) => manifest.name.contains(value),
+        Some(("path", value)) => path.display().to_string().contains(value),
+        Some(("tag", value)) => manifest.tags.iter().any(|tag| tag == value),
+        Some(_) | None => false,
+    })
+}
+
+fn resolve_manifest_path(
+    runtime_root: &Path,
+    manifest_path: &Path,
+    relative: &str,
+) -> Result<PathBuf, String> {
+    let base_dir = manifest_path
+        .parent()
+        .ok_or_else(|| format!("manifest has no parent: {}", manifest_path.display()))?;
+    let joined = base_dir.join(relative);
+    let canonical_root = runtime_root
+        .canonicalize()
+        .map_err(|err| format!("failed to resolve root {}: {err}", runtime_root.display()))?;
+    let canonical_joined = joined
+        .canonicalize()
+        .map_err(|err| format!("failed to resolve {}: {err}", joined.display()))?;
+    if !canonical_joined.starts_with(&canonical_root) {
+        return Err(format!(
+            "manifest member path escapes bioscript root: {}",
+            canonical_joined.display()
+        ));
+    }
+    Ok(canonical_joined)
+}
+
+fn manifest_schema(path: &Path) -> Result<String, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let value: serde_yaml::Value = serde_yaml::from_str(&text)
+        .map_err(|err| format!("failed to parse YAML {}: {err}", path.display()))?;
+    value
+        .as_mapping()
+        .and_then(|mapping| mapping.get(serde_yaml::Value::String("schema".to_owned())))
+        .and_then(serde_yaml::Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("{} is missing schema", path.display()))
+}
+
+fn normalize_loader_paths(root: &Path, loader: &mut GenotypeLoadOptions) {
+    if let Some(path) = loader.input_index.take() {
+        loader.input_index = Some(resolve_cli_path_buf(root, &path));
+    }
+    if let Some(path) = loader.reference_file.take() {
+        loader.reference_file = Some(resolve_cli_path_buf(root, &path));
+    }
+    if let Some(path) = loader.reference_index.take() {
+        loader.reference_index = Some(resolve_cli_path_buf(root, &path));
+    }
 }

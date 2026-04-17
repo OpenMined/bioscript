@@ -1,74 +1,56 @@
-schema: "bioscript:variant"
+schema: "bioscript:variant:1.0"
 version: "1.0"
-variant_id: "string"
+name: "string"
+tags:
+  - "type:trait"
+  - "validated:23andme:v5"
 label: "string"
 gene: "string"
 summary: "string"
 
 identifiers:
   rsids:
-    - "string"
+    - "rs123"
   aliases:
-    - "string"
+    - "rs456"
 
 coordinates:
   grch37:
-    chrom: "string"
-    pos: 0
+    chrom: "1"
+    pos: 12345
   grch38:
-    chrom: "string"
-    start: 0
-    end: 0
+    chrom: "1"
+    start: 12345
+    end: 12346
 
 alleles:
   kind: "snv"
-  ref: "string"
+  ref: "A"
   alts:
-    - "string"
-  canonical_alt: "string"
-  deletion_length: 0
-  insertion_sequence: "string"
+    - "G"
+  deletion_length: 1
+  insertion_sequence: "AT"
   motifs:
-    - "string"
+    - "AT"
   equivalent_coordinates:
     grch37:
-      - "string"
+      - "1:12345-12346"
     grch38:
-      - "string"
+      - "1:12346-12347"
   notes:
     - "string"
 
-research:
-  tasks:
-    - "string"
-  tags:
-    - "string"
+findings:
+  - schema: "bioscript:trait:1.0"
+    alt: "G"
+    label: "string"
+    summary: "string"
+    notes: "string"
 
-clinical:
-  pgx:
-    gene: "string"
-    source: "ClinPGx"
-    variant_page_url: "https://example.org"
-    drug_labels:
-      - source: "FDA"
-        title: "string"
-        genes:
-          - "string"
-        drugs:
-          - "string"
-        pgx_level: "Actionable PGx"
-        actionable: true
-        tags:
-          - "Dosing Info"
-        annotation_url: "https://example.org"
-        note: "string"
-    clinical_annotations:
-      - source: "CPIC"
-        title: "string"
-        genes:
-          - "string"
-        drugs:
-          - "string"
-        level: "string"
-        actionable: true
-        annotation_url: "https://example.org"
+provenance:
+  sources:
+    - kind: "database"
+      label: "string"
+      url: "https://example.org"
+      fields:
+        - "alleles"
