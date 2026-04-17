@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bioscript-core = { path = "../bioscript-core" }
 serde_yaml = "0.9.34"
+url = "2.5"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

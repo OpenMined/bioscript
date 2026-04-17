@@ -1,6 +1,11 @@
 schema: "bioscript:variant"
 version: "1.0"
 variant_id: "ABCG2_rs2231142"
+tags:
+  - "gene:abcg2"
+  - "domain:pgx"
+  - "input:vcf"
+  - "input:cram"
 label: "ABCG2 rs2231142"
 gene: "ABCG2"
 summary: "ABCG2 SNV locus with pharmacogenomic interpretation"
@@ -25,16 +30,6 @@ alleles:
     - "C"
     - "T"
   canonical_alt: "A"
-
-research:
-  tasks:
-    - "Verify canonical dbSNP, ClinVar, and Ensembl annotations"
-    - "Collect PharmGKB and disease-association references for ABCG2"
-  tags:
-    - "abcg2"
-    - "pgx"
-    - "snv"
-    - "rs2231142"
 
 clinical:
   pgx:

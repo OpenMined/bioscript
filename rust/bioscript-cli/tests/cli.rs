@@ -1,4 +1,9 @@
-use std::{fs, path::PathBuf, process::Command};
+use std::{
+    fs,
+    path::PathBuf,
+    process::Command,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -7,6 +12,19 @@ fn repo_root() -> PathBuf {
         .parent()
         .expect("repo root")
         .to_path_buf()
+}
+
+fn temp_dir(label: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock drift")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "bioscript-cli-tests-tmp-{label}-{}-{nanos}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    dir
 }
 
 #[test]
@@ -151,4 +169,144 @@ fn inspect_subcommand_reports_detected_vendor_and_platform() {
     assert!(stdout.contains("platform_version\tV2.0"));
     assert!(stdout.contains("assembly\tgrch37"));
     assert!(stdout.contains("duration_ms\t"));
+}
+
+#[test]
+fn variant_manifest_runs_directly_via_cli() {
+    let root = repo_root();
+    let dir = temp_dir("variant-manifest");
+    let manifest = dir.join("rs1.yaml");
+    fs::write(
+        &manifest,
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "example-rs73885319"
+tags:
+  - "type:trait"
+identifiers:
+  rsids:
+    - "rs73885319"
+coordinates:
+  grch38:
+    chrom: "22"
+    pos: 36265860
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts:
+    - "G"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("old/examples/apol1/test_snps.txt")
+        .arg(&manifest)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("kind\tname\tpath"));
+    assert!(stdout.contains("example-rs73885319"));
+    assert!(stdout.contains("AG"));
+}
+
+#[test]
+fn panel_manifest_runs_directly_via_cli() {
+    let root = repo_root();
+    let dir = temp_dir("panel-manifest");
+    let variants_dir = dir.join("variants");
+    fs::create_dir_all(&variants_dir).unwrap();
+    fs::write(
+        variants_dir.join("rs73885319.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "example-rs73885319"
+tags:
+  - "type:trait"
+identifiers:
+  rsids:
+    - "rs73885319"
+coordinates:
+  grch38:
+    chrom: "22"
+    pos: 36265860
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts:
+    - "G"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        variants_dir.join("rs60910145.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "example-rs60910145"
+tags:
+  - "type:trait"
+identifiers:
+  rsids:
+    - "rs60910145"
+coordinates:
+  grch38:
+    chrom: "22"
+    pos: 36265988
+alleles:
+  kind: "snv"
+  ref: "T"
+  alts:
+    - "G"
+"#,
+    )
+    .unwrap();
+    let panel = dir.join("panel.yaml");
+    fs::write(
+        &panel,
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "example-panel"
+tags:
+  - "type:trait"
+members:
+  - kind: "variant"
+    path: "variants/rs73885319.yaml"
+    version: "1.0"
+  - kind: "variant"
+    path: "variants/rs60910145.yaml"
+    version: "1.0"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("old/examples/apol1/test_snps.txt")
+        .arg("--filter")
+        .arg("name=rs73885319")
+        .arg(&panel)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("example-rs73885319"));
+    assert!(!stdout.contains("example-rs60910145"));
 }

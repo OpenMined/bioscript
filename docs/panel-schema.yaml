@@ -1,0 +1,14 @@
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "traits-common"
+label: "Common Traits"
+tags:
+  - "type:trait"
+
+members:
+  - kind: "variant"
+    path: "variants/rs671.yaml"
+    version: "1.0"
+  - kind: "variant"
+    path: "variants/rs713598.yaml"
+    version: "1.0"

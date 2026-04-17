@@ -83,20 +83,37 @@ fn canonical_dir(path: &Path) -> Result<PathBuf, String> {
 fn resolve_rooted_path(root: &Path, raw: &str) -> Result<PathBuf, String> {
     let raw_path = Path::new(raw);
     let resolved = if raw_path.is_absolute() {
+        ensure_path_within_root(root, raw_path)?;
         raw_path.to_path_buf()
     } else {
+        ensure_relative_path_safe(raw_path)?;
         root.join(raw_path)
     };
     let canonical = resolved
         .canonicalize()
         .map_err(|err| format!("failed to resolve {}: {err}", resolved.display()))?;
-    if !canonical.starts_with(root) {
-        return Err(format!(
-            "path escapes bioscript root: {}",
-            canonical.display()
-        ));
-    }
     Ok(canonical)
+}
+
+fn ensure_relative_path_safe(path: &Path) -> Result<(), String> {
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {
+                return Err(format!("path escapes bioscript root: {}", path.display()));
+            }
+            std::path::Component::CurDir | std::path::Component::Normal(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn ensure_path_within_root(root: &Path, path: &Path) -> Result<(), String> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| format!("path escapes bioscript root: {}", path.display()))?;
+    ensure_relative_path_safe(relative)
 }
 
 fn resolve_cache_dir(cwd: &Path, cache_dir: &Path) -> PathBuf {
