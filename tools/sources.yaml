@@ -24,6 +24,18 @@ datasets:
           - name: "NA06985.final.cram.crai"
             url: "https://ftp-trace.ncbi.nih.gov/1000genomes/ftp/1000G_2504_high_coverage/data/ERR3239276/NA06985.final.cram.crai"
             description: "CRAM index"
+      vcf:
+        description: "NA06985 cleaned VCF on GRCh37"
+        files:
+          - name: "NA06985.clean.vcf.gz.tar.gz.aa"
+            url: "https://raw.githubusercontent.com/OpenMined/biovault-data/main/vcf/NA06985/NA06985.clean.vcf.gz.tar.gz.aa"
+            description: "First split archive chunk containing the cleaned NA06985 VCF"
+          - name: "NA06985.clean.vcf.gz.tar.gz.ab"
+            url: "https://raw.githubusercontent.com/OpenMined/biovault-data/main/vcf/NA06985/NA06985.clean.vcf.gz.tar.gz.ab"
+            description: "Second split archive chunk containing the cleaned NA06985 VCF"
+          - name: "NA06985.clean.vcf.gz.tbi"
+            url: "https://raw.githubusercontent.com/OpenMined/biovault-data/main/vcf/NA06985/NA06985.clean.vcf.gz.tbi"
+            description: "Tabix index for the cleaned NA06985 VCF"
 
   23andme:
     description: "23andMe SNP genotype files from OpenMined biovault-data (PGP participants)"
