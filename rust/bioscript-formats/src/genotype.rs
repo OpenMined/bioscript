@@ -57,6 +57,7 @@ pub struct GenotypeStore {
 enum QueryBackend {
     RsidMap(RsidMapBackend),
     Delimited(DelimitedBackend),
+    Vcf(VcfBackend),
     Cram(CramBackend),
 }
 
@@ -71,6 +72,11 @@ struct DelimitedBackend {
     format: GenotypeSourceFormat,
     path: PathBuf,
     zip_entry_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct VcfBackend {
+    path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -137,23 +143,17 @@ impl GenotypeStore {
                 None,
             )),
             GenotypeSourceFormat::Zip => Self::from_zip_file(path),
-            GenotypeSourceFormat::Vcf => Self::from_vcf_file(path),
+            GenotypeSourceFormat::Vcf => Ok(Self::from_vcf_file(path)),
             GenotypeSourceFormat::Cram => Self::from_cram_file(path, options),
         }
     }
 
-    fn from_vcf_file(path: &Path) -> Result<Self, RuntimeError> {
-        let lines = if path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"))
-        {
-            read_bgzf_lines(path)?
-        } else {
-            read_plain_lines(path)?
-        };
-
-        Self::from_vcf_lines(lines)
+    fn from_vcf_file(path: &Path) -> Self {
+        Self {
+            backend: QueryBackend::Vcf(VcfBackend {
+                path: path.to_path_buf(),
+            }),
+        }
     }
 
     fn from_zip_file(path: &Path) -> Result<Self, RuntimeError> {
@@ -265,6 +265,10 @@ impl GenotypeStore {
                 rsid_lookup: true,
                 locus_lookup: true,
             },
+            QueryBackend::Vcf(_) => BackendCapabilities {
+                rsid_lookup: true,
+                locus_lookup: true,
+            },
             QueryBackend::Cram(_) => BackendCapabilities {
                 rsid_lookup: false,
                 locus_lookup: true,
@@ -284,6 +288,7 @@ impl GenotypeStore {
         match &self.backend {
             QueryBackend::RsidMap(map) => map.backend_name(),
             QueryBackend::Delimited(backend) => backend.backend_name(),
+            QueryBackend::Vcf(backend) => backend.backend_name(),
             QueryBackend::Cram(backend) => backend.backend_name(),
         }
     }
@@ -292,6 +297,7 @@ impl GenotypeStore {
         match &self.backend {
             QueryBackend::RsidMap(map) => Ok(map.values.get(rsid).cloned()),
             QueryBackend::Delimited(backend) => backend.get(rsid),
+            QueryBackend::Vcf(backend) => backend.get(rsid),
             QueryBackend::Cram(backend) => backend
                 .lookup_variant(&VariantSpec {
                     rsids: vec![rsid.to_owned()],
@@ -308,6 +314,7 @@ impl GenotypeStore {
         match &self.backend {
             QueryBackend::RsidMap(map) => map.lookup_variant(variant),
             QueryBackend::Delimited(backend) => backend.lookup_variant(variant),
+            QueryBackend::Vcf(backend) => backend.lookup_variant(variant),
             QueryBackend::Cram(backend) => backend.lookup_variant(variant),
         }
     }
@@ -317,6 +324,9 @@ impl GenotypeStore {
         variants: &[VariantSpec],
     ) -> Result<Vec<VariantObservation>, RuntimeError> {
         if let QueryBackend::Delimited(backend) = &self.backend {
+            return backend.lookup_variants(variants);
+        }
+        if let QueryBackend::Vcf(backend) = &self.backend {
             return backend.lookup_variants(variants);
         }
         let mut indexed: Vec<(usize, &VariantSpec)> = variants.iter().enumerate().collect();
@@ -397,6 +407,32 @@ impl DelimitedBackend {
         variants: &[VariantSpec],
     ) -> Result<Vec<VariantObservation>, RuntimeError> {
         scan_delimited_variants(self, variants)
+    }
+}
+
+impl VcfBackend {
+    fn backend_name(&self) -> &'static str {
+        "vcf"
+    }
+
+    fn get(&self, rsid: &str) -> Result<Option<String>, RuntimeError> {
+        let results = self.lookup_variants(&[VariantSpec {
+            rsids: vec![rsid.to_owned()],
+            ..VariantSpec::default()
+        }])?;
+        Ok(results.into_iter().next().and_then(|obs| obs.genotype))
+    }
+
+    fn lookup_variant(&self, variant: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
+        let mut results = self.lookup_variants(std::slice::from_ref(variant))?;
+        Ok(results.pop().unwrap_or_default())
+    }
+
+    fn lookup_variants(
+        &self,
+        variants: &[VariantSpec],
+    ) -> Result<Vec<VariantObservation>, RuntimeError> {
+        scan_vcf_variants(self, variants)
     }
 }
 
@@ -1388,6 +1424,356 @@ fn split_csv_line(line: &str) -> Vec<String> {
     fields
 }
 
+#[derive(Debug, Clone)]
+struct ParsedVcfRow {
+    rsid: Option<String>,
+    chrom: String,
+    position: i64,
+    reference: String,
+    alternates: Vec<String>,
+    genotype: String,
+}
+
+fn scan_vcf_variants(
+    backend: &VcfBackend,
+    variants: &[VariantSpec],
+) -> Result<Vec<VariantObservation>, RuntimeError> {
+    let mut indexed: Vec<(usize, &VariantSpec)> = variants.iter().enumerate().collect();
+    indexed.sort_by_cached_key(|(_, variant)| variant_sort_key(variant));
+
+    let mut probe_lines = Vec::new();
+    let detected_assembly = {
+        let file = File::open(&backend.path).map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to open VCF file {}: {err}",
+                backend.path.display()
+            ))
+        })?;
+        let mut reader: Box<dyn BufRead> = if is_bgzf_path(&backend.path) {
+            Box::new(BufReader::new(bgzf::io::Reader::new(file)))
+        } else {
+            Box::new(BufReader::new(file))
+        };
+
+        let mut buf = String::new();
+        for _ in 0..256 {
+            buf.clear();
+            let bytes = reader.read_line(&mut buf).map_err(|err| {
+                RuntimeError::Io(format!(
+                    "failed to read VCF file {}: {err}",
+                    backend.path.display()
+                ))
+            })?;
+            if bytes == 0 {
+                break;
+            }
+            let line = buf.trim_end_matches(['\n', '\r']).to_owned();
+            let stop = line.starts_with("#CHROM\t");
+            probe_lines.push(line);
+            if stop {
+                break;
+            }
+        }
+
+        detect_vcf_assembly(&backend.path, &probe_lines)
+    };
+
+    let mut rsid_targets: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut coord_targets: HashMap<(String, i64), Vec<usize>> = HashMap::new();
+    let mut results = vec![VariantObservation::default(); variants.len()];
+    let mut unresolved = variants.len();
+
+    for (idx, variant) in &indexed {
+        for rsid in &variant.rsids {
+            rsid_targets.entry(rsid.clone()).or_default().push(*idx);
+        }
+
+        if let Some(locus) = choose_variant_locus_for_assembly(variant, detected_assembly) {
+            let chrom = normalize_chromosome_name(&locus.chrom);
+            coord_targets
+                .entry((chrom.clone(), locus.start))
+                .or_default()
+                .push(*idx);
+            if matches!(
+                variant.kind,
+                Some(VariantKind::Deletion | VariantKind::Insertion | VariantKind::Indel)
+            ) {
+                let anchor = locus.start.saturating_sub(1);
+                coord_targets.entry((chrom, anchor)).or_default().push(*idx);
+            }
+        }
+    }
+
+    let file = File::open(&backend.path).map_err(|err| {
+        RuntimeError::Io(format!(
+            "failed to open VCF file {}: {err}",
+            backend.path.display()
+        ))
+    })?;
+    let mut reader: Box<dyn BufRead> = if is_bgzf_path(&backend.path) {
+        Box::new(BufReader::new(bgzf::io::Reader::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+
+    let mut buf = String::new();
+    loop {
+        buf.clear();
+        let bytes = reader.read_line(&mut buf).map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to read VCF file {}: {err}",
+                backend.path.display()
+            ))
+        })?;
+        if bytes == 0 || unresolved == 0 {
+            break;
+        }
+        if let Some(row) = parse_vcf_record(buf.trim_end_matches(['\n', '\r']))? {
+            resolve_vcf_row(
+                backend,
+                &row,
+                variants,
+                detected_assembly,
+                &rsid_targets,
+                &coord_targets,
+                &mut results,
+                &mut unresolved,
+            );
+        }
+    }
+
+    for (idx, variant) in indexed {
+        if results[idx].genotype.is_none() {
+            results[idx] = VariantObservation {
+                backend: backend.backend_name().to_owned(),
+                assembly: detected_assembly,
+                evidence: vec![format!(
+                    "no matching rsid or locus found for {}",
+                    describe_query(variant)
+                )],
+                ..VariantObservation::default()
+            };
+        }
+    }
+
+    Ok(results)
+}
+
+fn resolve_vcf_row(
+    backend: &VcfBackend,
+    row: &ParsedVcfRow,
+    variants: &[VariantSpec],
+    detected_assembly: Option<Assembly>,
+    rsid_targets: &HashMap<String, Vec<usize>>,
+    coord_targets: &HashMap<(String, i64), Vec<usize>>,
+    results: &mut [VariantObservation],
+    unresolved: &mut usize,
+) {
+    if let Some(rsid) = row.rsid.as_ref()
+        && let Some(target_indexes) = rsid_targets.get(rsid)
+    {
+        for &target_idx in target_indexes {
+            if results[target_idx].genotype.is_none() {
+                results[target_idx] = VariantObservation {
+                    backend: backend.backend_name().to_owned(),
+                    matched_rsid: Some(rsid.clone()),
+                    assembly: detected_assembly,
+                    genotype: Some(row.genotype.clone()),
+                    evidence: vec![format!("resolved by rsid {rsid}")],
+                    ..VariantObservation::default()
+                };
+                *unresolved = (*unresolved).saturating_sub(1);
+            }
+        }
+    }
+
+    if *unresolved == 0 {
+        return;
+    }
+
+    let key = (normalize_chromosome_name(&row.chrom), row.position);
+    if let Some(target_indexes) = coord_targets.get(&key) {
+        for &target_idx in target_indexes {
+            if results[target_idx].genotype.is_none()
+                && vcf_row_matches_variant(row, &variants[target_idx], detected_assembly)
+            {
+                results[target_idx] = VariantObservation {
+                    backend: backend.backend_name().to_owned(),
+                    matched_rsid: row.rsid.clone(),
+                    assembly: detected_assembly,
+                    genotype: Some(row.genotype.clone()),
+                    evidence: vec![format!("resolved by locus {}:{}", row.chrom, row.position)],
+                    ..VariantObservation::default()
+                };
+                *unresolved = (*unresolved).saturating_sub(1);
+            }
+        }
+    }
+}
+
+fn parse_vcf_record(line: &str) -> Result<Option<ParsedVcfRow>, RuntimeError> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return Ok(None);
+    }
+
+    let fields: Vec<&str> = trimmed.split('\t').collect();
+    if fields.len() < 10 {
+        return Ok(None);
+    }
+
+    let chrom = fields[0].trim();
+    let position = fields[1].trim().parse::<i64>().map_err(|err| {
+        RuntimeError::Io(format!("failed to parse VCF position '{}': {err}", fields[1].trim()))
+    })?;
+    let rsid = {
+        let value = fields[2].trim();
+        (!value.is_empty() && value != ".").then(|| value.to_owned())
+    };
+    let reference = fields[3].trim();
+    if reference.is_empty() || reference == "." {
+        return Ok(None);
+    }
+
+    let alternates: Vec<String> = fields[4]
+        .split(',')
+        .map(str::trim)
+        .filter(|alt| !alt.is_empty() && *alt != ".")
+        .map(ToOwned::to_owned)
+        .collect();
+    if alternates.is_empty() {
+        return Ok(None);
+    }
+
+    let genotype = extract_vcf_sample_genotype(fields[8], fields[9], reference, &alternates)
+        .unwrap_or_else(|| "--".to_owned());
+
+    Ok(Some(ParsedVcfRow {
+        rsid,
+        chrom: chrom.to_owned(),
+        position,
+        reference: reference.to_owned(),
+        alternates,
+        genotype,
+    }))
+}
+
+fn extract_vcf_sample_genotype(
+    format_field: &str,
+    sample_field: &str,
+    reference: &str,
+    alternates: &[String],
+) -> Option<String> {
+    let gt_index = format_field
+        .split(':')
+        .position(|field| field.eq_ignore_ascii_case("GT"))?;
+    let sample_parts: Vec<&str> = sample_field.split(':').collect();
+    let sample_gt = sample_parts.get(gt_index).copied().unwrap_or(".");
+    let alternate_refs: Vec<&str> = alternates.iter().map(String::as_str).collect();
+    genotype_from_vcf_gt(sample_gt, reference, &alternate_refs)
+}
+
+fn detect_vcf_assembly(path: &Path, probe_lines: &[String]) -> Option<Assembly> {
+    let combined = probe_lines.join("\n").to_ascii_lowercase();
+    if combined.contains("assembly=b37")
+        || combined.contains("assembly=grch37")
+        || combined.contains("assembly=hg19")
+        || combined.contains("reference=grch37")
+        || combined.contains("reference=hg19")
+    {
+        return Some(Assembly::Grch37);
+    }
+    if combined.contains("assembly=b38")
+        || combined.contains("assembly=grch38")
+        || combined.contains("assembly=hg38")
+        || combined.contains("reference=grch38")
+        || combined.contains("reference=hg38")
+    {
+        return Some(Assembly::Grch38);
+    }
+
+    let lower = path.to_string_lossy().to_ascii_lowercase();
+    if lower.contains("grch37") || lower.contains("hg19") || lower.contains("b37") {
+        Some(Assembly::Grch37)
+    } else if lower.contains("grch38") || lower.contains("hg38") || lower.contains("b38") {
+        Some(Assembly::Grch38)
+    } else {
+        None
+    }
+}
+
+fn choose_variant_locus_for_assembly(
+    variant: &VariantSpec,
+    assembly: Option<Assembly>,
+) -> Option<GenomicLocus> {
+    match assembly {
+        Some(Assembly::Grch37) => variant
+            .grch37
+            .clone()
+            .or_else(|| variant.grch38.clone()),
+        Some(Assembly::Grch38) => variant
+            .grch38
+            .clone()
+            .or_else(|| variant.grch37.clone()),
+        None => variant
+            .grch37
+            .clone()
+            .or_else(|| variant.grch38.clone()),
+    }
+}
+
+fn normalize_chromosome_name(value: &str) -> String {
+    value.trim()
+        .trim_start_matches("chr")
+        .to_ascii_lowercase()
+}
+
+fn vcf_row_matches_variant(
+    row: &ParsedVcfRow,
+    variant: &VariantSpec,
+    assembly: Option<Assembly>,
+) -> bool {
+    let Some(locus) = choose_variant_locus_for_assembly(variant, assembly) else {
+        return false;
+    };
+
+    if normalize_chromosome_name(&row.chrom) != normalize_chromosome_name(&locus.chrom) {
+        return false;
+    }
+
+    match variant.kind.unwrap_or(VariantKind::Other) {
+        VariantKind::Snp => {
+            row.position == locus.start
+                && variant
+                    .reference
+                    .as_ref()
+                    .is_none_or(|reference| reference.eq_ignore_ascii_case(&row.reference))
+                && variant.alternate.as_ref().is_none_or(|alternate| {
+                    row.alternates
+                        .iter()
+                        .any(|candidate| candidate.eq_ignore_ascii_case(alternate))
+                })
+        }
+        VariantKind::Deletion => {
+            let expected_len = variant.deletion_length.unwrap_or(0);
+            row.position == locus.start.saturating_sub(1)
+                && row.alternates.iter().any(|alternate| {
+                    let actual_len = row.reference.len().saturating_sub(alternate.len());
+                    (expected_len == 0 || actual_len == expected_len)
+                        && alternate.len() < row.reference.len()
+                })
+        }
+        VariantKind::Insertion | VariantKind::Indel => row.position == locus.start.saturating_sub(1),
+        VariantKind::Other => row.position == locus.start,
+    }
+}
+
+fn is_bgzf_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"))
+}
+
 fn read_plain_lines(path: &Path) -> Result<Vec<String>, RuntimeError> {
     let file = File::open(path).map_err(|err| {
         RuntimeError::Io(format!(
@@ -1776,17 +2162,6 @@ fn find_header_index(header: &[String], aliases: &[&str]) -> Option<usize> {
             .iter()
             .any(|alias| normalize_name(field) == normalize_name(alias))
     })
-}
-
-fn read_bgzf_lines(path: &Path) -> Result<Vec<String>, RuntimeError> {
-    let file = File::open(path).map_err(|err| {
-        RuntimeError::Io(format!(
-            "failed to open genotype file {}: {err}",
-            path.display()
-        ))
-    })?;
-    let reader = bgzf::io::Reader::new(file);
-    read_lines_from_reader(BufReader::new(reader), path)
 }
 
 fn read_lines_from_reader<R: BufRead>(

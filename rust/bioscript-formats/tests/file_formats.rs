@@ -264,6 +264,77 @@ fn vcf_variant_lookup_ignores_symbolic_non_ref_alt_when_decoding_gt() {
     assert_eq!(store.get("rs9357296").unwrap().as_deref(), Some("AG"));
 }
 
+#[test]
+fn real_world_clean_vcf_supports_locus_lookup_without_rsids() {
+    let test_name = "real_world_clean_vcf_supports_locus_lookup_without_rsids";
+    let Some(clean_vcf) = shared_fixture_or_skip(test_name, "1k-genomes/vcf/NA06985.clean.vcf.gz")
+    else {
+        return;
+    };
+    let Some(original_vcf) = shared_fixture_or_skip(test_name, "1k-genomes/vcf/NA06985.vcf.gz")
+    else {
+        return;
+    };
+
+    let clean_store = GenotypeStore::from_file(&clean_vcf).expect("open cleaned VCF");
+    let original_store = GenotypeStore::from_file(&original_vcf).expect("open original VCF");
+
+    let queries = [
+        (
+            VariantSpec {
+                grch37: Some(bioscript_core::GenomicLocus {
+                    chrom: "1".to_owned(),
+                    start: 12_783,
+                    end: 12_783,
+                }),
+                reference: Some("G".to_owned()),
+                alternate: Some("A".to_owned()),
+                kind: Some(VariantKind::Snp),
+                ..VariantSpec::default()
+            },
+            "GA",
+        ),
+        (
+            VariantSpec {
+                grch37: Some(bioscript_core::GenomicLocus {
+                    chrom: "1".to_owned(),
+                    start: 13_110,
+                    end: 13_110,
+                }),
+                reference: Some("G".to_owned()),
+                alternate: Some("A".to_owned()),
+                kind: Some(VariantKind::Snp),
+                ..VariantSpec::default()
+            },
+            "GA",
+        ),
+        (
+            VariantSpec {
+                rsids: vec!["rs78601809".to_owned()],
+                grch37: Some(bioscript_core::GenomicLocus {
+                    chrom: "1".to_owned(),
+                    start: 15_211,
+                    end: 15_211,
+                }),
+                reference: Some("T".to_owned()),
+                alternate: Some("G".to_owned()),
+                kind: Some(VariantKind::Snp),
+                ..VariantSpec::default()
+            },
+            "GG",
+        ),
+    ];
+
+    for (query, expected_genotype) in queries {
+        let clean = clean_store.lookup_variant(&query).expect("clean lookup");
+        let original = original_store.lookup_variant(&query).expect("original lookup");
+
+        assert_eq!(clean.backend, "vcf");
+        assert_eq!(clean.genotype.as_deref(), Some(expected_genotype));
+        assert_eq!(original.genotype, clean.genotype);
+    }
+}
+
 struct CramFixture {
     cram: PathBuf,
     reference: PathBuf,
