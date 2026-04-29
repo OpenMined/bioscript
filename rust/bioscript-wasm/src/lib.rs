@@ -202,6 +202,10 @@ pub fn compile_variant_yaml_text(name: &str, text: &str) -> Result<String, JsErr
 struct VariantObservationJs {
     name: String,
     backend: String,
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    reference: Option<String>,
+    #[serde(rename = "alt", skip_serializing_if = "Option::is_none")]
+    alternate: Option<String>,
     #[serde(rename = "matchedRsid", skip_serializing_if = "Option::is_none")]
     matched_rsid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -307,6 +311,8 @@ pub fn lookup_cram_variants(
         results.push(VariantObservationJs {
             name: variant.name,
             backend: observation.backend,
+            reference: Some(variant.ref_base),
+            alternate: Some(variant.alt_base),
             matched_rsid: observation.matched_rsid,
             assembly: observation.assembly.map(|a| render_assembly(a).to_owned()),
             genotype: observation.genotype,
@@ -380,6 +386,8 @@ pub fn lookup_vcf_variants(
         results.push(VariantObservationJs {
             name: variant.name,
             backend: observation.backend,
+            reference: Some(variant.ref_base),
+            alternate: Some(variant.alt_base),
             matched_rsid: observation.matched_rsid,
             assembly: observation.assembly.map(|a| render_assembly(a).to_owned()),
             genotype: observation.genotype,
@@ -415,7 +423,7 @@ pub fn lookup_genotype_bytes_variants(
     let rows = variants
         .into_iter()
         .zip(observations)
-        .map(|(variant, observation)| observation_to_js(variant.name, observation))
+        .map(|(variant, observation)| observation_to_js(variant, observation))
         .collect::<Vec<_>>();
     serde_json::to_string(&rows).map_err(|err| JsError::new(&format!("encode results: {err}")))
 }
@@ -479,10 +487,12 @@ fn parse_variant_kind(kind: Option<&str>) -> Option<VariantKind> {
     }
 }
 
-fn observation_to_js(name: String, observation: VariantObservation) -> VariantObservationJs {
+fn observation_to_js(variant: VariantInput, observation: VariantObservation) -> VariantObservationJs {
     VariantObservationJs {
-        name,
+        name: variant.name,
         backend: observation.backend,
+        reference: Some(variant.ref_base),
+        alternate: Some(variant.alt_base),
         matched_rsid: observation.matched_rsid,
         assembly: observation.assembly.map(|a| render_assembly(a).to_owned()),
         genotype: observation.genotype,
