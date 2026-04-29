@@ -835,6 +835,7 @@ fn validate_findings(root: &Value, issues: &mut Vec<Issue>) {
         if let Some(alt) = mapping
             .get(Value::String("alt".to_owned()))
             .and_then(Value::as_str)
+            && alt != "*"
             && !alts.iter().any(|item| item == alt)
         {
             issues.push(Issue {

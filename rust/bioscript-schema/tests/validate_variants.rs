@@ -88,6 +88,9 @@ findings:
   - schema: "bioscript:trait:1.0"
     alt: "A"
     summary: "Example finding"
+  - schema: "bioscript:pgx:1.0"
+    alt: "*"
+    summary: "Example multiallelic finding"
 provenance:
   sources:
     - kind: "database"

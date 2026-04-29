@@ -46,6 +46,9 @@ findings:
     label: "string"
     summary: "string"
     notes: "string"
+  - schema: "bioscript:pgx:1.0"
+    alt: "*"
+    notes: "Finding applies to any alternate allele at this multiallelic locus."
 
 provenance:
   sources:
