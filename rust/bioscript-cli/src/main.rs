@@ -14,8 +14,8 @@ use bioscript_formats::{
 };
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig, StageTiming};
 use bioscript_schema::{
-    PanelManifest, VariantManifest, load_panel_manifest, load_variant_manifest, validate_panels_path,
-    validate_variants_path,
+    PanelManifest, VariantManifest, load_panel_manifest, load_variant_manifest,
+    validate_panels_path, validate_variants_path,
 };
 use monty::ResourceLimits;
 
@@ -234,16 +234,15 @@ fn run_cli() -> Result<(), String> {
 
     if is_yaml_manifest(&script_path) {
         let manifest_started = Instant::now();
-        run_manifest(
-            &runtime_root,
-            &script_path,
-            input_file.as_deref(),
-            output_file.as_deref(),
-            participant_id.as_deref(),
-            trace_report.as_deref(),
-            &loader,
-            &filters,
-        )?;
+        let manifest_options = ManifestRunOptions {
+            input_file: input_file.as_deref(),
+            output_file: output_file.as_deref(),
+            participant_id: participant_id.as_deref(),
+            trace_report: trace_report.as_deref(),
+            loader: &loader,
+            filters: &filters,
+        };
+        run_manifest(&runtime_root, &script_path, &manifest_options)?;
         cli_timings.push(StageTiming {
             stage: "manifest_run".to_owned(),
             duration_ms: manifest_started.elapsed().as_millis(),
@@ -513,20 +512,30 @@ fn is_yaml_manifest(path: &Path) -> bool {
         .is_some_and(|ext| matches!(ext, "yaml" | "yml"))
 }
 
+struct ManifestRunOptions<'a> {
+    input_file: Option<&'a str>,
+    output_file: Option<&'a str>,
+    participant_id: Option<&'a str>,
+    trace_report: Option<&'a Path>,
+    loader: &'a GenotypeLoadOptions,
+    filters: &'a [String],
+}
+
 fn run_manifest(
     runtime_root: &Path,
     manifest_path: &Path,
-    input_file: Option<&str>,
-    output_file: Option<&str>,
-    participant_id: Option<&str>,
-    trace_report: Option<&Path>,
-    loader: &GenotypeLoadOptions,
-    filters: &[String],
+    options: &ManifestRunOptions<'_>,
 ) -> Result<(), String> {
     let schema = manifest_schema(manifest_path)?;
-    let resolved_input = input_file.map(|value| resolve_cli_path(runtime_root, value));
-    let resolved_output = output_file.map(|value| resolve_cli_path_buf(runtime_root, Path::new(value)));
-    let resolved_trace = trace_report.map(|value| resolve_cli_path_buf(runtime_root, value));
+    let resolved_input = options
+        .input_file
+        .map(|value| resolve_cli_path(runtime_root, value));
+    let resolved_output = options
+        .output_file
+        .map(|value| resolve_cli_path_buf(runtime_root, Path::new(value)));
+    let resolved_trace = options
+        .trace_report
+        .map(|value| resolve_cli_path_buf(runtime_root, value));
     match schema.as_str() {
         "bioscript:variant:1.0" | "bioscript:variant" => {
             let manifest = load_variant_manifest(manifest_path)?;
@@ -534,8 +543,8 @@ fn run_manifest(
                 runtime_root,
                 &manifest,
                 resolved_input.as_deref(),
-                participant_id,
-                loader,
+                options.participant_id,
+                options.loader,
             )?;
             write_manifest_outputs(
                 std::slice::from_ref(&row),
@@ -550,9 +559,9 @@ fn run_manifest(
                 runtime_root,
                 &manifest,
                 resolved_input.as_deref(),
-                participant_id,
-                loader,
-                filters,
+                options.participant_id,
+                options.loader,
+                options.filters,
             )?;
             write_manifest_outputs(&rows, resolved_output.as_deref(), resolved_trace.as_deref())?;
             Ok(())
@@ -672,15 +681,21 @@ fn variant_row(
     );
     row.insert(
         "ref_count".to_owned(),
-        observation.ref_count.map_or_else(String::new, |value| value.to_string()),
+        observation
+            .ref_count
+            .map_or_else(String::new, |value| value.to_string()),
     );
     row.insert(
         "alt_count".to_owned(),
-        observation.alt_count.map_or_else(String::new, |value| value.to_string()),
+        observation
+            .alt_count
+            .map_or_else(String::new, |value| value.to_string()),
     );
     row.insert(
         "depth".to_owned(),
-        observation.depth.map_or_else(String::new, |value| value.to_string()),
+        observation
+            .depth
+            .map_or_else(String::new, |value| value.to_string()),
     );
     row.insert("evidence".to_owned(), observation.evidence.join(" | "));
     row
@@ -694,8 +709,9 @@ fn write_manifest_outputs(
     let text = render_rows_as_tsv(rows);
     if let Some(output_file) = output_file {
         if let Some(parent) = output_file.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|err| format!("failed to create output dir {}: {err}", parent.display()))?;
+            fs::create_dir_all(parent).map_err(|err| {
+                format!("failed to create output dir {}: {err}", parent.display())
+            })?;
         }
         fs::write(output_file, &text)
             .map_err(|err| format!("failed to write output {}: {err}", output_file.display()))?;
@@ -705,9 +721,8 @@ fn write_manifest_outputs(
 
     if let Some(trace_report) = trace_report {
         if let Some(parent) = trace_report.parent() {
-            fs::create_dir_all(parent).map_err(|err| {
-                format!("failed to create trace dir {}: {err}", parent.display())
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("failed to create trace dir {}: {err}", parent.display()))?;
         }
         let mut trace = String::from("step\tline\tcode\n");
         for (idx, row) in rows.iter().enumerate() {
@@ -727,7 +742,9 @@ fn write_manifest_outputs(
 }
 
 fn resolve_cli_path(root: &Path, value: &str) -> String {
-    resolve_cli_path_buf(root, Path::new(value)).display().to_string()
+    resolve_cli_path_buf(root, Path::new(value))
+        .display()
+        .to_string()
 }
 
 fn resolve_cli_path_buf(root: &Path, value: &Path) -> PathBuf {
@@ -759,7 +776,12 @@ fn render_rows_as_tsv(rows: &[BTreeMap<String, String>]) -> String {
     for row in rows {
         let line = headers
             .iter()
-            .map(|header| row.get(*header).cloned().unwrap_or_default().replace('\t', " "))
+            .map(|header| {
+                row.get(*header)
+                    .cloned()
+                    .unwrap_or_default()
+                    .replace('\t', " ")
+            })
             .collect::<Vec<_>>()
             .join("\t");
         out.push_str(&line);
@@ -790,10 +812,21 @@ fn resolve_manifest_path(
     let canonical_root = runtime_root
         .canonicalize()
         .map_err(|err| format!("failed to resolve root {}: {err}", runtime_root.display()))?;
+    let canonical_base = base_dir.canonicalize().map_err(|err| {
+        format!(
+            "failed to resolve manifest dir {}: {err}",
+            base_dir.display()
+        )
+    })?;
     let canonical_joined = joined
         .canonicalize()
         .map_err(|err| format!("failed to resolve {}: {err}", joined.display()))?;
-    if !canonical_joined.starts_with(&canonical_root) {
+    let boundary = if canonical_base.starts_with(&canonical_root) {
+        &canonical_root
+    } else {
+        &canonical_base
+    };
+    if !canonical_joined.starts_with(boundary) {
         return Err(format!(
             "manifest member path escapes bioscript root: {}",
             canonical_joined.display()

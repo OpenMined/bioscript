@@ -166,8 +166,48 @@ pub fn validate_panels_path(path: &Path) -> Result<ValidationReport, String> {
 /// manifest.
 pub fn load_variant_manifest(path: &Path) -> Result<VariantManifest, String> {
     let value = load_yaml(path)?;
+    variant_manifest_from_root(path, &value)
+}
+
+/// Load a single variant manifest from YAML text.
+///
+/// # Errors
+///
+/// Returns an error when the text does not parse or is not a valid variant
+/// manifest.
+pub fn load_variant_manifest_text(name: &str, text: &str) -> Result<VariantManifest, String> {
+    let value: Value =
+        serde_yaml::from_str(text).map_err(|err| format!("failed to parse YAML {name}: {err}"))?;
+    variant_manifest_from_root(Path::new(name), &value)
+}
+
+/// Compile a variant manifest from YAML text for lookup execution.
+///
+/// This validates the execution-critical fields only: identity, identifiers,
+/// coordinates, and alleles. Full manifest validation still reports metadata
+/// issues such as missing finding schemas, but those do not block local lookup.
+///
+/// # Errors
+///
+/// Returns an error when the text does not parse or the execution-critical
+/// fields are invalid.
+pub fn load_variant_manifest_text_for_lookup(
+    name: &str,
+    text: &str,
+) -> Result<VariantManifest, String> {
+    let value: Value =
+        serde_yaml::from_str(text).map_err(|err| format!("failed to parse YAML {name}: {err}"))?;
+    let path = Path::new(name);
     let mut issues = Vec::new();
-    validate_variant_root(&value, &mut issues);
+    validate_schema_and_identity(
+        &value,
+        "bioscript:variant:1.0",
+        Some("bioscript:variant"),
+        &mut issues,
+    );
+    validate_identifiers(&value, &mut issues);
+    validate_coordinates(&value, &mut issues);
+    validate_alleles(&value, &mut issues);
     if issues.iter().any(|issue| issue.severity == Severity::Error) {
         return Err(render_single_manifest_errors(path, &issues));
     }
@@ -177,6 +217,21 @@ pub fn load_variant_manifest(path: &Path) -> Result<VariantManifest, String> {
         name: required_non_empty_string(&value, &["name"])?,
         tags: seq_of_strings(&value, &["tags"]).unwrap_or_default(),
         spec: variant_spec_from_root(&value)?,
+    })
+}
+
+fn variant_manifest_from_root(path: &Path, value: &Value) -> Result<VariantManifest, String> {
+    let mut issues = Vec::new();
+    validate_variant_root(value, &mut issues);
+    if issues.iter().any(|issue| issue.severity == Severity::Error) {
+        return Err(render_single_manifest_errors(path, &issues));
+    }
+
+    Ok(VariantManifest {
+        path: path.to_path_buf(),
+        name: required_non_empty_string(value, &["name"])?,
+        tags: seq_of_strings(value, &["tags"]).unwrap_or_default(),
+        spec: variant_spec_from_root(value)?,
     })
 }
 
@@ -258,10 +313,11 @@ fn collect_yaml_files_recursive(path: &Path, files: &mut Vec<PathBuf>) -> Result
             collect_yaml_files_recursive(&entry_path, files)?;
             continue;
         }
-        let Some(file_name) = entry_path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if file_name.ends_with(".yaml") || file_name.ends_with(".yml") {
+        if entry_path.extension().is_some_and(|extension| {
+            ["yaml", "yml"]
+                .iter()
+                .any(|item| extension.eq_ignore_ascii_case(item))
+        }) {
             files.push(entry_path);
         }
     }
@@ -384,9 +440,7 @@ fn validate_schema_and_identity(
         issues.push(Issue {
             severity: Severity::Warning,
             path: "schema".to_owned(),
-            message: format!(
-                "legacy schema value '{legacy_schema}'; prefer '{canonical_schema}'"
-            ),
+            message: format!("legacy schema value '{legacy_schema}'; prefer '{canonical_schema}'"),
         });
     }
     require_const(root, &["version"], "1.0", issues);
@@ -541,7 +595,7 @@ fn validate_coordinates(root: &Value, issues: &mut Vec<Issue>) {
             });
             continue;
         }
-        if !has_pos && !(has_start && has_end) {
+        if !(has_pos || has_start && has_end) {
             issues.push(Issue {
                 severity: Severity::Error,
                 path: format!("coordinates.{assembly}"),
@@ -551,64 +605,72 @@ fn validate_coordinates(root: &Value, issues: &mut Vec<Issue>) {
         }
 
         if has_pos {
-            if let Some(pos) = i64_at_mapping(coord, "pos") {
-                if pos < 1 {
-                    issues.push(Issue {
-                        severity: Severity::Error,
-                        path: format!("coordinates.{assembly}.pos"),
-                        message: "expected integer >= 1".to_owned(),
-                    });
-                }
-            } else {
-                issues.push(Issue {
-                    severity: Severity::Error,
-                    path: format!("coordinates.{assembly}.pos"),
-                    message: "expected integer".to_owned(),
-                });
-            }
+            validate_coordinate_pos(coord, assembly, issues);
         } else {
-            let start = i64_at_mapping(coord, "start");
-            let end = i64_at_mapping(coord, "end");
-            match (start, end) {
-                (Some(start), Some(end)) => {
-                    if start < 1 {
-                        issues.push(Issue {
-                            severity: Severity::Error,
-                            path: format!("coordinates.{assembly}.start"),
-                            message: "expected integer >= 1".to_owned(),
-                        });
-                    }
-                    if end < 1 {
-                        issues.push(Issue {
-                            severity: Severity::Error,
-                            path: format!("coordinates.{assembly}.end"),
-                            message: "expected integer >= 1".to_owned(),
-                        });
-                    }
-                    if end < start {
-                        issues.push(Issue {
-                            severity: Severity::Error,
-                            path: format!("coordinates.{assembly}.end"),
-                            message: "expected end >= start".to_owned(),
-                        });
-                    }
-                    if start == end {
-                        issues.push(Issue {
-                            severity: Severity::Warning,
-                            path: format!("coordinates.{assembly}"),
-                            message: "single-position coordinate uses start/end; prefer pos".to_owned(),
-                        });
-                    }
-                }
-                _ => {
-                    issues.push(Issue {
-                        severity: Severity::Error,
-                        path: format!("coordinates.{assembly}"),
-                        message: "expected integer start/end".to_owned(),
-                    });
-                }
-            }
+            validate_coordinate_range(coord, assembly, issues);
         }
+    }
+}
+
+fn validate_coordinate_pos(coord: &Mapping, assembly: &str, issues: &mut Vec<Issue>) {
+    if let Some(pos) = i64_at_mapping(coord, "pos") {
+        if pos < 1 {
+            issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("coordinates.{assembly}.pos"),
+                message: "expected integer >= 1".to_owned(),
+            });
+        }
+    } else {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("coordinates.{assembly}.pos"),
+            message: "expected integer".to_owned(),
+        });
+    }
+}
+
+fn validate_coordinate_range(coord: &Mapping, assembly: &str, issues: &mut Vec<Issue>) {
+    let start = i64_at_mapping(coord, "start");
+    let end = i64_at_mapping(coord, "end");
+    match (start, end) {
+        (Some(start), Some(end)) => validate_coordinate_range_values(start, end, assembly, issues),
+        _ => issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("coordinates.{assembly}"),
+            message: "expected integer start/end".to_owned(),
+        }),
+    }
+}
+
+fn validate_coordinate_range_values(start: i64, end: i64, assembly: &str, issues: &mut Vec<Issue>) {
+    if start < 1 {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("coordinates.{assembly}.start"),
+            message: "expected integer >= 1".to_owned(),
+        });
+    }
+    if end < 1 {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("coordinates.{assembly}.end"),
+            message: "expected integer >= 1".to_owned(),
+        });
+    }
+    if end < start {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("coordinates.{assembly}.end"),
+            message: "expected end >= start".to_owned(),
+        });
+    }
+    if start == end {
+        issues.push(Issue {
+            severity: Severity::Warning,
+            path: format!("coordinates.{assembly}"),
+            message: "single-position coordinate uses start/end; prefer pos".to_owned(),
+        });
     }
 }
 
@@ -686,39 +748,52 @@ fn validate_alleles(root: &Value, issues: &mut Vec<Issue>) {
             });
             continue;
         }
-        if alt == "I" || alt == "D" {
-            issues.push(Issue {
-                severity: Severity::Error,
-                path: format!("alleles.alts[{idx}]"),
-                message: "symbolic I/D alleles are not allowed in stored YAML; use biological alleles".to_owned(),
-            });
-        }
         alts.push(alt.to_owned());
     }
+    validate_symbolic_alleles(&reference, &alts, issues);
+    validate_snv_alleles(&kind, &reference, &alts, issues);
+}
+
+fn validate_symbolic_alleles(reference: &str, alts: &[String], issues: &mut Vec<Issue>) {
     if reference == "I" || reference == "D" {
         issues.push(Issue {
             severity: Severity::Error,
             path: "alleles.ref".to_owned(),
-            message: "symbolic I/D alleles are not allowed in stored YAML; use biological alleles".to_owned(),
+            message: "symbolic I/D alleles are not allowed in stored YAML; use biological alleles"
+                .to_owned(),
         });
     }
-
-    if kind == "snv" {
-        if !is_base_allele(&reference) {
+    for (idx, alt) in alts.iter().enumerate() {
+        if alt == "I" || alt == "D" {
             issues.push(Issue {
                 severity: Severity::Error,
-                path: "alleles.ref".to_owned(),
-                message: "snv ref must be one of A/C/G/T".to_owned(),
+                path: format!("alleles.alts[{idx}]"),
+                message:
+                    "symbolic I/D alleles are not allowed in stored YAML; use biological alleles"
+                        .to_owned(),
             });
         }
-        for (idx, alt) in alts.iter().enumerate() {
-            if !is_base_allele(alt) {
-                issues.push(Issue {
-                    severity: Severity::Error,
-                    path: format!("alleles.alts[{idx}]"),
-                    message: "snv alt must be one of A/C/G/T".to_owned(),
-                });
-            }
+    }
+}
+
+fn validate_snv_alleles(kind: &str, reference: &str, alts: &[String], issues: &mut Vec<Issue>) {
+    if kind != "snv" {
+        return;
+    }
+    if !is_base_allele(reference) {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: "alleles.ref".to_owned(),
+            message: "snv ref must be one of A/C/G/T".to_owned(),
+        });
+    }
+    for (idx, alt) in alts.iter().enumerate() {
+        if !is_base_allele(alt) {
+            issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("alleles.alts[{idx}]"),
+                message: "snv alt must be one of A/C/G/T".to_owned(),
+            });
         }
     }
 }
@@ -823,7 +898,12 @@ fn validate_provenance(root: &Value, issues: &mut Vec<Issue>) {
             .get(Value::String("url".to_owned()))
             .and_then(Value::as_str)
         {
-            validate_url_string(url, &format!("provenance.sources[{idx}].url"), false, issues);
+            validate_url_string(
+                url,
+                &format!("provenance.sources[{idx}].url"),
+                false,
+                issues,
+            );
         }
     }
 }
@@ -910,14 +990,13 @@ fn validate_downloads(root: &Value, issues: &mut Vec<Issue>) {
         if let Some(id) = mapping
             .get(Value::String("id".to_owned()))
             .and_then(Value::as_str)
+            && !ids.insert(id.to_owned())
         {
-            if !ids.insert(id.to_owned()) {
-                issues.push(Issue {
-                    severity: Severity::Error,
-                    path: format!("downloads[{idx}].id"),
-                    message: format!("duplicate download id '{id}'"),
-                });
-            }
+            issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("downloads[{idx}].id"),
+                message: format!("duplicate download id '{id}'"),
+            });
         }
         if let Some(sha) = mapping
             .get(Value::String("sha256".to_owned()))
@@ -974,17 +1053,7 @@ fn validate_panel_members(root: &Value, issues: &mut Vec<Issue>) {
         return;
     }
 
-    let download_ids: BTreeSet<String> = value_at(root, &["downloads"])
-        .and_then(Value::as_sequence)
-        .into_iter()
-        .flatten()
-        .filter_map(|item| {
-            item.as_mapping()?
-                .get(Value::String("id".to_owned()))
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        })
-        .collect();
+    let download_ids = panel_download_ids(root);
 
     for (idx, item) in members.iter().enumerate() {
         let Some(mapping) = item.as_mapping() else {
@@ -995,82 +1064,125 @@ fn validate_panel_members(root: &Value, issues: &mut Vec<Issue>) {
             });
             continue;
         };
-        let kind = mapping
-            .get(Value::String("kind".to_owned()))
-            .and_then(Value::as_str);
-        match kind {
-            Some("variant") => {}
-            Some(other) => issues.push(Issue {
-                severity: Severity::Error,
-                path: format!("members[{idx}].kind"),
-                message: format!("unsupported member kind '{other}'; panel support is currently variant-only"),
-            }),
-            None => issues.push(Issue {
-                severity: Severity::Error,
-                path: format!("members[{idx}].kind"),
-                message: "missing required field".to_owned(),
-            }),
-        }
+        validate_panel_member(idx, mapping, &download_ids, issues);
+    }
+}
 
-        let path_value = mapping
-            .get(Value::String("path".to_owned()))
-            .and_then(Value::as_str);
-        let download_value = mapping
-            .get(Value::String("download".to_owned()))
-            .and_then(Value::as_str);
-        if path_value.is_some() == download_value.is_some() {
-            issues.push(Issue {
-                severity: Severity::Error,
-                path: format!("members[{idx}]"),
-                message: "expected exactly one of path or download".to_owned(),
-            });
-        }
-        if let Some(path) = path_value
-            && path.trim().is_empty()
-        {
-            issues.push(Issue {
-                severity: Severity::Error,
-                path: format!("members[{idx}].path"),
-                message: "empty string".to_owned(),
-            });
-        }
-        if let Some(download) = download_value {
-            if download.trim().is_empty() {
-                issues.push(Issue {
-                    severity: Severity::Error,
-                    path: format!("members[{idx}].download"),
-                    message: "empty string".to_owned(),
-                });
-            } else if !download_ids.contains(download) {
-                issues.push(Issue {
-                    severity: Severity::Error,
-                    path: format!("members[{idx}].download"),
-                    message: format!("unknown download id '{download}'"),
-                });
-            }
-        }
-        if let Some(version) = mapping
-            .get(Value::String("version".to_owned()))
-            .and_then(Value::as_str)
-            && version.trim().is_empty()
-        {
-            issues.push(Issue {
-                severity: Severity::Error,
-                path: format!("members[{idx}].version"),
-                message: "empty string".to_owned(),
-            });
-        }
-        if let Some(sha) = mapping
-            .get(Value::String("sha256".to_owned()))
-            .and_then(Value::as_str)
-            && !is_sha256(sha)
-        {
-            issues.push(Issue {
-                severity: Severity::Error,
-                path: format!("members[{idx}].sha256"),
-                message: "expected 64 lowercase hex characters".to_owned(),
-            });
-        }
+fn panel_download_ids(root: &Value) -> BTreeSet<String> {
+    value_at(root, &["downloads"])
+        .and_then(Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            item.as_mapping()?
+                .get(Value::String("id".to_owned()))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .collect()
+}
+
+fn validate_panel_member(
+    idx: usize,
+    mapping: &Mapping,
+    download_ids: &BTreeSet<String>,
+    issues: &mut Vec<Issue>,
+) {
+    let kind = mapping
+        .get(Value::String("kind".to_owned()))
+        .and_then(Value::as_str);
+    match kind {
+        Some("variant") => {}
+        Some(other) => issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("members[{idx}].kind"),
+            message: format!(
+                "unsupported member kind '{other}'; panel support is currently variant-only"
+            ),
+        }),
+        None => issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("members[{idx}].kind"),
+            message: "missing required field".to_owned(),
+        }),
+    }
+
+    let path_value = mapping
+        .get(Value::String("path".to_owned()))
+        .and_then(Value::as_str);
+    let download_value = mapping
+        .get(Value::String("download".to_owned()))
+        .and_then(Value::as_str);
+    if path_value.is_some() == download_value.is_some() {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("members[{idx}]"),
+            message: "expected exactly one of path or download".to_owned(),
+        });
+    }
+    validate_panel_member_path(idx, path_value, issues);
+    validate_panel_member_download(idx, download_value, download_ids, issues);
+    validate_panel_member_metadata(idx, mapping, issues);
+}
+
+fn validate_panel_member_path(idx: usize, path_value: Option<&str>, issues: &mut Vec<Issue>) {
+    if let Some(path) = path_value
+        && path.trim().is_empty()
+    {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("members[{idx}].path"),
+            message: "empty string".to_owned(),
+        });
+    }
+}
+
+fn validate_panel_member_download(
+    idx: usize,
+    download_value: Option<&str>,
+    download_ids: &BTreeSet<String>,
+    issues: &mut Vec<Issue>,
+) {
+    let Some(download) = download_value else {
+        return;
+    };
+    if download.trim().is_empty() {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("members[{idx}].download"),
+            message: "empty string".to_owned(),
+        });
+    } else if !download_ids.contains(download) {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("members[{idx}].download"),
+            message: format!("unknown download id '{download}'"),
+        });
+    }
+}
+
+fn validate_panel_member_metadata(idx: usize, mapping: &Mapping, issues: &mut Vec<Issue>) {
+    if let Some(version) = mapping
+        .get(Value::String("version".to_owned()))
+        .and_then(Value::as_str)
+        && version.trim().is_empty()
+    {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("members[{idx}].version"),
+            message: "empty string".to_owned(),
+        });
+    }
+    if let Some(sha) = mapping
+        .get(Value::String("sha256".to_owned()))
+        .and_then(Value::as_str)
+        && !is_sha256(sha)
+    {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("members[{idx}].sha256"),
+            message: "expected 64 lowercase hex characters".to_owned(),
+        });
     }
 }
 
@@ -1079,11 +1191,11 @@ fn variant_spec_from_root(root: &Value) -> Result<VariantSpec, String> {
     let grch37 = locus_from_root(root, "grch37")?;
     let grch38 = locus_from_root(root, "grch38")?;
     let reference = scalar_at(root, &["alleles", "ref"]);
-    let alternate = seq_of_strings(root, &["alleles", "alts"])
-        .and_then(|alts| alts.first().cloned());
+    let alternate =
+        seq_of_strings(root, &["alleles", "alts"]).and_then(|alts| alts.first().cloned());
     let deletion_length = value_at(root, &["alleles", "deletion_length"])
         .and_then(Value::as_u64)
-        .map(|value| value as usize);
+        .and_then(|value| usize::try_from(value).ok());
     let motifs = seq_of_strings(root, &["alleles", "motifs"]).unwrap_or_default();
     let kind = scalar_at(root, &["alleles", "kind"]).map(|kind| match kind.as_str() {
         "snv" => VariantKind::Snp,
@@ -1269,7 +1381,10 @@ fn is_rsid(value: &str) -> bool {
 }
 
 fn is_sha256(value: &str) -> bool {
-    value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+    value.len() == 64
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
 }
 
 fn i64_at_mapping(mapping: &Mapping, key: &str) -> Option<i64> {
@@ -1287,7 +1402,11 @@ fn required_non_empty_string(root: &Value, path: &[&str]) -> Result<String, Stri
 fn render_single_manifest_errors(path: &Path, issues: &[Issue]) -> String {
     let mut out = format!("invalid manifest {}:\n", path.display());
     for issue in issues {
-        let _ = writeln!(out, "  - [{}] {}: {}", issue.severity, issue.path, issue.message);
+        let _ = writeln!(
+            out,
+            "  - [{}] {}: {}",
+            issue.severity, issue.path, issue.message
+        );
     }
     out
 }
@@ -1295,7 +1414,8 @@ fn render_single_manifest_errors(path: &Path, issues: &[Issue]) -> String {
 fn load_yaml(path: &Path) -> Result<Value, String> {
     let text = fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-    serde_yaml::from_str(&text).map_err(|err| format!("failed to parse YAML {}: {err}", path.display()))
+    serde_yaml::from_str(&text)
+        .map_err(|err| format!("failed to parse YAML {}: {err}", path.display()))
 }
 
 fn require_const(root: &Value, path: &[&str], expected: &str, issues: &mut Vec<Issue>) {

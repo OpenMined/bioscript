@@ -327,7 +327,9 @@ fn real_world_clean_vcf_supports_locus_lookup_without_rsids() {
 
     for (query, expected_genotype) in queries {
         let clean = clean_store.lookup_variant(&query).expect("clean lookup");
-        let original = original_store.lookup_variant(&query).expect("original lookup");
+        let original = original_store
+            .lookup_variant(&query)
+            .expect("original lookup");
 
         assert_eq!(clean.backend, "vcf");
         assert_eq!(clean.genotype.as_deref(), Some(expected_genotype));
