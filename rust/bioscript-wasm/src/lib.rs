@@ -20,9 +20,13 @@ use std::{io::BufReader, path::PathBuf};
 
 use bioscript_core::GenomicLocus;
 use bioscript_formats::{
-    DetectedKind, DetectionConfidence, FileContainer, FileInspection, InspectOptions,
-    SourceMetadata, alignment, inspect_bytes as inspect_bytes_rs, observe_cram_snp_with_reader,
-    observe_vcf_snp_with_reader,
+    alignment, inspect_bytes as inspect_bytes_rs, observe_cram_snp_with_reader,
+    observe_vcf_snp_with_reader, DetectedKind, DetectionConfidence, FileContainer, FileInspection,
+    InspectOptions, SourceMetadata,
+};
+use bioscript_schema::{
+    load_variant_manifest_text_for_lookup,
+    resolve_remote_resource_text as resolve_remote_resource_text_rs,
 };
 use noodles::csi as noodles_csi;
 use serde::{Deserialize, Serialize};
@@ -46,7 +50,11 @@ struct InspectOptionsJs {
 /// Classify bytes as a known genomic file. Mirrors `bioscript-formats::inspect::inspect_bytes`.
 /// Returns JSON matching the `Inspection` shape the app already uses.
 #[wasm_bindgen(js_name = inspectBytes)]
-pub fn inspect_bytes(name: &str, bytes: &[u8], options_json: Option<String>) -> Result<String, JsError> {
+pub fn inspect_bytes(
+    name: &str,
+    bytes: &[u8],
+    options_json: Option<String>,
+) -> Result<String, JsError> {
     let options_js: InspectOptionsJs = match options_json {
         Some(text) if !text.is_empty() => serde_json::from_str(&text)
             .map_err(|err| JsError::new(&format!("invalid InspectOptions JSON: {err}")))?,
@@ -66,12 +74,34 @@ pub fn inspect_bytes(name: &str, bytes: &[u8], options_json: Option<String>) -> 
         .map_err(|err| JsError::new(&format!("failed to encode response: {err}")))
 }
 
+/// Classify a fetched remote resource and return dependency requirements.
+///
+/// Network access stays in the host app so each platform can prompt before
+/// fetching. The schema/type/dependency logic lives here so web, mobile,
+/// desktop, and CLI share one implementation.
+#[wasm_bindgen(js_name = resolveRemoteResourceText)]
+pub fn resolve_remote_resource_text(
+    source_url: &str,
+    name: &str,
+    text: &str,
+) -> Result<String, JsError> {
+    let resolved = resolve_remote_resource_text_rs(source_url, name, text)
+        .map_err(|err| JsError::new(&format!("resolve remote resource failed: {err}")))?;
+    serde_json::to_string(&resolved)
+        .map_err(|err| JsError::new(&format!("failed to encode response: {err}")))
+}
+
 #[derive(Deserialize)]
 struct VariantInput {
     name: String,
     chrom: String,
-    // 1-based genomic position of the SNP.
-    pos: i64,
+    // 1-based genomic interval. `pos` is accepted for older callers.
+    #[serde(default)]
+    pos: Option<i64>,
+    #[serde(default)]
+    start: Option<i64>,
+    #[serde(default)]
+    end: Option<i64>,
     #[serde(rename = "ref")]
     ref_base: String,
     #[serde(rename = "alt")]
@@ -80,6 +110,89 @@ struct VariantInput {
     rsid: Option<String>,
     #[serde(default)]
     assembly: Option<String>,
+}
+
+#[derive(Serialize)]
+struct CompiledVariantSpecJs {
+    name: String,
+    chrom: String,
+    start: i64,
+    end: i64,
+    #[serde(rename = "ref")]
+    ref_base: String,
+    #[serde(rename = "alt")]
+    alt_base: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rsid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assembly: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+}
+
+#[wasm_bindgen(js_name = compileVariantYamlText)]
+pub fn compile_variant_yaml_text(name: &str, text: &str) -> Result<String, JsError> {
+    let manifest = load_variant_manifest_text_for_lookup(name, text)
+        .map_err(|err| JsError::new(&format!("compile variant YAML failed: {err}")))?;
+    let spec = manifest.spec;
+    let ref_base = spec
+        .reference
+        .clone()
+        .ok_or_else(|| JsError::new(&format!("variant {}: alleles.ref missing", manifest.name)))?;
+    let alt_base = spec
+        .alternate
+        .clone()
+        .ok_or_else(|| JsError::new(&format!("variant {}: alleles.alts missing", manifest.name)))?;
+    let rsid = spec.rsids.first().cloned();
+    let kind = spec.kind.map(|kind| {
+        match kind {
+            bioscript_core::VariantKind::Snp => "snv",
+            bioscript_core::VariantKind::Insertion => "insertion",
+            bioscript_core::VariantKind::Deletion => "deletion",
+            bioscript_core::VariantKind::Indel => "indel",
+            bioscript_core::VariantKind::Other => "other",
+        }
+        .to_owned()
+    });
+    let mut out = Vec::new();
+    if let Some(locus) = spec.grch38 {
+        out.push(CompiledVariantSpecJs {
+            name: manifest.name.clone(),
+            chrom: locus.chrom,
+            start: locus.start,
+            end: locus.end,
+            ref_base: ref_base.clone(),
+            alt_base: alt_base.clone(),
+            rsid: rsid.clone(),
+            assembly: Some("grch38".to_owned()),
+            kind: kind.clone(),
+        });
+    }
+    if let Some(locus) = spec.grch37 {
+        out.push(CompiledVariantSpecJs {
+            name: if out.is_empty() {
+                manifest.name.clone()
+            } else {
+                format!("{}_grch37", manifest.name)
+            },
+            chrom: locus.chrom,
+            start: locus.start,
+            end: locus.end,
+            ref_base,
+            alt_base,
+            rsid,
+            assembly: Some("grch37".to_owned()),
+            kind,
+        });
+    }
+    if out.is_empty() {
+        return Err(JsError::new(&format!(
+            "variant {} has no coordinates",
+            manifest.name
+        )));
+    }
+    serde_json::to_string(&out)
+        .map_err(|err| JsError::new(&format!("failed to encode compiled variant: {err}")))
 }
 
 #[derive(Serialize)]
@@ -131,12 +244,9 @@ pub fn lookup_cram_variants(
     let repository = alignment::build_reference_repository_from_readers(fasta_reader, fai_index);
 
     let cram_reader = JsReader::new(cram_read_at, cram_len as u64, "cram");
-    let mut indexed = alignment::build_cram_indexed_reader_from_reader(
-        cram_reader,
-        crai_index,
-        repository,
-    )
-    .map_err(|err| JsError::new(&format!("build cram reader: {err:?}")))?;
+    let mut indexed =
+        alignment::build_cram_indexed_reader_from_reader(cram_reader, crai_index, repository)
+            .map_err(|err| JsError::new(&format!("build cram reader: {err:?}")))?;
 
     let variants: Vec<VariantInput> = serde_json::from_str(variants_json)
         .map_err(|err| JsError::new(&format!("parse variantsJson: {err}")))?;
@@ -153,14 +263,16 @@ pub fn lookup_cram_variants(
             .chars()
             .next()
             .ok_or_else(|| JsError::new(&format!("variant {}: empty alt", variant.name)))?;
-        let assembly = variant
-            .assembly
-            .as_deref()
-            .and_then(parse_assembly_str);
+        let assembly = variant.assembly.as_deref().and_then(parse_assembly_str);
+        let start = variant
+            .start
+            .or(variant.pos)
+            .ok_or_else(|| JsError::new(&format!("variant {}: start/pos missing", variant.name)))?;
+        let end = variant.end.unwrap_or(start);
         let locus = GenomicLocus {
             chrom: variant.chrom.clone(),
-            start: variant.pos,
-            end: variant.pos,
+            start,
+            end,
         };
         let observation = observe_cram_snp_with_reader(
             &mut indexed,
@@ -223,14 +335,16 @@ pub fn lookup_vcf_variants(
             .chars()
             .next()
             .ok_or_else(|| JsError::new(&format!("variant {}: empty alt", variant.name)))?;
-        let assembly = variant
-            .assembly
-            .as_deref()
-            .and_then(parse_assembly_str);
+        let assembly = variant.assembly.as_deref().and_then(parse_assembly_str);
+        let start = variant
+            .start
+            .or(variant.pos)
+            .ok_or_else(|| JsError::new(&format!("variant {}: start/pos missing", variant.name)))?;
+        let end = variant.end.unwrap_or(start);
         let locus = GenomicLocus {
             chrom: variant.chrom.clone(),
-            start: variant.pos,
-            end: variant.pos,
+            start,
+            end,
         };
         let observation = observe_vcf_snp_with_reader(
             &mut indexed,
