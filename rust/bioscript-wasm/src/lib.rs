@@ -20,7 +20,8 @@ use std::{io::BufReader, path::PathBuf};
 
 use bioscript_core::{GenomicLocus, VariantKind, VariantObservation, VariantSpec};
 use bioscript_formats::{
-    alignment, inspect_bytes as inspect_bytes_rs, observe_cram_snp_with_reader,
+    alignment, inspect_bytes as inspect_bytes_rs, observe_cram_indel_with_reader,
+    observe_cram_snp_with_reader,
     observe_vcf_snp_with_reader, DetectedKind, DetectionConfidence, FileContainer, FileInspection,
     GenotypeStore, InspectOptions, SourceMetadata,
 };
@@ -255,17 +256,6 @@ pub fn lookup_cram_variants(
 
     let mut results = Vec::with_capacity(variants.len());
     for variant in variants {
-        ensure_snp_variant(&variant)?;
-        let ref_char = variant
-            .ref_base
-            .chars()
-            .next()
-            .ok_or_else(|| JsError::new(&format!("variant {}: empty ref", variant.name)))?;
-        let alt_char = variant
-            .alt_base
-            .chars()
-            .next()
-            .ok_or_else(|| JsError::new(&format!("variant {}: empty alt", variant.name)))?;
         let assembly = variant.assembly.as_deref().and_then(parse_assembly_str);
         let start = variant
             .start
@@ -277,15 +267,42 @@ pub fn lookup_cram_variants(
             start,
             end,
         };
-        let observation = observe_cram_snp_with_reader(
-            &mut indexed,
-            &variant.name,
-            &locus,
-            ref_char,
-            alt_char,
-            variant.rsid.clone(),
-            assembly,
-        )
+        let kind = parse_variant_kind(variant.kind.as_deref()).unwrap_or(VariantKind::Snp);
+        let observation = match kind {
+            VariantKind::Snp => {
+                ensure_single_base_variant(&variant)?;
+                let ref_char = variant.ref_base.chars().next().ok_or_else(|| {
+                    JsError::new(&format!("variant {}: empty ref", variant.name))
+                })?;
+                let alt_char = variant.alt_base.chars().next().ok_or_else(|| {
+                    JsError::new(&format!("variant {}: empty alt", variant.name))
+                })?;
+                observe_cram_snp_with_reader(
+                    &mut indexed,
+                    &variant.name,
+                    &locus,
+                    ref_char,
+                    alt_char,
+                    variant.rsid.clone(),
+                    assembly,
+                )
+            }
+            VariantKind::Insertion | VariantKind::Indel => observe_cram_indel_with_reader(
+                &mut indexed,
+                &variant.name,
+                &locus,
+                &variant.ref_base,
+                &variant.alt_base,
+                variant.rsid.clone(),
+                assembly,
+            ),
+            other => {
+                return Err(JsError::new(&format!(
+                    "variant {} has unsupported kind {:?} for web CRAM lookup",
+                    variant.name, other
+                )));
+            }
+        }
         .map_err(|err| JsError::new(&format!("lookup {}: {err:?}", variant.name)))?;
         results.push(VariantObservationJs {
             name: variant.name,
@@ -328,7 +345,7 @@ pub fn lookup_vcf_variants(
 
     let mut results = Vec::with_capacity(variants.len());
     for variant in variants {
-        ensure_snp_variant(&variant)?;
+        ensure_single_base_variant(&variant)?;
         let ref_char = variant
             .ref_base
             .chars()
@@ -403,7 +420,7 @@ pub fn lookup_genotype_bytes_variants(
     serde_json::to_string(&rows).map_err(|err| JsError::new(&format!("encode results: {err}")))
 }
 
-fn ensure_snp_variant(variant: &VariantInput) -> Result<(), JsError> {
+fn ensure_single_base_variant(variant: &VariantInput) -> Result<(), JsError> {
     let kind = variant.kind.as_deref().unwrap_or("snv").to_ascii_lowercase();
     let is_snp_kind = matches!(kind.as_str(), "snp" | "snv" | "variant" | "");
     if !is_snp_kind || variant.ref_base.chars().count() != 1 || variant.alt_base.chars().count() != 1 {
