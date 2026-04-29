@@ -1191,8 +1191,7 @@ fn variant_spec_from_root(root: &Value) -> Result<VariantSpec, String> {
     let grch37 = locus_from_root(root, "grch37")?;
     let grch38 = locus_from_root(root, "grch38")?;
     let reference = scalar_at(root, &["alleles", "ref"]);
-    let alternate =
-        seq_of_strings(root, &["alleles", "alts"]).and_then(|alts| alts.first().cloned());
+    let alternate = preferred_alternate_from_root(root);
     let deletion_length = value_at(root, &["alleles", "deletion_length"])
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok());
@@ -1215,6 +1214,34 @@ fn variant_spec_from_root(root: &Value) -> Result<VariantSpec, String> {
         deletion_length,
         motifs,
     })
+}
+
+fn preferred_alternate_from_root(root: &Value) -> Option<String> {
+    let alts = seq_of_strings(root, &["alleles", "alts"])?;
+    if let Some(finding_alt) = first_specific_finding_alt(root)
+        && alts.iter().any(|alt| alt == &finding_alt)
+    {
+        return Some(finding_alt);
+    }
+    alts.first().cloned()
+}
+
+fn first_specific_finding_alt(root: &Value) -> Option<String> {
+    let findings = value_at(root, &["findings"])?.as_sequence()?;
+    for finding in findings {
+        let Some(alt) = finding
+            .as_mapping()
+            .and_then(|mapping| mapping.get(Value::String("alt".to_owned())))
+            .and_then(Value::as_str)
+            .map(str::trim)
+        else {
+            continue;
+        };
+        if !alt.is_empty() && alt != "*" {
+            return Some(alt.to_owned());
+        }
+    }
+    None
 }
 
 fn locus_from_root(root: &Value, assembly: &str) -> Result<Option<GenomicLocus>, String> {

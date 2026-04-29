@@ -1107,6 +1107,73 @@ pub fn observe_cram_snp_with_reader<R: Read + Seek>(
     })
 }
 
+/// Observe an insertion/indel-like variant at `locus` over an already-built
+/// CRAM `IndexedReader`.
+pub fn observe_cram_indel_with_reader<R: Read + Seek>(
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
+    label: &str,
+    locus: &GenomicLocus,
+    reference: &str,
+    alternate: &str,
+    matched_rsid: Option<String>,
+    assembly: Option<Assembly>,
+) -> Result<VariantObservation, RuntimeError> {
+    let mut alt_count = 0u32;
+    let mut ref_count = 0u32;
+    let mut depth = 0u32;
+    let mut matching_alt_lengths = BTreeSet::new();
+
+    alignment::for_each_cram_record_with_reader(reader, label, locus, |record| {
+        if record.is_unmapped || !record_overlaps_locus(&record, locus) {
+            return Ok(true);
+        }
+        let classification = classify_expected_indel(&record, locus, reference.len(), alternate)?;
+        if !classification.covering {
+            return Ok(true);
+        }
+        depth += 1;
+        if classification.matches_alt {
+            alt_count += 1;
+            matching_alt_lengths.insert(classification.observed_len);
+        } else if classification.reference_like {
+            ref_count += 1;
+        }
+        Ok(true)
+    })?;
+
+    let evidence_label = if matching_alt_lengths.is_empty() {
+        "none".to_owned()
+    } else {
+        matching_alt_lengths
+            .into_iter()
+            .map(|len| len.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+
+    Ok(VariantObservation {
+        backend: "cram".to_owned(),
+        matched_rsid,
+        assembly,
+        genotype: infer_copy_number_genotype(reference, alternate, ref_count, alt_count, depth),
+        ref_count: Some(ref_count),
+        alt_count: Some(alt_count),
+        depth: Some(depth),
+        raw_counts: BTreeMap::new(),
+        decision: Some(describe_copy_number_decision_rule(
+            reference, alternate, ref_count, alt_count, depth,
+        )),
+        evidence: vec![format!(
+            "observed indel at {} depth={} ref_count={} alt_count={} matching_alt_lengths={}",
+            describe_locus(locus),
+            depth,
+            ref_count,
+            alt_count,
+            evidence_label
+        )],
+    })
+}
+
 /// Observe a SNP at `locus` over an already-built tabix-indexed bgzipped VCF
 /// reader. Mirrors the CRAM variant for VCF: caller builds
 /// `csi::io::IndexedReader::new(reader, tabix_index)` once and calls this per

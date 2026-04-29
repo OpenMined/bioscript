@@ -153,6 +153,7 @@ alleles:
   kind: "snv"
   ref: "C"
   alts:
+    - "G"
     - "T"
 findings:
   - alt: "T"
@@ -163,6 +164,7 @@ findings:
     let manifest = load_variant_manifest_text_for_lookup("rs10305420.yaml", text).unwrap();
     assert_eq!(manifest.name, "GLP1-nature-23andme-rs10305420-C-T");
     assert_eq!(manifest.spec.grch38.unwrap().start, 39_048_860);
+    assert_eq!(manifest.spec.alternate.as_deref(), Some("T"));
 }
 
 #[test]
