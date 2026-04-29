@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fmt::Write as _,
     fs::File,
-    io::{BufRead, BufReader, Read, Seek},
+    io::{BufRead, BufReader, Cursor, Read, Seek},
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -150,6 +150,67 @@ impl GenotypeStore {
         }
     }
 
+    pub fn from_bytes(name: &str, bytes: &[u8]) -> Result<Self, RuntimeError> {
+        let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".zip") {
+            return Self::from_zip_bytes(name, bytes);
+        }
+        if lower.ends_with(".vcf") {
+            let lines =
+                read_lines_from_reader(BufReader::new(Cursor::new(bytes)), Path::new(name))?;
+            return Self::from_vcf_lines(lines);
+        }
+        let lines = read_lines_from_reader(BufReader::new(Cursor::new(bytes)), Path::new(name))?;
+        Self::from_delimited_lines(GenotypeSourceFormat::Text, lines)
+    }
+
+    fn from_zip_bytes(name: &str, bytes: &[u8]) -> Result<Self, RuntimeError> {
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(|err| {
+            RuntimeError::Io(format!("failed to read genotype zip {name}: {err}"))
+        })?;
+        let mut selected = None;
+        for idx in 0..archive.len() {
+            let entry = archive.by_index(idx).map_err(|err| {
+                RuntimeError::Io(format!("failed to inspect genotype zip {name}: {err}"))
+            })?;
+            if entry.is_dir() {
+                continue;
+            }
+            let entry_name = entry.name().to_owned();
+            let lower = entry_name.to_ascii_lowercase();
+            if lower.ends_with(".vcf")
+                || lower.ends_with(".txt")
+                || lower.ends_with(".tsv")
+                || lower.ends_with(".csv")
+            {
+                selected = Some(entry_name);
+                break;
+            }
+        }
+        let selected = selected.ok_or_else(|| {
+            RuntimeError::Unsupported(format!(
+                "zip archive {name} does not contain a supported genotype file"
+            ))
+        })?;
+        let mut entry = archive.by_name(&selected).map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to open genotype entry {selected} in {name}: {err}"
+            ))
+        })?;
+        let mut contents = Vec::new();
+        entry.read_to_end(&mut contents).map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to read genotype entry {selected} in {name}: {err}"
+            ))
+        })?;
+        let lines =
+            read_lines_from_reader(BufReader::new(Cursor::new(contents)), Path::new(&selected))?;
+        if selected.to_ascii_lowercase().ends_with(".vcf") {
+            return Self::from_vcf_lines(lines);
+        }
+        Self::from_delimited_lines(GenotypeSourceFormat::Zip, lines)
+    }
+
     fn from_vcf_file(path: &Path) -> Self {
         Self {
             backend: QueryBackend::Vcf(VcfBackend {
@@ -235,6 +296,21 @@ impl GenotypeStore {
         }
 
         Ok(Self::from_rsid_map(GenotypeSourceFormat::Vcf, values))
+    }
+
+    fn from_delimited_lines(
+        format: GenotypeSourceFormat,
+        lines: Vec<String>,
+    ) -> Result<Self, RuntimeError> {
+        let delimiter = detect_delimiter(&lines);
+        let mut parser = RowParser::new(delimiter);
+        let mut values = HashMap::new();
+        for line in lines {
+            if let Some((rsid, genotype)) = parser.consume_line(&line)? {
+                values.insert(rsid, genotype);
+            }
+        }
+        Ok(Self::from_rsid_map(format, values))
     }
 
     fn from_rsid_map(format: GenotypeSourceFormat, values: HashMap<String, String>) -> Self {
@@ -751,11 +827,11 @@ fn first_base(value: &str) -> Option<char> {
 fn infer_snp_genotype(
     reference: char,
     alternate: char,
-    _ref_count: u32,
+    ref_count: u32,
     alt_count: u32,
     depth: u32,
 ) -> Option<String> {
-    if depth == 0 {
+    if depth == 0 || ref_count + alt_count == 0 {
         return None;
     }
     let alt_fraction = f64::from(alt_count) / f64::from(depth);
@@ -778,6 +854,11 @@ fn describe_snp_decision_rule(
     if depth == 0 {
         return format!(
             "no covering reads for SNP; genotype unresolved (ref={reference}, alt={alternate})"
+        );
+    }
+    if ref_count + alt_count == 0 {
+        return format!(
+            "no reads matched the declared SNP alleles; genotype unresolved; counts ref={ref_count} alt={alt_count} depth={depth} for {reference}>{alternate}"
         );
     }
 

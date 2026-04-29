@@ -18,11 +18,11 @@ mod js_reader;
 
 use std::{io::BufReader, path::PathBuf};
 
-use bioscript_core::GenomicLocus;
+use bioscript_core::{GenomicLocus, VariantKind, VariantObservation, VariantSpec};
 use bioscript_formats::{
     alignment, inspect_bytes as inspect_bytes_rs, observe_cram_snp_with_reader,
     observe_vcf_snp_with_reader, DetectedKind, DetectionConfidence, FileContainer, FileInspection,
-    InspectOptions, SourceMetadata,
+    GenotypeStore, InspectOptions, SourceMetadata,
 };
 use bioscript_schema::{
     load_variant_manifest_text_for_lookup,
@@ -110,6 +110,8 @@ struct VariantInput {
     rsid: Option<String>,
     #[serde(default)]
     assembly: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -253,6 +255,7 @@ pub fn lookup_cram_variants(
 
     let mut results = Vec::with_capacity(variants.len());
     for variant in variants {
+        ensure_snp_variant(&variant)?;
         let ref_char = variant
             .ref_base
             .chars()
@@ -325,6 +328,7 @@ pub fn lookup_vcf_variants(
 
     let mut results = Vec::with_capacity(variants.len());
     for variant in variants {
+        ensure_snp_variant(&variant)?;
         let ref_char = variant
             .ref_base
             .chars()
@@ -372,6 +376,106 @@ pub fn lookup_vcf_variants(
     }
 
     serde_json::to_string(&results).map_err(|err| JsError::new(&format!("encode results: {err}")))
+}
+
+#[wasm_bindgen(js_name = lookupGenotypeBytesVariants)]
+pub fn lookup_genotype_bytes_variants(
+    name: &str,
+    bytes: &[u8],
+    variants_json: &str,
+) -> Result<String, JsError> {
+    let store = GenotypeStore::from_bytes(name, bytes)
+        .map_err(|err| JsError::new(&format!("load genotype bytes {name}: {err:?}")))?;
+    let variants: Vec<VariantInput> = serde_json::from_str(variants_json)
+        .map_err(|err| JsError::new(&format!("parse variantsJson: {err}")))?;
+    let specs = variants
+        .iter()
+        .map(variant_input_to_spec)
+        .collect::<Result<Vec<_>, _>>()?;
+    let observations = store
+        .lookup_variants(&specs)
+        .map_err(|err| JsError::new(&format!("lookup genotype bytes {name}: {err:?}")))?;
+    let rows = variants
+        .into_iter()
+        .zip(observations)
+        .map(|(variant, observation)| observation_to_js(variant.name, observation))
+        .collect::<Vec<_>>();
+    serde_json::to_string(&rows).map_err(|err| JsError::new(&format!("encode results: {err}")))
+}
+
+fn ensure_snp_variant(variant: &VariantInput) -> Result<(), JsError> {
+    let kind = variant.kind.as_deref().unwrap_or("snv").to_ascii_lowercase();
+    let is_snp_kind = matches!(kind.as_str(), "snp" | "snv" | "variant" | "");
+    if !is_snp_kind || variant.ref_base.chars().count() != 1 || variant.alt_base.chars().count() != 1 {
+        return Err(JsError::new(&format!(
+            "variant {} has kind/ref/alt {} {}/{}; web CRAM/VCF lookup currently supports single-base SNV observations only",
+            variant.name,
+            variant.kind.as_deref().unwrap_or("snv"),
+            variant.ref_base,
+            variant.alt_base
+        )));
+    }
+    Ok(())
+}
+
+fn variant_input_to_spec(variant: &VariantInput) -> Result<VariantSpec, JsError> {
+    let start = variant
+        .start
+        .or(variant.pos)
+        .ok_or_else(|| JsError::new(&format!("variant {}: start/pos missing", variant.name)))?;
+    let end = variant.end.unwrap_or(start);
+    let locus = GenomicLocus {
+        chrom: variant.chrom.clone(),
+        start,
+        end,
+    };
+    let assembly = variant.assembly.as_deref().and_then(parse_assembly_str);
+    let kind = parse_variant_kind(variant.kind.as_deref());
+    Ok(VariantSpec {
+        rsids: variant.rsid.clone().into_iter().collect(),
+        grch37: if assembly == Some(bioscript_core::Assembly::Grch37) {
+            Some(locus.clone())
+        } else {
+            None
+        },
+        grch38: if assembly == Some(bioscript_core::Assembly::Grch38) || assembly.is_none() {
+            Some(locus)
+        } else {
+            None
+        },
+        reference: Some(variant.ref_base.clone()),
+        alternate: Some(variant.alt_base.clone()),
+        kind,
+        deletion_length: None,
+        motifs: Vec::new(),
+    })
+}
+
+fn parse_variant_kind(kind: Option<&str>) -> Option<VariantKind> {
+    match kind.unwrap_or("").to_ascii_lowercase().as_str() {
+        "snp" | "snv" | "variant" | "" => Some(VariantKind::Snp),
+        "insertion" => Some(VariantKind::Insertion),
+        "deletion" => Some(VariantKind::Deletion),
+        "indel" => Some(VariantKind::Indel),
+        "other" => Some(VariantKind::Other),
+        _ => Some(VariantKind::Other),
+    }
+}
+
+fn observation_to_js(name: String, observation: VariantObservation) -> VariantObservationJs {
+    VariantObservationJs {
+        name,
+        backend: observation.backend,
+        matched_rsid: observation.matched_rsid,
+        assembly: observation.assembly.map(|a| render_assembly(a).to_owned()),
+        genotype: observation.genotype,
+        ref_count: observation.ref_count,
+        alt_count: observation.alt_count,
+        depth: observation.depth,
+        raw_counts: observation.raw_counts,
+        decision: observation.decision,
+        evidence: observation.evidence,
+    }
 }
 
 fn parse_assembly_str(s: &str) -> Option<bioscript_core::Assembly> {
