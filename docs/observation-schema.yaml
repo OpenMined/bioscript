@@ -1,0 +1,39 @@
+schema: "bioscript:observation:1.0"
+version: "1.0"
+
+participant_id: "NA12878"
+assay_id: "APOL1"
+assay_version: "1.0"
+variant_key: "G2_SITE"
+
+rsid: "rs71785313"
+
+assembly: "GRCh38"
+chrom: "22"
+pos_start: 36266000
+pos_end: 36266005
+
+ref: "TTATAA"
+alt: "<DEL:6>"
+kind: "del"
+
+match_status: "found"
+coverage_status: "covered"
+call_status: "called"
+
+genotype: "0/1"
+genotype_display: "ID"
+zygosity: "het"
+
+ref_count: 1
+alt_count: 1
+depth: 38
+genotype_quality: null
+allele_balance: null
+
+outcome: "variant"
+
+evidence_type: "mpileup"
+evidence_raw: "22:36266000-36266005 depth=38 deletion_reads=18 ref_reads=20"
+
+facets: "self_reported_ethnicity=African Caribbean;cohort=CariGenetics"

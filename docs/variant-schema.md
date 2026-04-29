@@ -204,7 +204,7 @@ findings:
 Envelope fields:
 
 - `schema` required
-- `alt` optional, but required for allele-specific findings
+- `alt` optional, but required for allele-specific findings; use `"*"` when the finding applies to any alternate allele at a multiallelic locus
 - `label` optional
 - `summary` optional
 - `notes` optional

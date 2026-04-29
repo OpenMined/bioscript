@@ -1,0 +1,44 @@
+schema: "bioscript:report:1.0"
+version: "1.0"
+
+participant_id: "NA06985"
+assay_id: "APOL1"
+assay_version: "1.0"
+
+report_status: "complete"
+
+derived_from:
+  - "G1_SITE_1"
+  - "G1_SITE_2"
+  - "G2_SITE"
+
+facets: "self_reported_ethnicity=African Caribbean;cohort=CariGenetics"
+
+timing:
+  started_at: "2026-04-29T10:00:00Z"
+  finished_at: "2026-04-29T10:00:00.120Z"
+  duration_ms: 120
+  breakdown:
+    load_ms: 30
+    query_ms: 40
+    compute_ms: 20
+    write_ms: 30
+
+fields:
+  - key: "apol1_status"
+    label: "APOL1 status"
+    value: "G1/G0"
+    value_type: "string"
+    format: "badge"
+  - key: "summary"
+    label: "Summary"
+    value: "APOL1 genotype pattern is G1/G0."
+    value_type: "string"
+    format: "plain_text"
+
+metrics:
+  n_variants: 2
+  n_sites_tested: 3
+
+warnings: null
+notes: null
