@@ -153,7 +153,9 @@ name = "bioscript-schema"
 version = "0.1.0"
 dependencies = [
  "bioscript-core",
+ "serde",
  "serde_yaml",
+ "sha2",
  "url",
 ]
 
@@ -163,6 +165,7 @@ version = "0.1.0"
 dependencies = [
  "bioscript-core",
  "bioscript-formats",
+ "bioscript-schema",
  "console_error_panic_hook",
  "js-sys",
  "noodles",

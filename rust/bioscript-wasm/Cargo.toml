@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 bioscript-core = { path = "../bioscript-core" }
 bioscript-formats = { path = "../bioscript-formats" }
+bioscript-schema = { path = "../bioscript-schema" }
 noodles = { version = "0.109.0", features = ["bgzf", "cram", "csi", "fasta", "tabix"] }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
@@ -18,8 +19,3 @@ console_error_panic_hook = { version = "0.1", optional = true }
 
 [features]
 default = ["console_error_panic_hook"]
-
-[profile.release]
-opt-level = "z"
-lto = true
-codegen-units = 1

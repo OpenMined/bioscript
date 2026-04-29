@@ -263,11 +263,7 @@ impl GenotypeStore {
                 rsid_lookup: true,
                 locus_lookup: false,
             },
-            QueryBackend::Delimited(_) => BackendCapabilities {
-                rsid_lookup: true,
-                locus_lookup: true,
-            },
-            QueryBackend::Vcf(_) => BackendCapabilities {
+            QueryBackend::Delimited(_) | QueryBackend::Vcf(_) => BackendCapabilities {
                 rsid_lookup: true,
                 locus_lookup: true,
             },
@@ -1080,9 +1076,9 @@ where
     })?;
     let region = Region::new(seq_name.as_str(), position..=position);
 
-    let query = indexed
-        .query(&region)
-        .map_err(|err| RuntimeError::Io(format!("{label}: tabix query for {locus_label}: {err}")))?;
+    let query = indexed.query(&region).map_err(|err| {
+        RuntimeError::Io(format!("{label}: tabix query for {locus_label}: {err}"))
+    })?;
 
     let reference_str = reference.to_ascii_uppercase().to_string();
     let alternate_str = alternate.to_ascii_uppercase().to_string();
@@ -1125,9 +1121,7 @@ where
             "{label}: {locus_label} present but ref={reference}/alt={alternate} did not match any record"
         )]
     } else {
-        vec![format!(
-            "{label}: no VCF record at {locus_label}"
-        )]
+        vec![format!("{label}: no VCF record at {locus_label}")]
     };
     Ok(VariantObservation {
         backend: "vcf".to_owned(),
@@ -1647,6 +1641,13 @@ fn scan_vcf_variants(
         }
     }
 
+    let targets = VcfResolutionTargets {
+        variants,
+        detected_assembly,
+        rsid_targets: &rsid_targets,
+        coord_targets: &coord_targets,
+    };
+
     let file = File::open(&backend.path).map_err(|err| {
         RuntimeError::Io(format!(
             "failed to open VCF file {}: {err}",
@@ -1672,16 +1673,7 @@ fn scan_vcf_variants(
             break;
         }
         if let Some(row) = parse_vcf_record(buf.trim_end_matches(['\n', '\r']))? {
-            resolve_vcf_row(
-                backend,
-                &row,
-                variants,
-                detected_assembly,
-                &rsid_targets,
-                &coord_targets,
-                &mut results,
-                &mut unresolved,
-            );
+            resolve_vcf_row(backend, &row, &targets, &mut results, &mut unresolved);
         }
     }
 
@@ -1702,25 +1694,29 @@ fn scan_vcf_variants(
     Ok(results)
 }
 
+struct VcfResolutionTargets<'a> {
+    variants: &'a [VariantSpec],
+    detected_assembly: Option<Assembly>,
+    rsid_targets: &'a HashMap<String, Vec<usize>>,
+    coord_targets: &'a HashMap<(String, i64), Vec<usize>>,
+}
+
 fn resolve_vcf_row(
     backend: &VcfBackend,
     row: &ParsedVcfRow,
-    variants: &[VariantSpec],
-    detected_assembly: Option<Assembly>,
-    rsid_targets: &HashMap<String, Vec<usize>>,
-    coord_targets: &HashMap<(String, i64), Vec<usize>>,
+    targets: &VcfResolutionTargets<'_>,
     results: &mut [VariantObservation],
     unresolved: &mut usize,
 ) {
     if let Some(rsid) = row.rsid.as_ref()
-        && let Some(target_indexes) = rsid_targets.get(rsid)
+        && let Some(target_indexes) = targets.rsid_targets.get(rsid)
     {
         for &target_idx in target_indexes {
             if results[target_idx].genotype.is_none() {
                 results[target_idx] = VariantObservation {
                     backend: backend.backend_name().to_owned(),
                     matched_rsid: Some(rsid.clone()),
-                    assembly: detected_assembly,
+                    assembly: targets.detected_assembly,
                     genotype: Some(row.genotype.clone()),
                     evidence: vec![format!("resolved by rsid {rsid}")],
                     ..VariantObservation::default()
@@ -1735,15 +1731,19 @@ fn resolve_vcf_row(
     }
 
     let key = (normalize_chromosome_name(&row.chrom), row.position);
-    if let Some(target_indexes) = coord_targets.get(&key) {
+    if let Some(target_indexes) = targets.coord_targets.get(&key) {
         for &target_idx in target_indexes {
             if results[target_idx].genotype.is_none()
-                && vcf_row_matches_variant(row, &variants[target_idx], detected_assembly)
+                && vcf_row_matches_variant(
+                    row,
+                    &targets.variants[target_idx],
+                    targets.detected_assembly,
+                )
             {
                 results[target_idx] = VariantObservation {
                     backend: backend.backend_name().to_owned(),
                     matched_rsid: row.rsid.clone(),
-                    assembly: detected_assembly,
+                    assembly: targets.detected_assembly,
                     genotype: Some(row.genotype.clone()),
                     evidence: vec![format!("resolved by locus {}:{}", row.chrom, row.position)],
                     ..VariantObservation::default()
@@ -1767,7 +1767,10 @@ fn parse_vcf_record(line: &str) -> Result<Option<ParsedVcfRow>, RuntimeError> {
 
     let chrom = fields[0].trim();
     let position = fields[1].trim().parse::<i64>().map_err(|err| {
-        RuntimeError::Io(format!("failed to parse VCF position '{}': {err}", fields[1].trim()))
+        RuntimeError::Io(format!(
+            "failed to parse VCF position '{}': {err}",
+            fields[1].trim()
+        ))
     })?;
     let rsid = {
         let value = fields[2].trim();
@@ -1850,25 +1853,14 @@ fn choose_variant_locus_for_assembly(
     assembly: Option<Assembly>,
 ) -> Option<GenomicLocus> {
     match assembly {
-        Some(Assembly::Grch37) => variant
-            .grch37
-            .clone()
-            .or_else(|| variant.grch38.clone()),
-        Some(Assembly::Grch38) => variant
-            .grch38
-            .clone()
-            .or_else(|| variant.grch37.clone()),
-        None => variant
-            .grch37
-            .clone()
-            .or_else(|| variant.grch38.clone()),
+        Some(Assembly::Grch37) => variant.grch37.clone().or_else(|| variant.grch38.clone()),
+        Some(Assembly::Grch38) => variant.grch38.clone().or_else(|| variant.grch37.clone()),
+        None => variant.grch37.clone().or_else(|| variant.grch38.clone()),
     }
 }
 
 fn normalize_chromosome_name(value: &str) -> String {
-    value.trim()
-        .trim_start_matches("chr")
-        .to_ascii_lowercase()
+    value.trim().trim_start_matches("chr").to_ascii_lowercase()
 }
 
 fn vcf_row_matches_variant(
@@ -1906,7 +1898,9 @@ fn vcf_row_matches_variant(
                         && alternate.len() < row.reference.len()
                 })
         }
-        VariantKind::Insertion | VariantKind::Indel => row.position == locus.start.saturating_sub(1),
+        VariantKind::Insertion | VariantKind::Indel => {
+            row.position == locus.start.saturating_sub(1)
+        }
         VariantKind::Other => row.position == locus.start,
     }
 }

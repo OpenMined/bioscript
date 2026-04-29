@@ -84,7 +84,7 @@ pub(crate) fn query_cram_records(
 
 /// Iterate decoded alignment records intersecting `locus`, streaming from an
 /// already-built CRAM `IndexedReader`. This is the reader-based entry point
-/// used by non-filesystem callers (e.g. wasm with a JS ReadAt shim).
+/// used by non-filesystem callers (e.g. wasm with a JS `ReadAt` shim).
 pub fn for_each_cram_record_with_reader<R, F>(
     reader: &mut cram::io::indexed_reader::IndexedReader<R>,
     label: &str,
@@ -102,9 +102,9 @@ where
         .get_mut()
         .seek(std::io::SeekFrom::Start(0))
         .map_err(|err| RuntimeError::Io(format!("failed to rewind CRAM {label}: {err}")))?;
-    let header = reader.read_header().map_err(|err| {
-        RuntimeError::Io(format!("failed to read CRAM header {label}: {err}"))
-    })?;
+    let header = reader
+        .read_header()
+        .map_err(|err| RuntimeError::Io(format!("failed to read CRAM header {label}: {err}")))?;
 
     let region = build_region(&header, locus).ok_or_else(|| {
         RuntimeError::Unsupported(format!(
@@ -149,9 +149,9 @@ where
         .get_mut()
         .seek(std::io::SeekFrom::Start(0))
         .map_err(|err| RuntimeError::Io(format!("failed to rewind CRAM {label}: {err}")))?;
-    let header = reader.read_header().map_err(|err| {
-        RuntimeError::Io(format!("failed to read CRAM header {label}: {err}"))
-    })?;
+    let header = reader
+        .read_header()
+        .map_err(|err| RuntimeError::Io(format!("failed to read CRAM header {label}: {err}")))?;
 
     let region = build_region(&header, locus).ok_or_else(|| {
         RuntimeError::Unsupported(format!(
@@ -259,7 +259,9 @@ pub(crate) fn build_cram_indexed_reader_from_path(
     })
 }
 
-pub(crate) fn build_reference_repository(reference_file: &Path) -> Result<fasta::Repository, RuntimeError> {
+pub(crate) fn build_reference_repository(
+    reference_file: &Path,
+) -> Result<fasta::Repository, RuntimeError> {
     let reader = fasta::io::indexed_reader::Builder::default()
         .build_from_path(reference_file)
         .map_err(|err| {
@@ -394,9 +396,7 @@ where
 
         for (index, slice_result) in container.slices().enumerate() {
             let slice = slice_result.map_err(|err| {
-                RuntimeError::Io(format!(
-                    "failed to read CRAM slice from {label}: {err}"
-                ))
+                RuntimeError::Io(format!("failed to read CRAM slice from {label}: {err}"))
             })?;
 
             let Some(&landmark_i32) = landmarks.get(index) else {
@@ -573,9 +573,7 @@ fn build_alignment_record_from_cram(
 
     let end = match record.alignment_end() {
         Some(Ok(pos)) => i64::try_from(usize::from(pos)).map_err(|_| {
-            RuntimeError::Unsupported(format!(
-                "record alignment end exceeds i64 range in {label}"
-            ))
+            RuntimeError::Unsupported(format!("record alignment end exceeds i64 range in {label}"))
         })?,
         Some(Err(err)) => {
             return Err(RuntimeError::Io(format!(
@@ -590,9 +588,7 @@ fn build_alignment_record_from_cram(
         .iter()
         .map(|result| {
             result.map(map_op).map_err(|err| {
-                RuntimeError::Io(format!(
-                    "failed to read record CIGAR from {label}: {err}"
-                ))
+                RuntimeError::Io(format!("failed to read record CIGAR from {label}: {err}"))
             })
         })
         .collect::<Result<Vec<_>, _>>()?;

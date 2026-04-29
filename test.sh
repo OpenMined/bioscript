@@ -28,12 +28,18 @@ done
 
 cd "$ROOT_DIR/rust"
 
+TEST_RUSTFLAGS="${RUSTFLAGS:-} -Aunused-assignments -Amissing-docs"
+
+cargo_test() {
+  RUSTFLAGS="$TEST_RUSTFLAGS" cargo test "$@"
+}
+
 if [[ "$LARGE" == "1" ]]; then
-  BIOSCRIPT_RUN_LARGE_TESTS=1 cargo test -p bioscript-formats --test file_formats --test inspect -- --nocapture
+  BIOSCRIPT_RUN_LARGE_TESTS=1 cargo_test -p bioscript-formats --test file_formats --test inspect -- --nocapture
 else
-  cargo test -p bioscript-formats --test file_formats --test inspect -- --nocapture
+  cargo_test -p bioscript-formats --test file_formats --test inspect -- --nocapture
 fi
-cargo test -p bioscript-cli --test cli -- --nocapture
+cargo_test -p bioscript-cli --test cli -- --nocapture
 
 if [[ "$REPORT" == "1" ]]; then
   cargo build -p bioscript-cli

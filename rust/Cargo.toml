@@ -13,6 +13,11 @@ members = [
 [profile.dev]
 opt-level = 2
 
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+
 [patch.crates-io]
 lexical-util = { path = "vendor/lexical-util" }
 noodles-bam = { path = "../noodles/noodles-bam" }
