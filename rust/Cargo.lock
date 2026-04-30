@@ -124,6 +124,7 @@ dependencies = [
  "bioscript-core",
  "bioscript-formats",
  "bioscript-runtime",
+ "bioscript-schema",
  "jni",
  "monty",
  "serde",

@@ -83,6 +83,7 @@ struct DelimitedBackend {
 #[derive(Debug, Clone)]
 struct VcfBackend {
     path: PathBuf,
+    options: GenotypeLoadOptions,
 }
 
 #[derive(Debug, Clone)]
@@ -150,7 +151,7 @@ impl GenotypeStore {
                 None,
             )),
             GenotypeSourceFormat::Zip => Self::from_zip_file(path),
-            GenotypeSourceFormat::Vcf => Ok(Self::from_vcf_file(path)),
+            GenotypeSourceFormat::Vcf => Ok(Self::from_vcf_file(path, options)),
             GenotypeSourceFormat::Cram => Self::from_cram_file(path, options),
         }
     }
@@ -215,10 +216,11 @@ impl GenotypeStore {
         Self::from_delimited_lines(GenotypeSourceFormat::Zip, lines)
     }
 
-    fn from_vcf_file(path: &Path) -> Self {
+    fn from_vcf_file(path: &Path, options: &GenotypeLoadOptions) -> Self {
         Self {
             backend: QueryBackend::Vcf(VcfBackend {
                 path: path.to_path_buf(),
+                options: options.clone(),
             }),
         }
     }
@@ -510,6 +512,9 @@ impl VcfBackend {
         &self,
         variants: &[VariantSpec],
     ) -> Result<Vec<VariantObservation>, RuntimeError> {
+        if let Some(results) = lookup_indexed_vcf_variants(self, variants)? {
+            return Ok(results);
+        }
         scan_vcf_variants(self, variants)
     }
 }
@@ -1913,6 +1918,99 @@ fn scan_vcf_variants(
     }
 
     Ok(results)
+}
+
+fn lookup_indexed_vcf_variants(
+    backend: &VcfBackend,
+    variants: &[VariantSpec],
+) -> Result<Option<Vec<VariantObservation>>, RuntimeError> {
+    let Some(input_index) = backend.options.input_index.as_ref() else {
+        return Ok(None);
+    };
+    let detected_assembly = detect_vcf_assembly_from_path(&backend.path)?;
+    let mut indexed_variants = Vec::with_capacity(variants.len());
+    for (idx, variant) in variants.iter().enumerate() {
+        let Some(locus) = choose_variant_locus_for_assembly(variant, detected_assembly) else {
+            return Ok(None);
+        };
+        let Some(reference) = first_single_base_allele(variant.reference.as_deref()) else {
+            return Ok(None);
+        };
+        let Some(alternate) = first_single_base_allele(variant.alternate.as_deref()) else {
+            return Ok(None);
+        };
+        if !matches!(variant.kind, None | Some(VariantKind::Snp)) {
+            return Ok(None);
+        }
+        indexed_variants.push((idx, variant, locus, reference, alternate));
+    }
+
+    let tabix_index = alignment::parse_tbi_bytes(&std::fs::read(input_index).map_err(|err| {
+        RuntimeError::Io(format!(
+            "failed to read VCF index {}: {err}",
+            input_index.display()
+        ))
+    })?)?;
+    let mut indexed = csi::io::IndexedReader::new(
+        File::open(&backend.path).map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to open VCF file {}: {err}",
+                backend.path.display()
+            ))
+        })?,
+        tabix_index,
+    );
+
+    let mut results = vec![VariantObservation::default(); variants.len()];
+    for (idx, variant, locus, reference, alternate) in indexed_variants {
+        results[idx] = observe_vcf_snp_with_reader(
+            &mut indexed,
+            &backend.path.display().to_string(),
+            &locus,
+            reference,
+            alternate,
+            variant.rsids.first().cloned(),
+            detected_assembly,
+        )?;
+    }
+    Ok(Some(results))
+}
+
+fn detect_vcf_assembly_from_path(path: &Path) -> Result<Option<Assembly>, RuntimeError> {
+    let mut probe_lines = Vec::new();
+    let file = File::open(path).map_err(|err| {
+        RuntimeError::Io(format!("failed to open VCF file {}: {err}", path.display()))
+    })?;
+    let mut reader: Box<dyn BufRead> = if is_bgzf_path(path) {
+        Box::new(BufReader::new(bgzf::io::Reader::new(file)))
+    } else {
+        Box::new(BufReader::new(file))
+    };
+
+    let mut buf = String::new();
+    for _ in 0..256 {
+        buf.clear();
+        let bytes = reader.read_line(&mut buf).map_err(|err| {
+            RuntimeError::Io(format!("failed to read VCF file {}: {err}", path.display()))
+        })?;
+        if bytes == 0 {
+            break;
+        }
+        let line = buf.trim_end_matches(['\n', '\r']).to_owned();
+        let stop = line.starts_with("#CHROM\t");
+        probe_lines.push(line);
+        if stop {
+            break;
+        }
+    }
+    Ok(detect_vcf_assembly(path, &probe_lines))
+}
+
+fn first_single_base_allele(value: Option<&str>) -> Option<char> {
+    let value = value?;
+    let mut chars = value.chars();
+    let base = chars.next()?;
+    chars.next().is_none().then_some(base)
 }
 
 struct VcfResolutionTargets<'a> {
@@ -3330,6 +3428,7 @@ mod tests {
         let err = scan_vcf_variants(
             &VcfBackend {
                 path: dir.join("missing.vcf"),
+                options: GenotypeLoadOptions::default(),
             },
             &[VariantSpec::default()],
         )

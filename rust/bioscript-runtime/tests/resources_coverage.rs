@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::PathBuf,
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -8,13 +9,16 @@ use bioscript_formats::GenotypeLoadOptions;
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig};
 use monty::ResourceLimits;
 
+static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 fn temp_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock drift")
         .as_nanos();
+    let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "bioscript-runtime-coverage-{label}-{}-{nanos}",
+        "bioscript-runtime-coverage-{label}-{}-{nanos}-{counter}",
         std::process::id()
     ));
     fs::create_dir_all(&dir).unwrap();
