@@ -1594,7 +1594,10 @@ mod tests {
 
         assert!(ends_with_unescaped_backslash("x = 1\\"));
         assert!(!ends_with_unescaped_backslash("x = '\\\\'"));
-        assert_eq!(update_nesting_depth(0, "call(') still string', [1]) # ignored"), 0);
+        assert_eq!(
+            update_nesting_depth(0, "call(') still string', [1]) # ignored"),
+            0
+        );
         assert_eq!(update_nesting_depth(0, "call(["), 2);
         assert_eq!(update_nesting_depth(2, "])"), 0);
     }
@@ -1615,15 +1618,30 @@ mod tests {
         };
         let object = variant_observation_object(&observation);
         assert!(matches!(attr(&object, "assembly"), Some(MontyObject::String(v)) if v == "grch37"));
-        assert!(matches!(attr(&object, "ref_count"), Some(MontyObject::Int(3))));
-        assert!(matches!(attr(&object, "alt_count"), Some(MontyObject::Int(2))));
+        assert!(matches!(
+            attr(&object, "ref_count"),
+            Some(MontyObject::Int(3))
+        ));
+        assert!(matches!(
+            attr(&object, "alt_count"),
+            Some(MontyObject::Int(2))
+        ));
         assert!(matches!(attr(&object, "depth"), Some(MontyObject::Int(5))));
 
         let missing = variant_observation_object(&bioscript_core::VariantObservation::default());
-        assert!(matches!(attr(&missing, "assembly"), Some(MontyObject::None)));
-        assert!(matches!(attr(&missing, "genotype"), Some(MontyObject::None)));
+        assert!(matches!(
+            attr(&missing, "assembly"),
+            Some(MontyObject::None)
+        ));
+        assert!(matches!(
+            attr(&missing, "genotype"),
+            Some(MontyObject::None)
+        ));
 
-        assert_eq!(string_or_list(&MontyObject::None).unwrap(), Vec::<String>::new());
+        assert_eq!(
+            string_or_list(&MontyObject::None).unwrap(),
+            Vec::<String>::new()
+        );
         assert_eq!(
             string_list_from_object(&MontyObject::None).unwrap(),
             Vec::<String>::new()
@@ -1639,7 +1657,12 @@ mod tests {
             attrs: vec![].into(),
             frozen: true,
         };
-        assert!(variant_specs_from_plan(&bad_plan).unwrap_err().to_string().contains("missing variants"));
+        assert!(
+            variant_specs_from_plan(&bad_plan)
+                .unwrap_err()
+                .to_string()
+                .contains("missing variants")
+        );
 
         let bad_variant = MontyObject::Dataclass {
             name: "Other".to_owned(),
@@ -1648,7 +1671,17 @@ mod tests {
             attrs: vec![].into(),
             frozen: true,
         };
-        assert!(dataclass_to_variant_spec(&bad_variant).unwrap_err().to_string().contains("got Other"));
-        assert!(dataclass_to_variant_spec(&MontyObject::None).unwrap_err().to_string().contains("expected Variant object"));
+        assert!(
+            dataclass_to_variant_spec(&bad_variant)
+                .unwrap_err()
+                .to_string()
+                .contains("got Other")
+        );
+        assert!(
+            dataclass_to_variant_spec(&MontyObject::None)
+                .unwrap_err()
+                .to_string()
+                .contains("expected Variant object")
+        );
     }
 }

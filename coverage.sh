@@ -25,7 +25,7 @@ Usage: ./coverage.sh [--full-clean|-c] [--open] [--large] [--all-tests] [--no-li
   --no-lint         Skip cargo fmt and clippy checks
   --focused-test    Run one focused integration test target:
                     file_formats, formats_lib, inspect, prepare, cli, schema, core,
-                    runtime_security, or runtime_resources
+                    runtime_lib, runtime_security, or runtime_resources
 
 Environment:
   AUTO_INSTALL_LLVM_COV=0    Do not auto-install cargo-llvm-cov
@@ -178,6 +178,9 @@ if [[ -n "$FOCUSED_TEST" ]]; then
     core)
       env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --lib
       ;;
+    runtime_lib)
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --lib
+      ;;
     runtime_security)
       env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test security -- --nocapture --test-threads="$TEST_THREADS"
       ;;
@@ -200,6 +203,7 @@ else
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-cli --test cli -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-schema --test validate_variants -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --lib
+  env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --lib
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test security -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test resources_coverage -- --nocapture --test-threads="$TEST_THREADS"
 fi

@@ -979,15 +979,28 @@ mod tests {
     #[test]
     fn inspect_helpers_cover_text_shape_source_and_assembly_edges() {
         assert_eq!(split_fields("rs1\t1\t2\tAA"), vec!["rs1", "1", "2", "AA"]);
-        assert_eq!(split_fields("\"rs1\", 1, 2, \"AG\""), vec!["rs1", "1", "2", "AG"]);
+        assert_eq!(
+            split_fields("\"rs1\", 1, 2, \"AG\""),
+            vec!["rs1", "1", "2", "AG"]
+        );
         assert!(looks_like_genotype_text(&[
             "// header".to_owned(),
             "i12345 XY 10 A G".to_owned(),
             "rs2 chr26 20 DD".to_owned(),
         ]));
         assert!(!looks_like_genotype_text(&["not enough fields".to_owned()]));
-        assert!(!matches_genotype_shape(&["bad".to_owned(), "1".to_owned(), "2".to_owned(), "AA".to_owned()]));
-        assert!(!matches_genotype_shape(&["rs1".to_owned(), "badchr".to_owned(), "2".to_owned(), "AA".to_owned()]));
+        assert!(!matches_genotype_shape(&[
+            "bad".to_owned(),
+            "1".to_owned(),
+            "2".to_owned(),
+            "AA".to_owned()
+        ]));
+        assert!(!matches_genotype_shape(&[
+            "rs1".to_owned(),
+            "badchr".to_owned(),
+            "2".to_owned(),
+            "AA".to_owned()
+        ]));
         assert!(!is_valid_genotype(""));
         assert!(!is_valid_genotype("ACGTI"));
         assert!(!is_valid_allele("N"));
@@ -1001,13 +1014,18 @@ mod tests {
         assert_eq!(gfg.vendor.as_deref(), Some("Genes for Good"));
         assert_eq!(gfg.platform_version.as_deref(), Some("v1"));
 
-        let twenty_three = detect_source("/tmp/v5/23andme.txt", &[], DetectedKind::GenotypeText).unwrap();
+        let twenty_three =
+            detect_source("/tmp/v5/23andme.txt", &[], DetectedKind::GenotypeText).unwrap();
         assert_eq!(twenty_three.vendor.as_deref(), Some("23andMe"));
         assert_eq!(twenty_three.platform_version.as_deref(), Some("v5"));
         assert_eq!(
-            detect_source("sequencing.com.vcf", &["##source=sequencing.com".to_owned()], DetectedKind::Vcf)
-                .unwrap()
-                .confidence,
+            detect_source(
+                "sequencing.com.vcf",
+                &["##source=sequencing.com".to_owned()],
+                DetectedKind::Vcf
+            )
+            .unwrap()
+            .confidence,
             DetectionConfidence::WeakHeuristic
         );
         assert_eq!(
@@ -1024,7 +1042,10 @@ mod tests {
             Some(Assembly::Grch37)
         );
         assert_eq!(
-            detect_assembly("sample", &["##contig=<ID=chr1,length=248956422>".to_owned()]),
+            detect_assembly(
+                "sample",
+                &["##contig=<ID=chr1,length=248956422>".to_owned()]
+            ),
             Some(Assembly::Grch38)
         );
         assert_eq!(detect_assembly("sample", &[]), None);
@@ -1038,17 +1059,30 @@ mod tests {
             ..InspectOptions::default()
         };
         assert_eq!(
-            detect_index(Path::new("sample.txt"), DetectedKind::GenotypeText, &options),
+            detect_index(
+                Path::new("sample.txt"),
+                DetectedKind::GenotypeText,
+                &options
+            ),
             (Some(false), Some(explicit))
         );
 
         let no_ext_ref = Path::new("reference");
         assert_eq!(
-            detect_index(no_ext_ref, DetectedKind::ReferenceFasta, &InspectOptions::default()).1,
+            detect_index(
+                no_ext_ref,
+                DetectedKind::ReferenceFasta,
+                &InspectOptions::default()
+            )
+            .1,
             Some(PathBuf::from("reference.fai"))
         );
         assert_eq!(
-            detect_index(Path::new("sample.dat"), DetectedKind::AlignmentCram, &InspectOptions::default()),
+            detect_index(
+                Path::new("sample.dat"),
+                DetectedKind::AlignmentCram,
+                &InspectOptions::default()
+            ),
             (Some(false), None)
         );
 

@@ -88,14 +88,43 @@ fn cli_rejects_missing_values_and_unexpected_arguments() {
             vec!["inspect", "bioscripts/hello-world.py", "extra"],
             "unexpected argument: extra",
         ),
+        (
+            vec!["inspect", "--input-index"],
+            "--input-index requires a path",
+        ),
+        (
+            vec!["inspect", "--reference-file"],
+            "--reference-file requires a path",
+        ),
+        (
+            vec!["inspect", "--reference-index"],
+            "--reference-index requires a path",
+        ),
         (vec!["prepare", "--root"], "--root requires a directory"),
+        (
+            vec!["prepare", "--input-file"],
+            "--input-file requires a path",
+        ),
+        (
+            vec!["prepare", "--reference-file"],
+            "--reference-file requires a path",
+        ),
+        (vec!["prepare", "extra"], "unexpected argument: extra"),
         (
             vec!["prepare", "--cache-dir"],
             "--cache-dir requires a path",
         ),
         (
+            vec!["validate-variants", "one.yaml", "two.yaml"],
+            "unexpected argument: two.yaml",
+        ),
+        (
             vec!["validate-variants", "--report"],
             "--report requires a path",
+        ),
+        (
+            vec!["validate-panels", "one.yaml", "two.yaml"],
+            "unexpected argument: two.yaml",
         ),
         (
             vec!["validate-panels", "--report"],
@@ -107,6 +136,51 @@ fn cli_rejects_missing_values_and_unexpected_arguments() {
         let stderr = stderr_text(&output);
         assert!(stderr.contains(expected), "{stderr}");
     }
+}
+
+#[test]
+fn cli_accepts_auto_format_and_explicit_loader_paths_for_script_runs() {
+    let root = repo_root();
+    let dir = temp_dir("loader-args");
+    fs::write(
+        dir.join("script.py"),
+        r#"
+def main():
+    print("loader args accepted")
+
+if __name__ == "__main__":
+    main()
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--root")
+        .arg(&dir)
+        .arg("--input-format")
+        .arg("auto")
+        .arg("--input-index")
+        .arg("input.crai")
+        .arg("--reference-file")
+        .arg("ref.fa")
+        .arg("--reference-index")
+        .arg("ref.fa.fai")
+        .arg("--allow-md5-mismatch")
+        .arg(dir.join("script.py"))
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("loader args accepted"),
+        "stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 }
 
 #[test]
@@ -434,6 +508,30 @@ fn prepare_subcommand_reports_reference_index_flags() {
 }
 
 #[test]
+fn prepare_subcommand_reports_nothing_to_index_for_noop_auto_request() {
+    let root = repo_root();
+    let dir = temp_dir("prepare-noop-cli");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("prepare")
+        .arg("--root")
+        .arg(&dir)
+        .arg("--input-format")
+        .arg("auto")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", stderr_text(&output));
+    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
+    assert!(
+        stderr_text(&output).contains("bioscript prepare: nothing to index"),
+        "{}",
+        stderr_text(&output)
+    );
+}
+
+#[test]
 fn validate_variants_cli_returns_nonzero_and_writes_report() {
     let root = repo_root();
     let dir = temp_dir("validate-variants-cli");
@@ -563,6 +661,46 @@ alleles:
     assert!(stdout.contains("kind\tname\tpath"));
     assert!(stdout.contains("example-rs73885319"));
     assert!(stdout.contains("AG"));
+}
+
+#[test]
+fn variant_manifest_requires_input_file() {
+    let root = repo_root();
+    let dir = temp_dir("variant-manifest-missing-input");
+    let manifest = dir.join("rs1.yaml");
+    fs::write(
+        &manifest,
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "example-rs1"
+identifiers:
+  rsids:
+    - "rs1"
+coordinates:
+  grch38:
+    chrom: "1"
+    pos: 10
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts: ["G"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg(&manifest)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        stderr_text(&output).contains("manifest execution requires --input-file"),
+        "{}",
+        stderr_text(&output)
+    );
 }
 
 #[test]
@@ -842,5 +980,40 @@ members:
     assert!(
         stderr.contains("remote panel members are not executable yet"),
         "{stderr}"
+    );
+}
+
+#[test]
+fn panel_manifest_reports_non_variant_members_as_not_executable_yet() {
+    let root = repo_root();
+    let dir = temp_dir("panel-nonvariant-member");
+    let panel = dir.join("panel.yaml");
+    fs::write(
+        &panel,
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "mixed-panel"
+members:
+  - kind: "script"
+    path: "script.py"
+    version: "1.0"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("old/examples/apol1/test_snps.txt")
+        .arg(&panel)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        stderr_text(&output).contains("unsupported member kind 'script'"),
+        "{}",
+        stderr_text(&output)
     );
 }

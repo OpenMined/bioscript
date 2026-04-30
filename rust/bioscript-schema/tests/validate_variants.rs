@@ -782,6 +782,7 @@ fn remote_resource_resolution_handles_json_versions_and_plain_relative_urls() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn validate_variants_covers_remaining_identity_coordinate_and_allele_edges() {
     let dir = temp_dir("validate-variant-more-edges");
     fs::write(
@@ -889,6 +890,7 @@ alleles:
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn validate_panels_and_loaders_cover_parse_error_edges() {
     let dir = temp_dir("validate-panel-more-edges");
     let non_panel = dir.join("variant.yaml");
@@ -937,8 +939,14 @@ members:
     let err = load_panel_manifest(&invalid_panel).unwrap_err();
     assert!(err.contains("name: missing required field"), "{err}");
     assert!(err.contains("downloads[0].id: empty string"), "{err}");
-    assert!(err.contains("downloads[0].version: missing required field"), "{err}");
-    assert!(err.contains("members[0].kind: missing required field"), "{err}");
+    assert!(
+        err.contains("downloads[0].version: missing required field"),
+        "{err}"
+    );
+    assert!(
+        err.contains("members[0].kind: missing required field"),
+        "{err}"
+    );
     assert!(err.contains("members[0].download: empty string"), "{err}");
     assert!(err.contains("members[1]: expected mapping"), "{err}");
 
@@ -992,7 +1000,10 @@ alleles:
 "#,
     )
     .unwrap_err();
-    assert!(invalid_lookup.contains("schema: expected schema"), "{invalid_lookup}");
+    assert!(
+        invalid_lookup.contains("schema: expected schema"),
+        "{invalid_lookup}"
+    );
     assert!(
         invalid_lookup.contains("coordinates.grch38.pos: expected integer >= 1"),
         "{invalid_lookup}"

@@ -2640,6 +2640,10 @@ mod tests {
         }
     }
 
+    fn mini_fixtures_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+    }
+
     fn variant_with_loci() -> VariantSpec {
         VariantSpec {
             rsids: vec!["rs1".to_owned()],
@@ -3086,6 +3090,397 @@ mod tests {
             err.to_string()
                 .contains("streaming delimited backend only supports")
         );
+    }
+
+    #[test]
+    fn genotype_private_helpers_cover_vcf_file_zip_and_error_paths() {
+        let dir = temp_dir("vcf-file-zip-errors");
+        let vcf_path = dir.join("sample.grch38.vcf");
+        fs::write(
+            &vcf_path,
+            "##fileformat=VCFv4.3\n\
+             ##reference=GRCh38\n\
+             #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+             chr1\t10\trs10\tA\tG\t.\tPASS\t.\tGT:DP\t0/1:12\n\
+             chr1\t19\trsDel\tAT\tA\t.\tPASS\t.\tGT\t1/1\n\
+             chr2\t30\t.\tC\tT\t.\tPASS\t.\tDP:GT\t8:0/0\n",
+        )
+        .unwrap();
+
+        let store = GenotypeStore::from_file(&vcf_path).unwrap();
+        assert_eq!(store.get("rs10").unwrap().as_deref(), Some("AG"));
+        let observations = store
+            .lookup_variants(&[
+                VariantSpec {
+                    grch38: Some(locus("1", 10, 10)),
+                    reference: Some("A".to_owned()),
+                    alternate: Some("G".to_owned()),
+                    kind: Some(VariantKind::Snp),
+                    ..VariantSpec::default()
+                },
+                VariantSpec {
+                    grch38: Some(locus("1", 20, 20)),
+                    deletion_length: Some(1),
+                    kind: Some(VariantKind::Deletion),
+                    ..VariantSpec::default()
+                },
+                VariantSpec {
+                    grch38: Some(locus("2", 31, 31)),
+                    kind: Some(VariantKind::Other),
+                    ..VariantSpec::default()
+                },
+                VariantSpec {
+                    rsids: vec!["missing".to_owned()],
+                    ..VariantSpec::default()
+                },
+            ])
+            .unwrap();
+        assert_eq!(observations[0].genotype.as_deref(), Some("AG"));
+        assert_eq!(observations[1].genotype.as_deref(), Some("DD"));
+        assert_eq!(observations[2].genotype.as_deref(), None);
+        assert!(observations[3].evidence[0].contains("variant_by_rsid"));
+        assert_eq!(observations[0].assembly, Some(Assembly::Grch38));
+
+        let zip_path = dir.join("vcf.zip");
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        writer
+            .start_file("nested/sample.vcf", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .write_all(fs::read(&vcf_path).unwrap().as_slice())
+            .unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        fs::write(&zip_path, bytes).unwrap();
+        let zip_store = GenotypeStore::from_file(&zip_path).unwrap();
+        assert_eq!(zip_store.get("rs10").unwrap().as_deref(), Some("AG"));
+
+        let err = scan_vcf_variants(
+            &VcfBackend {
+                path: dir.join("missing.vcf"),
+            },
+            &[VariantSpec::default()],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("failed to open VCF file"));
+
+        let bad_zip_backend = DelimitedBackend {
+            format: GenotypeSourceFormat::Zip,
+            path: zip_path.clone(),
+            zip_entry_name: None,
+        };
+        let err = scan_delimited_variants(&bad_zip_backend, &[VariantSpec::default()]).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("zip backend missing selected entry"),
+            "{err}"
+        );
+
+        let bad_entry_backend = DelimitedBackend {
+            format: GenotypeSourceFormat::Zip,
+            path: zip_path,
+            zip_entry_name: Some("missing.csv".to_owned()),
+        };
+        let err =
+            scan_delimited_variants(&bad_entry_backend, &[VariantSpec::default()]).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to open genotype entry"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn genotype_private_helpers_cover_cram_backend_paths_with_mini_fixture() {
+        let dir = mini_fixtures_dir();
+        let cram = dir.join("mini.cram");
+        let cram_index = dir.join("mini.cram.crai");
+        let reference = dir.join("mini.fa");
+        let options = GenotypeLoadOptions {
+            input_index: Some(cram_index.clone()),
+            reference_file: Some(reference.clone()),
+            ..GenotypeLoadOptions::default()
+        };
+        let store = GenotypeStore::from_file_with_options(&cram, &options).unwrap();
+        assert_eq!(store.backend_name(), "cram");
+        assert!(store.supports(QueryKind::GenotypeByLocus));
+        assert!(!store.supports(QueryKind::GenotypeByRsid));
+
+        let snp = VariantSpec {
+            rsids: vec!["mini_locus_1000".to_owned()],
+            grch38: Some(locus("chr_test", 1000, 1000)),
+            reference: Some("A".to_owned()),
+            alternate: Some("C".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        };
+        let observation = store.lookup_variant(&snp).unwrap();
+        assert_eq!(observation.backend, "cram");
+        assert_eq!(observation.matched_rsid.as_deref(), Some("mini_locus_1000"));
+        assert_eq!(observation.genotype.as_deref(), Some("AA"));
+        assert_eq!(observation.depth, Some(50));
+
+        let deletion = VariantSpec {
+            rsids: vec!["mini_del".to_owned()],
+            grch38: Some(locus("chr_test", 1000, 1000)),
+            reference: Some("I".to_owned()),
+            alternate: Some("D".to_owned()),
+            kind: Some(VariantKind::Deletion),
+            deletion_length: Some(1),
+            ..VariantSpec::default()
+        };
+        let deletion_observation = store.lookup_variant(&deletion).unwrap();
+        assert_eq!(deletion_observation.genotype.as_deref(), Some("II"));
+        assert_eq!(deletion_observation.ref_count, Some(50));
+        assert_eq!(deletion_observation.alt_count, Some(0));
+
+        let indel = VariantSpec {
+            rsids: vec!["mini_indel".to_owned()],
+            grch38: Some(locus("chr_test", 1000, 1000)),
+            reference: Some("A".to_owned()),
+            alternate: Some("AT".to_owned()),
+            kind: Some(VariantKind::Indel),
+            ..VariantSpec::default()
+        };
+        let indel_observation = store.lookup_variant(&indel).unwrap();
+        assert_eq!(indel_observation.genotype.as_deref(), Some("AA"));
+        assert_eq!(indel_observation.ref_count, Some(50));
+        assert_eq!(indel_observation.alt_count, Some(0));
+
+        let missing_reference = GenotypeStore::from_file_with_options(
+            &cram,
+            &GenotypeLoadOptions {
+                input_index: Some(cram_index.clone()),
+                ..GenotypeLoadOptions::default()
+            },
+        )
+        .unwrap();
+        let err = missing_reference.lookup_variant(&snp).unwrap_err();
+        assert!(err.to_string().contains("without --reference-file"));
+
+        let err = store.get("rs-only").unwrap_err();
+        assert!(err.to_string().contains("needs GRCh37/GRCh38 coordinates"));
+
+        let err = store
+            .lookup_variant(&VariantSpec {
+                grch38: Some(locus("chr_test", 1000, 1000)),
+                kind: Some(VariantKind::Other),
+                ..VariantSpec::default()
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("does not yet support"));
+
+        let err = store
+            .lookup_variant(&VariantSpec {
+                grch38: Some(locus("chr_test", 1000, 1000)),
+                kind: Some(VariantKind::Snp),
+                alternate: Some("C".to_owned()),
+                ..VariantSpec::default()
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("SNP variant requires ref"));
+
+        let err = store
+            .lookup_variant(&VariantSpec {
+                grch38: Some(locus("chr_test", 1000, 1000)),
+                kind: Some(VariantKind::Snp),
+                reference: Some("A".to_owned()),
+                ..VariantSpec::default()
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("SNP variant requires alt"));
+
+        let err = store
+            .lookup_variant(&VariantSpec {
+                grch38: Some(locus("chr_test", 1000, 1000)),
+                kind: Some(VariantKind::Deletion),
+                ..VariantSpec::default()
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("deletion_length"));
+
+        let err = store
+            .lookup_variant(&VariantSpec {
+                grch38: Some(locus("chr_test", 1000, 1000)),
+                kind: Some(VariantKind::Indel),
+                alternate: Some("AT".to_owned()),
+                ..VariantSpec::default()
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("indel variant requires ref"));
+
+        let err = store
+            .lookup_variant(&VariantSpec {
+                grch38: Some(locus("chr_test", 1000, 1000)),
+                kind: Some(VariantKind::Insertion),
+                reference: Some("A".to_owned()),
+                ..VariantSpec::default()
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("indel variant requires alt"));
+    }
+
+    #[test]
+    fn genotype_public_cram_reader_snp_wrapper_uses_mini_fixture() {
+        let dir = mini_fixtures_dir();
+        let cram = dir.join("mini.cram");
+        let cram_index = dir.join("mini.cram.crai");
+        let reference = dir.join("mini.fa");
+        let repository = crate::alignment::build_reference_repository(&reference).unwrap();
+        let index = crate::alignment::parse_crai_bytes(&fs::read(cram_index).unwrap()).unwrap();
+        let mut reader = crate::alignment::build_cram_indexed_reader_from_reader(
+            fs::File::open(cram).unwrap(),
+            index,
+            repository,
+        )
+        .unwrap();
+
+        let observation = observe_cram_snp_with_reader(
+            &mut reader,
+            "mini.cram",
+            &locus("chr_test", 1000, 1000),
+            'A',
+            'C',
+            Some("mini_locus_1000".to_owned()),
+            Some(Assembly::Grch38),
+        )
+        .unwrap();
+
+        assert_eq!(observation.genotype.as_deref(), Some("AA"));
+        assert_eq!(observation.ref_count, Some(50));
+        assert_eq!(observation.alt_count, Some(0));
+        assert_eq!(observation.depth, Some(50));
+        assert_eq!(observation.assembly, Some(Assembly::Grch38));
+    }
+
+    #[test]
+    fn genotype_public_cram_reader_indel_wrapper_uses_mini_fixture() {
+        let dir = mini_fixtures_dir();
+        let cram = dir.join("mini.cram");
+        let cram_index = dir.join("mini.cram.crai");
+        let reference = dir.join("mini.fa");
+        let repository = crate::alignment::build_reference_repository(&reference).unwrap();
+        let index = crate::alignment::parse_crai_bytes(&fs::read(cram_index).unwrap()).unwrap();
+        let mut reader = crate::alignment::build_cram_indexed_reader_from_reader(
+            fs::File::open(cram).unwrap(),
+            index,
+            repository,
+        )
+        .unwrap();
+
+        let observation = observe_cram_indel_with_reader(
+            &mut reader,
+            "mini.cram",
+            &locus("chr_test", 1000, 1000),
+            "A",
+            "AT",
+            Some("mini_indel".to_owned()),
+            Some(Assembly::Grch38),
+        )
+        .unwrap();
+
+        assert_eq!(observation.backend, "cram");
+        assert_eq!(observation.matched_rsid.as_deref(), Some("mini_indel"));
+        assert_eq!(observation.assembly, Some(Assembly::Grch38));
+        assert_eq!(observation.genotype.as_deref(), Some("AA"));
+        assert_eq!(observation.ref_count, Some(50));
+        assert_eq!(observation.alt_count, Some(0));
+        assert_eq!(observation.depth, Some(50));
+        assert!(observation.evidence[0].contains("matching_alt_lengths=none"));
+    }
+
+    #[test]
+    fn genotype_public_vcf_reader_wrapper_uses_tiny_tabix_fixture() {
+        use noodles::vcf;
+
+        let dir = temp_dir("vcf-reader-wrapper");
+        let vcf_path = dir.join("sample.vcf.gz");
+        let mut writer = bgzf::io::Writer::new(fs::File::create(&vcf_path).unwrap());
+        writer
+            .write_all(
+                b"##fileformat=VCFv4.3\n\
+                  #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+                  chr1\t10\trs10\tA\tG\t.\tPASS\t.\tGT\t0/1\n\
+                  chr1\t20\trs20\tC\tT\t.\tPASS\t.\tGT\t1/1\n\
+                  chr2\t30\trs30\tG\tA\t.\tPASS\t.\tGT\t0/0\n",
+            )
+            .unwrap();
+        writer.finish().unwrap();
+
+        let open_indexed = || {
+            let index = vcf::fs::index(&vcf_path).unwrap();
+            csi::io::IndexedReader::new(fs::File::open(&vcf_path).unwrap(), index)
+        };
+
+        let mut indexed = open_indexed();
+        let observation = observe_vcf_snp_with_reader(
+            &mut indexed,
+            "tiny.vcf.gz",
+            &locus("1", 10, 10),
+            'A',
+            'G',
+            None,
+            Some(Assembly::Grch38),
+        )
+        .unwrap();
+        assert_eq!(observation.backend, "vcf");
+        assert_eq!(observation.matched_rsid.as_deref(), Some("rs10"));
+        assert_eq!(observation.genotype.as_deref(), Some("AG"));
+        assert_eq!(observation.assembly, Some(Assembly::Grch38));
+
+        let mut indexed = open_indexed();
+        let observation = observe_vcf_snp_with_reader(
+            &mut indexed,
+            "tiny.vcf.gz",
+            &locus("chr1", 10, 10),
+            'A',
+            'T',
+            Some("requested".to_owned()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(observation.matched_rsid.as_deref(), Some("requested"));
+        assert!(observation.evidence[0].contains("did not match"));
+
+        let mut indexed = open_indexed();
+        let observation = observe_vcf_snp_with_reader(
+            &mut indexed,
+            "tiny.vcf.gz",
+            &locus("1", 11, 11),
+            'A',
+            'G',
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(observation.evidence[0].contains("no VCF record"));
+
+        let mut indexed = open_indexed();
+        let observation = observe_vcf_snp_with_reader(
+            &mut indexed,
+            "tiny.vcf.gz",
+            &locus("missing", 10, 10),
+            'A',
+            'G',
+            Some("missing-rsid".to_owned()),
+            Some(Assembly::Grch37),
+        )
+        .unwrap();
+        assert_eq!(observation.matched_rsid.as_deref(), Some("missing-rsid"));
+        assert_eq!(observation.assembly, Some(Assembly::Grch37));
+        assert!(observation.evidence[0].contains("has no contig"));
+
+        let mut indexed = open_indexed();
+        let err = observe_vcf_snp_with_reader(
+            &mut indexed,
+            "tiny.vcf.gz",
+            &locus("1", -1, -1),
+            'A',
+            'G',
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid VCF position"));
     }
 
     #[test]

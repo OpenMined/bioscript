@@ -727,7 +727,7 @@ fn map_op(op: sam::alignment::record::cigar::Op) -> AlignmentOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::num::NonZero;
+    use std::{fs::File, num::NonZero, path::PathBuf};
 
     use noodles::sam::{
         self,
@@ -754,6 +754,10 @@ mod tests {
                 Map::<ReferenceSequence>::new(NonZero::new(200).unwrap()),
             )
             .build()
+    }
+
+    fn mini_fixtures_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
     }
 
     #[test]
@@ -915,5 +919,64 @@ mod tests {
         assert!(is_reference_md5_mismatch(&err));
         let err = std::io::Error::other("other decode error");
         assert!(!is_reference_md5_mismatch(&err));
+    }
+
+    #[test]
+    fn alignment_path_and_reader_wrappers_stream_mini_cram_records() {
+        let dir = mini_fixtures_dir();
+        let cram = dir.join("mini.cram");
+        let cram_index = dir.join("mini.cram.crai");
+        let reference = dir.join("mini.fa");
+        let target = locus("chr_test", 1000, 1000);
+        let options = GenotypeLoadOptions {
+            input_index: Some(cram_index.clone()),
+            ..GenotypeLoadOptions::default()
+        };
+
+        let mut path_seen = 0;
+        for_each_cram_record(&cram, &options, &reference, &target, |record| {
+            path_seen += 1;
+            assert!(!record.is_unmapped);
+            assert!(record.start <= 1000);
+            assert!(record.end >= 1000);
+            Ok(path_seen < 3)
+        })
+        .unwrap();
+        assert_eq!(path_seen, 3);
+
+        let records = query_cram_records(&cram, &options, &reference, &target).unwrap();
+        assert_eq!(records.len(), 50);
+
+        let missing = locus("missing", 1, 1);
+        let err = query_cram_records(&cram, &options, &reference, &missing).unwrap_err();
+        assert!(err.to_string().contains("does not contain contig missing"));
+
+        let repository = build_reference_repository(&reference).unwrap();
+        let index = parse_crai_bytes(&std::fs::read(cram_index).unwrap()).unwrap();
+        let mut reader =
+            build_cram_indexed_reader_from_reader(File::open(cram).unwrap(), index, repository)
+                .unwrap();
+
+        let mut reader_seen = 0;
+        for_each_cram_record_with_reader(&mut reader, "mini.cram", &target, |_| {
+            reader_seen += 1;
+            Ok(reader_seen < 2)
+        })
+        .unwrap();
+        assert_eq!(reader_seen, 2);
+
+        let err = for_each_cram_record_with_reader(&mut reader, "mini.cram", &target, |_| {
+            Err(RuntimeError::Unsupported("callback failed".to_owned()))
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("callback failed"));
+
+        let mut raw_seen = 0;
+        for_each_raw_cram_record_with_reader(&mut reader, "mini.cram", &target, |_| {
+            raw_seen += 1;
+            Ok(raw_seen < 2)
+        })
+        .unwrap();
+        assert_eq!(raw_seen, 2);
     }
 }
