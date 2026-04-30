@@ -186,6 +186,21 @@ fn bam_without_adjacent_index_returns_clear_error() {
 }
 
 #[test]
+fn cram_without_adjacent_index_reports_build_failure() {
+    let root = temp_dir("invalid-cram-root");
+    let cwd = temp_dir("invalid-cram-cwd");
+    fs::write(root.join("sample.cram"), b"not a real cram").unwrap();
+
+    let mut req = request(root, cwd, PathBuf::from("cache"));
+    req.input_file = Some("sample.cram".to_owned());
+
+    let err = prepare_indexes(&req).unwrap_err();
+
+    assert!(err.contains("failed to build alignment index"), "{err}");
+    assert!(err.contains("sample.cram"), "{err}");
+}
+
+#[test]
 fn adjacent_fasta_index_is_detected() {
     let root = temp_dir("adjacent-fasta-root");
     let cwd = temp_dir("adjacent-fasta-cwd");
@@ -209,6 +224,21 @@ fn adjacent_fasta_index_is_detected() {
         prepared.reference_index.as_deref(),
         Some(expected_fai.as_path())
     );
+}
+
+#[test]
+fn invalid_fasta_reference_reports_index_build_failure() {
+    let root = temp_dir("invalid-fasta-root");
+    let cwd = temp_dir("invalid-fasta-cwd");
+    fs::write(root.join("ref.fa"), b"not fasta\n").unwrap();
+
+    let mut req = request(root, cwd, PathBuf::from("cache"));
+    req.reference_file = Some("ref.fa".to_owned());
+
+    let err = prepare_indexes(&req).unwrap_err();
+
+    assert!(err.contains("failed to build FASTA index"), "{err}");
+    assert!(err.contains("ref.fa"), "{err}");
 }
 
 #[test]

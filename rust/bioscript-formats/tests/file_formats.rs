@@ -299,6 +299,59 @@ fn alignment_index_parsers_handle_in_memory_bytes() {
 }
 
 #[test]
+fn alignment_reader_api_reports_invalid_cram_headers_without_real_fixtures() {
+    let fai = alignment::parse_fai_bytes(b"chr1\t4\t6\t4\t5\n").unwrap();
+    let repository = alignment::build_reference_repository_from_readers(
+        std::io::BufReader::new(std::io::Cursor::new(b">chr1\nACGT\n".to_vec())),
+        fai,
+    );
+    let locus = bioscript_core::GenomicLocus {
+        chrom: "chr1".to_owned(),
+        start: 1,
+        end: 1,
+    };
+    let crai_bytes = fs::read(mini_fixtures_dir().join("mini.cram.crai")).unwrap();
+    let mut reader = alignment::build_cram_indexed_reader_from_reader(
+        std::io::Cursor::new(b"not a cram".to_vec()),
+        alignment::parse_crai_bytes(&crai_bytes).unwrap(),
+        repository,
+    )
+    .unwrap();
+
+    let err =
+        alignment::for_each_cram_record_with_reader(&mut reader, "bad.cram", &locus, |_| Ok(true))
+            .unwrap_err();
+    assert!(
+        format!("{err:?}").contains("failed to read CRAM header bad.cram"),
+        "{err:?}"
+    );
+
+    let fai = alignment::parse_fai_bytes(b"chr1\t4\t6\t4\t5\n").unwrap();
+    let repository = alignment::build_reference_repository_from_readers(
+        std::io::BufReader::new(std::io::Cursor::new(b">chr1\nACGT\n".to_vec())),
+        fai,
+    );
+    let mut raw_reader = alignment::build_cram_indexed_reader_from_reader(
+        std::io::Cursor::new(b"still not a cram".to_vec()),
+        alignment::parse_crai_bytes(&crai_bytes).unwrap(),
+        repository,
+    )
+    .unwrap();
+
+    let err = alignment::for_each_raw_cram_record_with_reader(
+        &mut raw_reader,
+        "raw-bad.cram",
+        &locus,
+        |_| Ok(true),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{err:?}").contains("failed to read CRAM header raw-bad.cram"),
+        "{err:?}"
+    );
+}
+
+#[test]
 fn delimited_parser_handles_comments_blank_lines_csv_and_split_alleles() {
     let dir = temp_dir("csv-split-alleles");
     let path = dir.join("sample.csv");
@@ -331,6 +384,39 @@ fn delimited_parser_handles_comments_blank_lines_csv_and_split_alleles() {
     assert_eq!(
         observation.evidence,
         vec!["resolved by locus chr22:36265860".to_owned()]
+    );
+}
+
+#[test]
+fn delimited_parser_handles_space_delimited_rows_without_headers_and_inline_comments() {
+    let dir = temp_dir("space-default-header");
+    let path = dir.join("sample.txt");
+    fs::write(
+        &path,
+        "\n\
+         rsSpace chr2 200 tc # inline comment\n\
+         chrOnly chr2 201 aa\n\
+         badrow\n",
+    )
+    .unwrap();
+
+    let store = GenotypeStore::from_file(&path).unwrap();
+
+    assert_eq!(store.get("rsSpace").unwrap().as_deref(), Some("TC"));
+    let observation = store
+        .lookup_variant(&VariantSpec {
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "2".to_owned(),
+                start: 201,
+                end: 201,
+            }),
+            ..VariantSpec::default()
+        })
+        .unwrap();
+    assert_eq!(observation.genotype.as_deref(), Some("AA"));
+    assert_eq!(
+        observation.evidence,
+        vec!["resolved by locus chr2:201".to_owned()]
     );
 }
 
@@ -369,6 +455,168 @@ fn vcf_coordinate_lookup_normalizes_chr_prefix_and_handles_multiallelic_gt() {
         observation.evidence,
         vec!["resolved by locus chr1:1000".to_owned()]
     );
+}
+
+#[test]
+fn vcf_locus_lookup_handles_deletion_insertion_and_unresolved_evidence() {
+    let dir = temp_dir("vcf-indel-locus");
+    let path = dir.join("sample.hg19.vcf");
+    fs::write(
+        &path,
+        "##fileformat=VCFv4.2\n\
+         ##reference=hg19\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+         1\t99\t.\tAT\tA\t.\tPASS\t.\tGT\t0/1\n\
+         chr1\t199\t.\tA\tATG\t.\tPASS\t.\tGT\t0/1\n",
+    )
+    .unwrap();
+
+    let store = GenotypeStore::from_file(&path).unwrap();
+    let deletion = store
+        .lookup_variant(&VariantSpec {
+            grch37: Some(bioscript_core::GenomicLocus {
+                chrom: "chr1".to_owned(),
+                start: 100,
+                end: 100,
+            }),
+            reference: Some("AT".to_owned()),
+            alternate: Some("A".to_owned()),
+            kind: Some(VariantKind::Deletion),
+            deletion_length: Some(1),
+            ..VariantSpec::default()
+        })
+        .unwrap();
+    assert_eq!(deletion.genotype.as_deref(), Some("ID"));
+    assert_eq!(deletion.assembly, Some(bioscript_core::Assembly::Grch37));
+    assert_eq!(deletion.evidence, vec!["resolved by locus 1:99".to_owned()]);
+
+    let insertion = store
+        .lookup_variant(&VariantSpec {
+            grch37: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 200,
+                end: 200,
+            }),
+            reference: Some("A".to_owned()),
+            alternate: Some("ATG".to_owned()),
+            kind: Some(VariantKind::Insertion),
+            ..VariantSpec::default()
+        })
+        .unwrap();
+    assert_eq!(insertion.genotype.as_deref(), Some("DI"));
+    assert_eq!(
+        insertion.evidence,
+        vec!["resolved by locus chr1:199".to_owned()]
+    );
+
+    let unresolved = store
+        .lookup_variant(&VariantSpec {
+            grch37: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 300,
+                end: 300,
+            }),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        })
+        .unwrap();
+    assert_eq!(unresolved.genotype, None);
+    assert_eq!(
+        unresolved.evidence,
+        vec!["no matching rsid or locus found for variant_by_locus".to_owned()]
+    );
+}
+
+#[test]
+fn forced_cram_backend_reports_early_argument_errors_without_reading_cram() {
+    let dir = temp_dir("cram-early-errors");
+    let cram_path = dir.join("missing.cram");
+    let reference = dir.join("GRCh38.fa");
+    let store_without_reference = GenotypeStore::from_file_with_options(
+        &cram_path,
+        &GenotypeLoadOptions {
+            format: Some(GenotypeSourceFormat::Cram),
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
+
+    let err = store_without_reference
+        .lookup_variant(&VariantSpec {
+            rsids: vec!["rs1".to_owned()],
+            ..VariantSpec::default()
+        })
+        .unwrap_err();
+    assert!(
+        format!("{err:?}").contains("without --reference-file"),
+        "{err:?}"
+    );
+
+    let store = GenotypeStore::from_file_with_options(
+        &cram_path,
+        &GenotypeLoadOptions {
+            format: Some(GenotypeSourceFormat::Cram),
+            reference_file: Some(reference),
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
+
+    let err = store
+        .lookup_variant(&VariantSpec {
+            rsids: vec!["rs1".to_owned()],
+            ..VariantSpec::default()
+        })
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("needs GRCh37/GRCh38 coordinates"));
+
+    let err = store
+        .lookup_variant(&VariantSpec {
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 10,
+                end: 10,
+            }),
+            kind: Some(VariantKind::Snp),
+            alternate: Some("G".to_owned()),
+            ..VariantSpec::default()
+        })
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("SNP variant requires ref/reference"));
+
+    let err = store
+        .lookup_variant(&VariantSpec {
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 10,
+                end: 10,
+            }),
+            reference: Some("A".to_owned()),
+            alternate: Some("G".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        })
+        .unwrap_err();
+    assert!(
+        format!("{err:?}").contains("failed to open indexed FASTA"),
+        "{err:?}"
+    );
+
+    let err = store
+        .lookup_variant(&VariantSpec {
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 10,
+                end: 10,
+            }),
+            reference: Some("A".to_owned()),
+            alternate: Some("G".to_owned()),
+            kind: Some(VariantKind::Other),
+            ..VariantSpec::default()
+        })
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("does not yet support Other"));
 }
 
 #[test]

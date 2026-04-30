@@ -1,7 +1,8 @@
 use std::{
+    ffi::OsStr,
     fs,
     path::PathBuf,
-    process::Command,
+    process::{Command, Output},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -25,6 +26,153 @@ fn temp_dir(label: &str) -> PathBuf {
     ));
     fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+fn run_bioscript<I, S>(root: &PathBuf, args: I) -> Output
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(root)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn stderr_text(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+#[test]
+fn cli_reports_usage_when_no_script_or_subcommand_is_provided() {
+    let root = repo_root();
+
+    let output = run_bioscript(&root, std::iter::empty::<&str>());
+
+    assert!(!output.status.success());
+    let stderr = stderr_text(&output);
+    assert!(stderr.contains("usage: bioscript"), "{stderr}");
+    assert!(stderr.contains("validate-variants"), "{stderr}");
+    assert!(stderr.contains("inspect <path>"), "{stderr}");
+}
+
+#[test]
+fn cli_rejects_missing_values_and_unexpected_arguments() {
+    let root = repo_root();
+
+    for (args, expected) in [
+        (vec!["--root"], "--root requires a directory"),
+        (vec!["--input-file"], "--input-file requires a path"),
+        (vec!["--output-file"], "--output-file requires a path"),
+        (
+            vec!["--participant-id"],
+            "--participant-id requires a value",
+        ),
+        (vec!["--trace-report"], "--trace-report requires a path"),
+        (vec!["--timing-report"], "--timing-report requires a path"),
+        (vec!["--filter"], "--filter requires key=value"),
+        (vec!["--input-index"], "--input-index requires a path"),
+        (vec!["--reference-file"], "--reference-file requires a path"),
+        (
+            vec!["--reference-index"],
+            "--reference-index requires a path",
+        ),
+        (vec!["--cache-dir"], "--cache-dir requires a path"),
+        (
+            vec!["bioscripts/hello-world.py", "extra"],
+            "unexpected argument: extra",
+        ),
+        (vec!["inspect"], "usage: bioscript inspect"),
+        (
+            vec!["inspect", "bioscripts/hello-world.py", "extra"],
+            "unexpected argument: extra",
+        ),
+        (vec!["prepare", "--root"], "--root requires a directory"),
+        (
+            vec!["prepare", "--cache-dir"],
+            "--cache-dir requires a path",
+        ),
+        (
+            vec!["validate-variants", "--report"],
+            "--report requires a path",
+        ),
+        (
+            vec!["validate-panels", "--report"],
+            "--report requires a path",
+        ),
+    ] {
+        let output = run_bioscript(&root, args);
+        assert!(!output.status.success(), "expected failure for {expected}");
+        let stderr = stderr_text(&output);
+        assert!(stderr.contains(expected), "{stderr}");
+    }
+}
+
+#[test]
+fn cli_rejects_invalid_numeric_limits_and_input_formats() {
+    let root = repo_root();
+
+    for (args, expected) in [
+        (
+            vec!["--input-format", "bam", "bioscripts/hello-world.py"],
+            "invalid --input-format value bam",
+        ),
+        (
+            vec!["--max-duration-ms", "soon", "bioscripts/hello-world.py"],
+            "invalid --max-duration-ms value soon",
+        ),
+        (
+            vec!["--max-memory-bytes", "large", "bioscripts/hello-world.py"],
+            "invalid --max-memory-bytes value large",
+        ),
+        (
+            vec!["--max-allocations", "many", "bioscripts/hello-world.py"],
+            "invalid --max-allocations value many",
+        ),
+        (
+            vec!["--max-recursion-depth", "deep", "bioscripts/hello-world.py"],
+            "invalid --max-recursion-depth value deep",
+        ),
+        (
+            vec!["prepare", "--input-format", "bam"],
+            "invalid --input-format: unsupported input format: bam",
+        ),
+    ] {
+        let output = run_bioscript(&root, args);
+        assert!(!output.status.success(), "expected failure for {expected}");
+        let stderr = stderr_text(&output);
+        assert!(stderr.contains(expected), "{stderr}");
+    }
+}
+
+#[test]
+fn cli_rejects_unsupported_manifest_schema() {
+    let root = repo_root();
+    let dir = temp_dir("unsupported-manifest");
+    let manifest = dir.join("unsupported.yaml");
+    fs::write(
+        &manifest,
+        r#"
+schema: "bioscript:catalogue:1.0"
+version: "1.0"
+name: "catalogue"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg(&manifest)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = stderr_text(&output);
+    assert!(
+        stderr.contains("unsupported manifest schema 'bioscript:catalogue:1.0'"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -121,6 +269,63 @@ fn timing_report_is_written_for_hello_world() {
     assert!(timing.contains("stage\tduration_ms\tdetail"));
     assert!(timing.contains("run_file_total\t"));
     assert!(timing.contains("script=bioscripts/hello-world.py"));
+}
+
+#[test]
+fn auto_index_adds_reference_index_timing_for_script_runs() {
+    let root = repo_root();
+    let dir = temp_dir("auto-index-script");
+    let cache_dir = dir.join("cache");
+    let timing_path = dir.join("reports/timing.tsv");
+    fs::write(dir.join("ref.fa"), b">chr1\nACGT\n").unwrap();
+    fs::write(
+        dir.join("script.py"),
+        r#"
+def main():
+    print("indexed")
+
+
+if __name__ == "__main__":
+    main()
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--root")
+        .arg(&dir)
+        .arg("--reference-file")
+        .arg("ref.fa")
+        .arg("--auto-index")
+        .arg("--cache-dir")
+        .arg(&cache_dir)
+        .arg("--timing-report")
+        .arg(&timing_path)
+        .arg(dir.join("script.py"))
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("bioscript: auto-indexed reference ->"),
+        "{stderr}"
+    );
+    assert!(fs::read_dir(&cache_dir).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .path()
+            .extension()
+            .is_some_and(|ext| ext == "fai")
+    }));
+    let timing = fs::read_to_string(timing_path).unwrap();
+    assert!(timing.contains("auto_index\t"), "{timing}");
+    assert!(timing.contains("run_file_total\t"), "{timing}");
 }
 
 #[test]
@@ -361,6 +566,65 @@ alleles:
 }
 
 #[test]
+fn variant_manifest_writes_output_trace_and_participant_id() {
+    let root = repo_root();
+    let dir = temp_dir("variant-manifest-output");
+    let manifest = dir.join("rs1.yaml");
+    let output_path = dir.join("reports/variant.tsv");
+    let trace_path = dir.join("reports/variant.trace.tsv");
+    fs::write(
+        &manifest,
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "example-rs73885319"
+tags:
+  - "type:trait"
+identifiers:
+  rsids:
+    - "rs73885319"
+coordinates:
+  grch38:
+    chrom: "22"
+    pos: 36265860
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts:
+    - "G"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("old/examples/apol1/test_snps.txt")
+        .arg("--output-file")
+        .arg(&output_path)
+        .arg("--participant-id")
+        .arg("participant-1")
+        .arg("--trace-report")
+        .arg(&trace_path)
+        .arg(&manifest)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
+    let table = fs::read_to_string(output_path).unwrap();
+    assert!(table.contains("participant-1"), "{table}");
+    assert!(table.contains("example-rs73885319"), "{table}");
+    let trace = fs::read_to_string(trace_path).unwrap();
+    assert!(trace.contains("step\tline\tcode"), "{trace}");
+    assert!(trace.contains("rs1.yaml"), "{trace}");
+}
+
+#[test]
 fn panel_manifest_runs_directly_via_cli() {
     let root = repo_root();
     let dir = temp_dir("panel-manifest");
@@ -450,4 +714,133 @@ members:
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("example-rs73885319"));
     assert!(!stdout.contains("example-rs60910145"));
+}
+
+#[test]
+fn panel_manifest_filters_by_kind_tag_path_and_rejects_unknown_filter_keys() {
+    let root = repo_root();
+    let dir = temp_dir("panel-filters");
+    let variants_dir = dir.join("variants");
+    fs::create_dir_all(&variants_dir).unwrap();
+    fs::write(
+        variants_dir.join("rs73885319.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "example-rs73885319"
+tags:
+  - "type:trait"
+identifiers:
+  rsids:
+    - "rs73885319"
+coordinates:
+  grch38:
+    chrom: "22"
+    pos: 36265860
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts:
+    - "G"
+"#,
+    )
+    .unwrap();
+    let panel = dir.join("panel.yaml");
+    fs::write(
+        &panel,
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "example-panel"
+members:
+  - kind: "variant"
+    path: "variants/rs73885319.yaml"
+    version: "1.0"
+"#,
+    )
+    .unwrap();
+
+    let matched = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("old/examples/apol1/test_snps.txt")
+        .arg("--filter")
+        .arg("kind=variant")
+        .arg("--filter")
+        .arg("tag=type:trait")
+        .arg("--filter")
+        .arg("path=rs73885319")
+        .arg(&panel)
+        .output()
+        .unwrap();
+
+    assert!(
+        matched.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&matched.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&matched.stdout);
+    assert!(stdout.contains("example-rs73885319"), "{stdout}");
+
+    let filtered_out = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("old/examples/apol1/test_snps.txt")
+        .arg("--filter")
+        .arg("unknown=value")
+        .arg(&panel)
+        .output()
+        .unwrap();
+
+    assert!(
+        filtered_out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&filtered_out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&filtered_out.stdout);
+    assert!(stdout.starts_with("kind\tname\tpath"), "{stdout}");
+    assert!(!stdout.contains("example-rs73885319"), "{stdout}");
+}
+
+#[test]
+fn panel_manifest_reports_remote_members_as_not_executable_yet() {
+    let root = repo_root();
+    let dir = temp_dir("panel-remote-member");
+    let panel = dir.join("panel.yaml");
+    fs::write(
+        &panel,
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "remote-panel"
+permissions:
+  domains:
+    - "https://example.com"
+downloads:
+  - id: "remote-rs73885319"
+    url: "https://example.com/rs73885319.yaml"
+    sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    version: "1.0"
+members:
+  - kind: "variant"
+    download: "remote-rs73885319"
+    version: "1.0"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("old/examples/apol1/test_snps.txt")
+        .arg(&panel)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("remote panel members are not executable yet"),
+        "{stderr}"
+    );
 }

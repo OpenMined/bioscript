@@ -172,3 +172,108 @@ if __name__ == "__main__":
     assert!(details.contains("genotype=None"), "{details}");
     assert!(details.contains("genotype='--'"), "{details}");
 }
+
+#[test]
+fn runtime_trace_report_records_rsid_and_coordinate_lookup_metadata() {
+    let dir = temp_dir("trace-metadata");
+    let script = dir.join("script.py");
+    let trace = dir.join("reports/trace.tsv");
+    fs::write(
+        &script,
+        r#"
+RSID = bioscript.variant(rsid="rs73885319")
+COORD = bioscript.variant(grch38="chr22:36265860-36265860", ref="A", alt="G", kind="snp")
+
+def main():
+    text = str(RSID) + str(COORD)
+
+if __name__ == "__main__":
+    main()
+"#,
+    )
+    .unwrap();
+
+    let runtime = BioscriptRuntime::new(&dir).unwrap();
+    runtime.run_file(&script, Some(&trace), Vec::new()).unwrap();
+
+    let report = fs::read_to_string(trace).unwrap();
+    assert!(report.contains("lookup_key\tlookup_url"), "{report}");
+    assert!(report.contains("rs73885319"), "{report}");
+    assert!(
+        report.contains("https://www.ncbi.nlm.nih.gov/snp/rs73885319"),
+        "{report}"
+    );
+    assert!(report.contains("22:36265860-36265860"), "{report}");
+    assert!(
+        report.contains("https://www.ensembl.org/Homo_sapiens/Location/View"),
+        "{report}"
+    );
+}
+
+#[test]
+fn runtime_write_tsv_serializes_rows_and_records_timing() {
+    let dir = temp_dir("write-tsv");
+    let runtime = run_script_with_inputs(
+        &dir,
+        r#"
+def main():
+    bioscript.write_tsv("outputs/table.tsv", [
+        {"name": "alpha", "count": 2, "ok": True, "empty": None},
+        {"name": "beta", "count": 3, "ok": False},
+    ])
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+
+    let table = fs::read_to_string(dir.join("outputs/table.tsv")).unwrap();
+    assert!(table.contains("count\tempty\tname\tok"), "{table}");
+    assert!(table.contains("2\t\talpha\ttrue"), "{table}");
+    assert!(table.contains("3\t\tbeta\tfalse"), "{table}");
+    assert!(
+        runtime
+            .timing_snapshot()
+            .iter()
+            .any(|timing| timing.stage == "write_tsv")
+    );
+}
+
+#[test]
+fn runtime_reports_host_method_argument_errors() {
+    for (code, expected) in [
+        (
+            "bioscript.variant(rsid=123)\n",
+            "expected string or list of strings",
+        ),
+        (
+            "bioscript.variant(foo='bar')\n",
+            "bioscript.variant does not accept keyword 'foo'",
+        ),
+        (
+            "bioscript.variant(grch38='not-a-locus')\n",
+            "invalid locus string",
+        ),
+        (
+            "bioscript.variant(kind='structural')\n",
+            "invalid variant kind",
+        ),
+        (
+            "bioscript.query_plan('not a plan')\n",
+            "expected a list of Variant objects or a VariantPlan",
+        ),
+        (
+            "bioscript.write_tsv('outputs/table.tsv', 'not rows')\n",
+            "write_tsv expects a list of dict rows",
+        ),
+        (
+            "bioscript.read_text(path='inputs/source.txt')\n",
+            "read_text does not accept keyword arguments",
+        ),
+    ] {
+        let err = run_script(code).unwrap_err();
+        assert!(err.contains(expected), "{err}");
+    }
+}

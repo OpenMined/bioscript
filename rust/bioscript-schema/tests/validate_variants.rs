@@ -359,6 +359,203 @@ members:
 }
 
 #[test]
+fn validate_variants_reports_type_and_metadata_issues() {
+    let dir = temp_dir("validate-variant-edges");
+    fs::write(
+        dir.join("typed-shape.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+version: "2.0"
+name: ""
+label: 42
+gene: ""
+summary: ""
+tags: "type:trait"
+identifiers:
+  rsids: "rs1"
+coordinates:
+  grch37:
+    chrom: "0"
+    pos: "one"
+alleles:
+  kind: "other"
+  canonical_alt: "G"
+  ref: ""
+  alts:
+    - 1
+    - ""
+findings:
+  - "not-a-map"
+  - schema: "bioscript:trait:1.0"
+    alt: "G"
+provenance:
+  sources:
+    - "not-a-map"
+    - kind: ""
+      label: ""
+      url: "mailto:example"
+"#,
+    )
+    .unwrap();
+
+    let report = validate_variants_path(&dir).unwrap();
+    let text = report.render_text();
+
+    assert_eq!(report.files_scanned, 1);
+    assert!(report.total_errors() >= 17, "{text}");
+    assert!(report.total_warnings() >= 4, "{text}");
+    for expected in [
+        "expected '1.0'",
+        "expected string",
+        "expected a sequence of strings",
+        "expected integer",
+        "canonical_alt is not part of the current schema",
+        "expected one of snv, deletion, insertion, indel",
+        "finding alt 'G' is not present",
+        "expected http or https URL",
+    ] {
+        assert!(text.contains(expected), "{expected}\n{text}");
+    }
+}
+
+#[test]
+fn validate_variants_reports_coordinate_edge_cases() {
+    let dir = temp_dir("validate-variant-coordinate-edges");
+    fs::write(
+        dir.join("coordinate-range.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "range"
+identifiers:
+  rsids:
+    - "rs1"
+    - "rs1"
+coordinates:
+  grch38:
+    chrom: "MT"
+    start: 20
+    end: 10
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts:
+    - "N"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("single-position-range.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "single-position-range"
+coordinates:
+  grch38:
+    chrom: "X"
+    start: 5
+    end: 5
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts:
+    - "G"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("pos-and-range.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "both-coordinate-styles"
+coordinates:
+  grch38:
+    chrom: "Y"
+    pos: 5
+    start: 5
+    end: 6
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts:
+    - "G"
+"#,
+    )
+    .unwrap();
+
+    let report = validate_variants_path(&dir).unwrap();
+    let text = report.render_text();
+
+    assert_eq!(report.files_scanned, 3);
+    assert!(report.total_errors() >= 3, "{text}");
+    assert!(report.total_warnings() >= 2, "{text}");
+    for expected in [
+        "duplicate identifier 'rs1'",
+        "expected end >= start",
+        "single-position coordinate uses start/end",
+        "use either pos or start/end",
+    ] {
+        assert!(text.contains(expected), "{expected}\n{text}");
+    }
+}
+
+#[test]
+fn validate_panels_reports_missing_empty_and_type_issues() {
+    let dir = temp_dir("validate-panel-edges");
+    fs::write(
+        dir.join("missing-members.yaml"),
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "missing-members"
+label: 7
+summary: ""
+tags: "type:trait"
+permissions:
+  domains: "https://example.org"
+downloads:
+  - "not-a-map"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("empty-members.yaml"),
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "empty-members"
+permissions:
+  domains:
+    - 3
+    - "https://"
+    - "https://example.org:8443"
+members: []
+"#,
+    )
+    .unwrap();
+
+    let report = validate_panels_path(&dir).unwrap();
+    let text = report.render_text();
+
+    assert_eq!(report.files_scanned, 2);
+    assert!(report.total_errors() >= 7, "{text}");
+    assert!(report.total_warnings() >= 1, "{text}");
+    for expected in [
+        "expected a sequence of strings",
+        "downloads[0]: expected mapping",
+        "members: missing required field",
+        "members: expected at least one member",
+        "permissions.domains[0]: expected string",
+        "invalid URL",
+        "expected string",
+        "empty string",
+    ] {
+        assert!(text.contains(expected), "{expected}\n{text}");
+    }
+}
+
+#[test]
 fn remote_resource_resolution_detects_panel_members() {
     let text = r#"
 schema: "bioscript:panel:1.0"
@@ -539,6 +736,47 @@ fn remote_resource_resolution_reports_invalid_structured_text() {
 
     assert!(
         err.contains("failed to parse YAML resource bad.yaml"),
+        "{err}"
+    );
+}
+
+#[test]
+fn remote_resource_resolution_handles_json_versions_and_plain_relative_urls() {
+    let resolved = resolve_remote_resource_text(
+        "https://example.com/catalogues/index.json",
+        "assay.json",
+        r#"
+{
+  "name": "json-assay",
+  "assay": {
+    "version": "2026.4",
+    "panel": "panels/common.yaml"
+  },
+  "artifact_url": "../artifacts/compiled.json"
+}
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(resolved.kind, RemoteResourceKind::Assay);
+    assert_eq!(resolved.version.as_deref(), Some("2026.4"));
+    let urls = resolved
+        .dependencies
+        .iter()
+        .map(|dependency| dependency.url.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        urls,
+        vec![
+            "https://example.com/artifacts/compiled.json",
+            "https://example.com/catalogues/panels/common.yaml",
+        ]
+    );
+
+    let err =
+        resolve_remote_resource_text("https://example.com/bad.json", "bad.json", "{").unwrap_err();
+    assert!(
+        err.contains("failed to parse JSON resource bad.json"),
         "{err}"
     );
 }
