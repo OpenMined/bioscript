@@ -180,6 +180,32 @@ fn genotype_store_from_bytes_handles_vcf() {
 }
 
 #[test]
+fn vcf_bytes_skip_unusable_rows_and_decode_no_call_forms() {
+    let store = GenotypeStore::from_bytes(
+        "sample.vcf",
+        b"##fileformat=VCFv4.2\n\
+          #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+          1\t10\t.\tA\tG\t.\tPASS\t.\tGT\t0/1\n\
+          1\t11\trsEmptyRef\t.\tG\t.\tPASS\t.\tGT\t0/1\n\
+          1\t12\trsEmptyAlt\tA\t.\t.\tPASS\t.\tGT\t0/1\n\
+          1\t13\trsShort\tA\tG\n\
+          1\t14\trsNoCall\tA\tG\t.\tPASS\t.\tGT\t.\n\
+          1\t15\trsPartialNoCall\tA\tG\t.\tPASS\t.\tGT\t./1\n\
+          1\t16\trsOutOfRange\tA\tG\t.\tPASS\t.\tGT\t0/2\n\
+          1\t17\trsValid\tC\tT\t.\tPASS\t.\tGT\t1|1\n",
+    )
+    .unwrap();
+
+    assert_eq!(store.backend_name(), "vcf");
+    assert_eq!(store.get("rsValid").unwrap().as_deref(), Some("TT"));
+    assert_eq!(store.get("rsNoCall").unwrap().as_deref(), Some("--"));
+    assert_eq!(store.get("rsPartialNoCall").unwrap().as_deref(), Some("--"));
+    assert_eq!(store.get("rsOutOfRange").unwrap(), None);
+    assert_eq!(store.get("rsEmptyRef").unwrap().as_deref(), Some(".G"));
+    assert_eq!(store.get("rsEmptyAlt").unwrap(), None);
+}
+
+#[test]
 fn extensionless_vcf_is_detected_by_content_and_can_be_forced() {
     let dir = temp_dir("extensionless-vcf");
     let path = dir.join("sample.data");
@@ -255,6 +281,40 @@ fn genotype_store_from_bytes_handles_zip() {
 
     assert_eq!(store.backend_name(), "zip");
     assert_eq!(store.get("rs73885319").unwrap().as_deref(), Some("AG"));
+}
+
+#[test]
+fn rsid_map_batch_lookup_preserves_order_and_reports_missing_rsids() {
+    let store = GenotypeStore::from_bytes(
+        "sample.txt",
+        b"rsid\tchromosome\tposition\tgenotype\nrs2\t1\t20\tCT\nrs1\t1\t10\tAG\n",
+    )
+    .unwrap();
+
+    let results = store
+        .lookup_variants(&[
+            VariantSpec {
+                rsids: vec!["rs2".to_owned()],
+                ..VariantSpec::default()
+            },
+            VariantSpec {
+                rsids: vec!["rsMissing".to_owned()],
+                ..VariantSpec::default()
+            },
+            VariantSpec {
+                rsids: vec!["rs1".to_owned()],
+                ..VariantSpec::default()
+            },
+        ])
+        .unwrap();
+
+    assert_eq!(results[0].genotype.as_deref(), Some("CT"));
+    assert_eq!(results[1].genotype, None);
+    assert_eq!(
+        results[1].evidence,
+        vec!["no matching rsid found".to_owned()]
+    );
+    assert_eq!(results[2].genotype.as_deref(), Some("AG"));
 }
 
 #[test]
@@ -385,6 +445,39 @@ fn delimited_parser_handles_comments_blank_lines_csv_and_split_alleles() {
         observation.evidence,
         vec!["resolved by locus chr22:36265860".to_owned()]
     );
+}
+
+#[test]
+fn delimited_parser_uses_comment_headers_aliases_quotes_and_extra_columns() {
+    let dir = temp_dir("comment-header-aliases");
+    let path = dir.join("sample.csv");
+    fs::write(
+        &path,
+        "# SNP ID, Chrom, Base Pair Position, Result, Ignored\n\
+         \"rsQuoted\", \"chr3\", \"300\", \"a t\", \"unused, value\"\n\
+         rsSlash,3,301,A/-,\n\
+         rsNone,3,302,None,\n\
+         no_position,3,,AG,\n",
+    )
+    .unwrap();
+
+    let store = GenotypeStore::from_file(&path).unwrap();
+
+    assert_eq!(store.get("rsQuoted").unwrap().as_deref(), Some("AT"));
+    assert_eq!(store.get("rsSlash").unwrap().as_deref(), Some("ID"));
+    assert_eq!(store.get("rsNone").unwrap().as_deref(), Some("--"));
+    assert_eq!(store.get("no_position").unwrap().as_deref(), Some("AG"));
+    let observation = store
+        .lookup_variant(&VariantSpec {
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "3".to_owned(),
+                start: 300,
+                end: 300,
+            }),
+            ..VariantSpec::default()
+        })
+        .unwrap();
+    assert_eq!(observation.genotype.as_deref(), Some("AT"));
 }
 
 #[test]
@@ -528,11 +621,23 @@ fn vcf_locus_lookup_handles_deletion_insertion_and_unresolved_evidence() {
     );
 }
 
+fn forced_cram_store(dir: &std::path::Path, reference_name: &str) -> GenotypeStore {
+    GenotypeStore::from_file_with_options(
+        &dir.join("missing.cram"),
+        &GenotypeLoadOptions {
+            format: Some(GenotypeSourceFormat::Cram),
+            reference_file: Some(dir.join(reference_name)),
+            reference_index: Some(dir.join(format!("{reference_name}.fai"))),
+            input_index: Some(dir.join("missing.cram.crai")),
+        },
+    )
+    .unwrap()
+}
+
 #[test]
-fn forced_cram_backend_reports_early_argument_errors_without_reading_cram() {
-    let dir = temp_dir("cram-early-errors");
+fn forced_cram_backend_reports_reference_and_coordinate_errors_without_reading_cram() {
+    let dir = temp_dir("cram-reference-errors");
     let cram_path = dir.join("missing.cram");
-    let reference = dir.join("GRCh38.fa");
     let store_without_reference = GenotypeStore::from_file_with_options(
         &cram_path,
         &GenotypeLoadOptions {
@@ -541,7 +646,6 @@ fn forced_cram_backend_reports_early_argument_errors_without_reading_cram() {
         },
     )
     .unwrap();
-
     let err = store_without_reference
         .lookup_variant(&VariantSpec {
             rsids: vec!["rs1".to_owned()],
@@ -553,16 +657,7 @@ fn forced_cram_backend_reports_early_argument_errors_without_reading_cram() {
         "{err:?}"
     );
 
-    let store = GenotypeStore::from_file_with_options(
-        &cram_path,
-        &GenotypeLoadOptions {
-            format: Some(GenotypeSourceFormat::Cram),
-            reference_file: Some(reference),
-            ..GenotypeLoadOptions::default()
-        },
-    )
-    .unwrap();
-
+    let store = forced_cram_store(&dir, "GRCh38.fa");
     let err = store
         .lookup_variant(&VariantSpec {
             rsids: vec!["rs1".to_owned()],
@@ -570,7 +665,14 @@ fn forced_cram_backend_reports_early_argument_errors_without_reading_cram() {
         })
         .unwrap_err();
     assert!(format!("{err:?}").contains("needs GRCh37/GRCh38 coordinates"));
+    assert!(format!("{err:?}").contains("reference index"));
+    assert!(format!("{err:?}").contains("input index"));
+}
 
+#[test]
+fn forced_cram_backend_reports_snp_and_indel_argument_errors_without_reading_cram() {
+    let dir = temp_dir("cram-variant-argument-errors");
+    let store = forced_cram_store(&dir, "GRCh38.fa");
     let err = store
         .lookup_variant(&VariantSpec {
             grch38: Some(bioscript_core::GenomicLocus {
@@ -585,6 +687,65 @@ fn forced_cram_backend_reports_early_argument_errors_without_reading_cram() {
         .unwrap_err();
     assert!(format!("{err:?}").contains("SNP variant requires ref/reference"));
 
+    let err = store
+        .lookup_variant(&VariantSpec {
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 10,
+                end: 10,
+            }),
+            reference: Some("A".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        })
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("SNP variant requires alt/alternate"));
+
+    let err = store
+        .lookup_variant(&VariantSpec {
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 10,
+                end: 10,
+            }),
+            kind: Some(VariantKind::Deletion),
+            ..VariantSpec::default()
+        })
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("deletion variant requires deletion_length"));
+
+    let err = store
+        .lookup_variant(&VariantSpec {
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 10,
+                end: 10,
+            }),
+            kind: Some(VariantKind::Indel),
+            ..VariantSpec::default()
+        })
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("indel variant requires ref/reference"));
+
+    let err = store
+        .lookup_variant(&VariantSpec {
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 10,
+                end: 10,
+            }),
+            reference: Some("A".to_owned()),
+            kind: Some(VariantKind::Insertion),
+            ..VariantSpec::default()
+        })
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("indel variant requires alt/alternate"));
+}
+
+#[test]
+fn forced_cram_backend_reports_file_and_assembly_errors_without_reading_cram() {
+    let dir = temp_dir("cram-file-assembly-errors");
+    let store = forced_cram_store(&dir, "GRCh38.fa");
     let err = store
         .lookup_variant(&VariantSpec {
             grch38: Some(bioscript_core::GenomicLocus {
@@ -612,6 +773,20 @@ fn forced_cram_backend_reports_early_argument_errors_without_reading_cram() {
             }),
             reference: Some("A".to_owned()),
             alternate: Some("G".to_owned()),
+            kind: Some(VariantKind::Other),
+            ..VariantSpec::default()
+        })
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("does not yet support Other"));
+
+    let hg19_store = forced_cram_store(&dir, "hg19.fa");
+    let err = hg19_store
+        .lookup_variant(&VariantSpec {
+            grch37: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 10,
+                end: 10,
+            }),
             kind: Some(VariantKind::Other),
             ..VariantSpec::default()
         })
@@ -737,6 +912,33 @@ fn zip_vcf_entry_is_auto_detected_and_readable() {
 
     let store = GenotypeStore::from_file(&zip_path).unwrap();
     assert_eq!(store.get("rs73885319").unwrap().as_deref(), Some("AG"));
+}
+
+#[test]
+fn zip_vcf_gz_entry_is_selected_and_read_as_vcf() {
+    let dir = temp_dir("zip-vcf-gz-entry");
+    let zip_path = dir.join("sample.zip");
+
+    let file = fs::File::create(&zip_path).unwrap();
+    let mut writer = zip::ZipWriter::new(file);
+    writer
+        .add_directory("nested/", SimpleFileOptions::default())
+        .unwrap();
+    writer
+        .start_file("nested/sample.vcf.gz", SimpleFileOptions::default())
+        .unwrap();
+    writer
+        .write_all(
+            b"##fileformat=VCFv4.2\n\
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+2\t22\trsZipVcfGz\tG\tA\t.\tPASS\t.\tGT\t0/1\n",
+        )
+        .unwrap();
+    writer.finish().unwrap();
+
+    let store = GenotypeStore::from_file(&zip_path).unwrap();
+    assert_eq!(store.backend_name(), "vcf");
+    assert_eq!(store.get("rsZipVcfGz").unwrap().as_deref(), Some("GA"));
 }
 
 #[test]

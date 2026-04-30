@@ -145,6 +145,103 @@ fn inspect_bytes_handles_unknown_bytes_conservatively() {
 }
 
 #[test]
+fn inspect_bytes_detects_alignment_reference_and_explicit_indexes() {
+    let dir = temp_dir("bytes-explicit-indexes");
+    let index_path = dir.join("sample.cram.crai");
+    std::fs::write(&index_path, b"not crai").unwrap();
+    let cram = inspect_bytes(
+        "sample.cram",
+        b"not actually decoded",
+        &InspectOptions {
+            input_index: Some(index_path.clone()),
+            ..InspectOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(cram.detected_kind, DetectedKind::AlignmentCram);
+    assert_eq!(cram.has_index, Some(index_path.exists()));
+    assert_eq!(cram.index_path.as_deref(), Some(index_path.as_path()));
+    assert!(cram.evidence.contains(&"extension .cram".to_owned()));
+
+    let bam = inspect_bytes("sample.bam", b"bam bytes", &InspectOptions::default()).unwrap();
+    assert_eq!(bam.detected_kind, DetectedKind::AlignmentBam);
+    assert_eq!(
+        bam.confidence,
+        bioscript_formats::DetectionConfidence::Authoritative
+    );
+
+    let reference_index = PathBuf::from("ref.fa.fai");
+    let reference = inspect_bytes(
+        "ref.fa",
+        b">chr1\nACGT\n",
+        &InspectOptions {
+            reference_index: Some(reference_index.clone()),
+            ..InspectOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(reference.detected_kind, DetectedKind::ReferenceFasta);
+    assert_eq!(
+        reference.index_path.as_deref(),
+        Some(reference_index.as_path())
+    );
+}
+
+#[test]
+fn inspect_bytes_zip_skips_macosx_entries_and_can_fallback_to_unknown_file() {
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(cursor);
+    writer
+        .start_file("__MACOSX/._sample.txt", SimpleFileOptions::default())
+        .unwrap();
+    writer.write_all(b"ignored").unwrap();
+    writer
+        .start_file("nested/readme.bin", SimpleFileOptions::default())
+        .unwrap();
+    writer.write_all(b"not genotype text").unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+
+    let inspection = inspect_bytes("archive.zip", &bytes, &InspectOptions::default()).unwrap();
+
+    assert_eq!(inspection.container, FileContainer::Zip);
+    assert_eq!(inspection.detected_kind, DetectedKind::Unknown);
+    assert_eq!(
+        inspection.selected_entry.as_deref(),
+        Some("nested/readme.bin")
+    );
+}
+
+#[test]
+fn inspect_bytes_rejects_empty_or_malformed_zip_archives() {
+    let err = inspect_bytes("bad.zip", b"not a zip", &InspectOptions::default()).unwrap_err();
+    assert!(
+        format!("{err:?}").contains("failed to read zip bytes"),
+        "{err:?}"
+    );
+
+    let cursor = std::io::Cursor::new(Vec::new());
+    let writer = zip::ZipWriter::new(cursor);
+    let bytes = writer.finish().unwrap().into_inner();
+    let err = inspect_bytes("empty.zip", &bytes, &InspectOptions::default()).unwrap_err();
+    assert!(
+        format!("{err:?}").contains("zip archive does not contain a supported file"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn inspection_render_text_includes_empty_source_fields() {
+    let inspection =
+        inspect_bytes("sample.fa", b">chr1\nACGT\n", &InspectOptions::default()).unwrap();
+    let text = inspection.render_text();
+
+    assert!(text.contains("kind\treference_fasta"), "{text}");
+    assert!(text.contains("vendor\t"), "{text}");
+    assert!(text.contains("source_confidence\t"), "{text}");
+    assert!(text.contains("reference_matches\t"), "{text}");
+}
+
+#[test]
 fn ancestrydna_text_fixture_reports_vendor_platform_and_build() {
     let path = fixtures_dir().join("ancestrydna_v2_sample.txt");
     let inspection = inspect_file(&path, &InspectOptions::default()).unwrap();
@@ -382,6 +479,64 @@ fn chr_y_cram_fixture_reports_index_without_decoding_entire_file() {
     assert!(inspection.index_path.is_some());
     assert!(inspection.duration_ms < 1000);
     assert!(elapsed < 1000);
+}
+
+#[test]
+fn inspect_file_reports_bam_cram_and_reference_indexes_without_decoding() {
+    let dir = temp_dir("index-detection");
+    let cram = dir.join("sample.cram");
+    let cram_index = dir.join("sample.cram.crai");
+    let bam = dir.join("sample.bam");
+    let bai = dir.join("sample.bam.bai");
+    let fasta = dir.join("reference.fa");
+    let fai = dir.join("reference.fa.fai");
+    std::fs::write(&cram, b"not cram").unwrap();
+    std::fs::write(&cram_index, b"not crai").unwrap();
+    std::fs::write(&bam, b"not bam").unwrap();
+    std::fs::write(&bai, b"not bai").unwrap();
+    std::fs::write(&fasta, b">chr1\nACGT\n").unwrap();
+    std::fs::write(&fai, b"chr1\t4\t6\t4\t5\n").unwrap();
+
+    let cram_inspection = inspect_file(&cram, &InspectOptions::default()).unwrap();
+    assert_eq!(cram_inspection.detected_kind, DetectedKind::AlignmentCram);
+    assert_eq!(cram_inspection.has_index, Some(true));
+    assert_eq!(
+        cram_inspection.index_path.as_deref(),
+        Some(cram_index.as_path())
+    );
+
+    let bam_inspection = inspect_file(&bam, &InspectOptions::default()).unwrap();
+    assert_eq!(bam_inspection.detected_kind, DetectedKind::AlignmentBam);
+    assert_eq!(bam_inspection.has_index, Some(true));
+    assert_eq!(bam_inspection.index_path.as_deref(), Some(bai.as_path()));
+
+    let fasta_inspection = inspect_file(&fasta, &InspectOptions::default()).unwrap();
+    assert_eq!(fasta_inspection.detected_kind, DetectedKind::ReferenceFasta);
+    assert_eq!(fasta_inspection.has_index, Some(true));
+    assert_eq!(fasta_inspection.index_path.as_deref(), Some(fai.as_path()));
+}
+
+#[test]
+fn inspect_file_reports_missing_short_cram_and_bam_indexes() {
+    let dir = temp_dir("missing-index-detection");
+    let cram = dir.join("sample.cram");
+    let bam = dir.join("sample.bam");
+    std::fs::write(&cram, b"not cram").unwrap();
+    std::fs::write(&bam, b"not bam").unwrap();
+
+    let cram_inspection = inspect_file(&cram, &InspectOptions::default()).unwrap();
+    assert_eq!(cram_inspection.has_index, Some(false));
+    assert_eq!(
+        cram_inspection.index_path.as_deref(),
+        Some(dir.join("sample.crai").as_path())
+    );
+
+    let bam_inspection = inspect_file(&bam, &InspectOptions::default()).unwrap();
+    assert_eq!(bam_inspection.has_index, Some(false));
+    assert_eq!(
+        bam_inspection.index_path.as_deref(),
+        Some(dir.join("sample.bai").as_path())
+    );
 }
 
 #[test]
