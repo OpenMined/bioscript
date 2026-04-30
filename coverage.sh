@@ -180,6 +180,7 @@ if [[ -n "$FOCUSED_TEST" ]]; then
       ;;
     core)
       env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --lib
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --test source_size -- --nocapture --test-threads="$TEST_THREADS"
       ;;
     runtime_lib)
       env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --lib
@@ -207,6 +208,7 @@ else
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-cli --bin bioscript
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-schema --test validate_variants -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --lib
+  env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --test source_size -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --lib
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test security -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test resources_coverage -- --nocapture --test-threads="$TEST_THREADS"

@@ -35,11 +35,16 @@ cargo_test() {
 }
 
 if [[ "$LARGE" == "1" ]]; then
-  BIOSCRIPT_RUN_LARGE_TESTS=1 cargo_test -p bioscript-formats --test file_formats --test inspect -- --nocapture
+  export BIOSCRIPT_RUN_LARGE_TESTS=1
 else
-  cargo_test -p bioscript-formats --test file_formats --test inspect -- --nocapture
+  unset BIOSCRIPT_RUN_LARGE_TESTS
 fi
-cargo_test -p bioscript-cli --test cli -- --nocapture
+
+cargo_test -p bioscript-formats --test file_formats --lib --test inspect --test prepare -- --nocapture
+cargo_test -p bioscript-cli --test cli --bin bioscript -- --nocapture
+cargo_test -p bioscript-schema --test validate_variants -- --nocapture
+cargo_test -p bioscript-core --lib --test source_size -- --nocapture
+cargo_test -p bioscript-runtime --lib --test security --test resources_coverage -- --nocapture
 
 if [[ "$REPORT" == "1" ]]; then
   cargo build -p bioscript-cli

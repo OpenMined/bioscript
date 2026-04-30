@@ -11,7 +11,10 @@ use noodles::bgzf;
 use noodles::core::{Position, Region};
 use noodles::cram;
 use noodles::csi::{self, BinningIndex};
-use noodles::sam::alignment::Record as _;
+use noodles::sam::alignment::{
+    Record as _,
+    record::{Cigar as _, QualityScores as _, Sequence as _, cigar::op::Kind as CigarOpKind},
+};
 use noodles::tabix;
 use zip::ZipArchive;
 
@@ -1030,7 +1033,7 @@ fn snp_pileup_with_reader<R: Read + Seek>(
             }
 
             let Some((base, base_quality)) =
-                record.base_quality_at_reference_position(target_position, reference_base)
+                cram_base_quality_at_reference_position(&record, target_position, reference_base)?
             else {
                 return Ok(true);
             };
@@ -1081,6 +1084,61 @@ fn snp_pileup_with_reader<R: Read + Seek>(
     )?;
 
     Ok(counts)
+}
+
+fn cram_base_quality_at_reference_position(
+    record: &cram::Record<'_>,
+    target_position: Position,
+    reference_base: u8,
+) -> Result<Option<(u8, u8)>, RuntimeError> {
+    let Some(alignment_start) = record.alignment_start() else {
+        return Ok(None);
+    };
+    let alignment_start = alignment_start
+        .map_err(|err| RuntimeError::Io(format!("failed to read CRAM alignment start: {err}")))?;
+    let mut reference_position = usize::from(alignment_start);
+    let target = usize::from(target_position);
+    let mut read_position = 0usize;
+    let sequence = record.sequence();
+    let qualities = record.quality_scores();
+
+    for op in record.cigar().iter() {
+        let op = op.map_err(|err| RuntimeError::Io(format!("failed to read CRAM CIGAR: {err}")))?;
+        match op.kind() {
+            CigarOpKind::Match | CigarOpKind::SequenceMatch | CigarOpKind::SequenceMismatch => {
+                for offset in 0..op.len() {
+                    if reference_position + offset == target {
+                        let base = sequence
+                            .get(read_position + offset)
+                            .unwrap_or(reference_base);
+                        let quality = qualities
+                            .iter()
+                            .nth(read_position + offset)
+                            .transpose()
+                            .map_err(|err| {
+                                RuntimeError::Io(format!("failed to read CRAM base quality: {err}"))
+                            })?
+                            .unwrap_or(0);
+                        return Ok(Some((base, quality)));
+                    }
+                }
+                reference_position += op.len();
+                read_position += op.len();
+            }
+            CigarOpKind::Insertion | CigarOpKind::SoftClip => {
+                read_position += op.len();
+            }
+            CigarOpKind::Deletion | CigarOpKind::Skip => {
+                if target >= reference_position && target < reference_position + op.len() {
+                    return Ok(None);
+                }
+                reference_position += op.len();
+            }
+            CigarOpKind::HardClip | CigarOpKind::Pad => {}
+        }
+    }
+
+    Ok(None)
 }
 
 /// Observe a SNP at `locus` over an already-built CRAM `IndexedReader` and
