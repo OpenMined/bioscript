@@ -31,7 +31,12 @@ fn main() -> ExitCode {
 
 #[allow(clippy::too_many_lines)]
 fn run_cli() -> Result<(), String> {
-    let mut args = env::args().skip(1);
+    run_cli_args(env::args().skip(1).collect())
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_cli_args(raw_args: Vec<String>) -> Result<(), String> {
+    let mut args = raw_args.clone().into_iter();
     if let Some(first) = args.next() {
         if first == "validate-variants" {
             return run_validate_variants(args.collect());
@@ -47,7 +52,7 @@ fn run_cli() -> Result<(), String> {
         }
     }
 
-    let mut args = env::args().skip(1);
+    let mut args = raw_args.into_iter();
     let mut script_path: Option<PathBuf> = None;
     let mut root: Option<PathBuf> = None;
     let mut input_file: Option<String> = None;
@@ -859,5 +864,227 @@ fn normalize_loader_paths(root: &Path, loader: &mut GenotypeLoadOptions) {
     }
     if let Some(path) = loader.reference_index.take() {
         loader.reference_index = Some(resolve_cli_path_buf(root, &path));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bioscript_core::{Assembly, VariantObservation};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "bioscript-cli-unit-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn cli_private_helpers_render_rows_filters_paths_and_loader_paths() {
+        let root = temp_dir("helpers-root");
+        let manifest_path = root.join("panels/panel.yaml");
+        let member_dir = root.join("panels/members");
+        fs::create_dir_all(&member_dir).unwrap();
+        let variant_path = member_dir.join("apol1.yaml");
+        fs::write(&manifest_path, "schema: bioscript:panel:1.0\n").unwrap();
+        fs::write(&variant_path, "schema: bioscript:variant:1.0\n").unwrap();
+
+        let manifest = VariantManifest {
+            name: "APOL1 G1".to_owned(),
+            path: variant_path.clone(),
+            tags: vec!["kidney".to_owned(), "apol1".to_owned()],
+            spec: bioscript_core::VariantSpec::default(),
+        };
+
+        assert!(matches_filters(
+            &manifest,
+            &variant_path,
+            &[
+                "kind=variant".to_owned(),
+                "name=APOL1".to_owned(),
+                "tag=kidney".to_owned(),
+                "path=apol1".to_owned(),
+            ],
+        ));
+        assert!(!matches_filters(
+            &manifest,
+            &variant_path,
+            &["kind=panel".to_owned()]
+        ));
+        assert!(!matches_filters(
+            &manifest,
+            &variant_path,
+            &["bad".to_owned()]
+        ));
+
+        assert_eq!(
+            resolve_manifest_path(&root, &manifest_path, "members/apol1.yaml").unwrap(),
+            variant_path.canonicalize().unwrap()
+        );
+        let outside = temp_dir("helpers-outside").join("escape.yaml");
+        fs::write(&outside, "schema: bioscript:variant:1.0\n").unwrap();
+        let err =
+            resolve_manifest_path(&root, &manifest_path, &outside.to_string_lossy()).unwrap_err();
+        assert!(err.contains("escapes bioscript root"), "{err}");
+
+        let observation = VariantObservation {
+            backend: "vcf".to_owned(),
+            matched_rsid: Some("rs1".to_owned()),
+            assembly: Some(Assembly::Grch38),
+            genotype: Some("AG".to_owned()),
+            ref_count: Some(7),
+            alt_count: Some(3),
+            depth: Some(10),
+            evidence: vec!["one\twith tab".to_owned(), "two".to_owned()],
+            ..VariantObservation::default()
+        };
+        let row = variant_row(
+            &root,
+            &variant_path,
+            "APOL1 G1",
+            &["kidney".to_owned()],
+            &observation,
+            Some("p1"),
+        );
+        let tsv = render_rows_as_tsv(&[row]);
+        assert!(tsv.contains("participant_id\tbackend"), "{tsv}");
+        assert!(tsv.contains("p1\tvcf\trs1\tgrch38\tAG\t7\t3\t10"), "{tsv}");
+        assert!(tsv.contains("one with tab | two"), "{tsv}");
+
+        assert_eq!(
+            resolve_cli_path(&root, "sample.txt"),
+            root.join("sample.txt").display().to_string()
+        );
+        assert_eq!(
+            resolve_cli_path_buf(&root, Path::new("/tmp/abs")),
+            PathBuf::from("/tmp/abs")
+        );
+
+        let mut loader = GenotypeLoadOptions {
+            input_index: Some(PathBuf::from("input.crai")),
+            reference_file: Some(PathBuf::from("ref.fa")),
+            reference_index: Some(PathBuf::from("ref.fa.fai")),
+            ..GenotypeLoadOptions::default()
+        };
+        normalize_loader_paths(&root, &mut loader);
+        assert_eq!(
+            loader.input_index.as_deref(),
+            Some(root.join("input.crai").as_path())
+        );
+        assert_eq!(
+            loader.reference_file.as_deref(),
+            Some(root.join("ref.fa").as_path())
+        );
+        assert_eq!(
+            loader.reference_index.as_deref(),
+            Some(root.join("ref.fa.fai").as_path())
+        );
+    }
+
+    #[test]
+    fn cli_private_helpers_cover_manifest_schema_and_timing_errors() {
+        let dir = temp_dir("schema-timing");
+        let valid = dir.join("valid.yaml");
+        let missing_schema = dir.join("missing.yaml");
+        let invalid_yaml = dir.join("invalid.yaml");
+        fs::write(&valid, "schema: bioscript:variant:1.0\n").unwrap();
+        fs::write(&missing_schema, "name: no schema\n").unwrap();
+        fs::write(&invalid_yaml, "schema: [").unwrap();
+
+        assert_eq!(manifest_schema(&valid).unwrap(), "bioscript:variant:1.0");
+        assert!(
+            manifest_schema(&missing_schema)
+                .unwrap_err()
+                .contains("missing schema")
+        );
+        assert!(
+            manifest_schema(&invalid_yaml)
+                .unwrap_err()
+                .contains("failed to parse YAML")
+        );
+        assert!(
+            manifest_schema(&dir.join("absent.yaml"))
+                .unwrap_err()
+                .contains("failed to read")
+        );
+
+        let timing_path = dir.join("nested/timing.tsv");
+        write_timing_report(
+            &timing_path,
+            &[
+                StageTiming {
+                    stage: "one".to_owned(),
+                    duration_ms: 2,
+                    detail: "contains\ttab".to_owned(),
+                },
+                StageTiming {
+                    stage: "two".to_owned(),
+                    duration_ms: 3,
+                    detail: "plain".to_owned(),
+                },
+            ],
+        )
+        .unwrap();
+        let report = fs::read_to_string(&timing_path).unwrap();
+        assert!(report.contains("stage\tduration_ms\tdetail"));
+        assert!(report.contains("one\t2\tcontains tab"));
+    }
+
+    #[test]
+    fn cli_arg_parser_reports_missing_and_invalid_values_without_spawning() {
+        for (flag, expected) in [
+            ("--input-format", "--input-format requires a value"),
+            ("--max-duration-ms", "--max-duration-ms requires an integer"),
+            (
+                "--max-memory-bytes",
+                "--max-memory-bytes requires an integer",
+            ),
+            ("--max-allocations", "--max-allocations requires an integer"),
+            (
+                "--max-recursion-depth",
+                "--max-recursion-depth requires an integer",
+            ),
+        ] {
+            let err = run_cli_args(vec![flag.to_owned()]).unwrap_err();
+            assert!(err.contains(expected), "{flag}: {err}");
+        }
+
+        for (flag, value, expected) in [
+            (
+                "--input-format",
+                "unknown",
+                "invalid --input-format value unknown",
+            ),
+            (
+                "--max-duration-ms",
+                "nan",
+                "invalid --max-duration-ms value nan",
+            ),
+            (
+                "--max-memory-bytes",
+                "nan",
+                "invalid --max-memory-bytes value nan",
+            ),
+            (
+                "--max-allocations",
+                "nan",
+                "invalid --max-allocations value nan",
+            ),
+            (
+                "--max-recursion-depth",
+                "nan",
+                "invalid --max-recursion-depth value nan",
+            ),
+        ] {
+            let err = run_cli_args(vec![flag.to_owned(), value.to_owned()]).unwrap_err();
+            assert!(err.contains(expected), "{flag}: {err}");
+        }
     }
 }

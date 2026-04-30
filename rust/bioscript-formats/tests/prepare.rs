@@ -1,5 +1,7 @@
 use std::{
+    collections::hash_map::DefaultHasher,
     fs,
+    hash::{Hash, Hasher},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -259,6 +261,58 @@ fn fasta_index_is_generated_in_cache_when_missing() {
     assert!(cached_reference.exists());
     assert!(cached_index.starts_with(&cache));
     assert!(cached_index.exists());
+}
+
+#[test]
+fn cached_fasta_reference_and_index_are_reused() {
+    let root = temp_dir("cached-fasta-root");
+    let cwd = temp_dir("cached-fasta-cwd");
+    fs::write(root.join("ref.fa"), b">chr1\nACGT\n").unwrap();
+
+    let mut req = request(root.clone(), cwd.clone(), PathBuf::from("cache"));
+    req.reference_file = Some("ref.fa".to_owned());
+    let first = prepare_indexes(&req).unwrap();
+    let cached_reference = first.reference_file.unwrap();
+    let cached_index = first.reference_index.unwrap();
+    assert!(cached_reference.exists());
+    assert!(cached_index.exists());
+
+    let second = prepare_indexes(&req).unwrap();
+    assert_eq!(
+        second.reference_file.as_deref(),
+        Some(cached_reference.as_path())
+    );
+    assert_eq!(
+        second.reference_index.as_deref(),
+        Some(cached_index.as_path())
+    );
+    assert!(shell_flags(&second).contains("--reference-file"));
+}
+
+#[test]
+fn cached_cram_index_is_reused_when_present() {
+    let root = temp_dir("cached-cram-root");
+    let cwd = temp_dir("cached-cram-cwd");
+    let cache = cwd.join("cache");
+    fs::create_dir_all(&cache).unwrap();
+    let cram = root.join("sample.cram");
+    fs::write(&cram, b"not a real cram").unwrap();
+
+    let canonical = cram.canonicalize().unwrap();
+    let mut hasher = DefaultHasher::new();
+    canonical.to_string_lossy().hash(&mut hasher);
+    let hash = hasher.finish();
+    let cached_index = cache.join(format!("sample.cram-{hash:016x}.crai"));
+    fs::write(&cached_index, b"existing crai").unwrap();
+
+    let mut req = request(root, cwd, PathBuf::from("cache"));
+    req.input_file = Some("sample.cram".to_owned());
+    let prepared = prepare_indexes(&req).unwrap();
+
+    assert_eq!(
+        prepared.input_index.as_deref(),
+        Some(cached_index.as_path())
+    );
 }
 
 #[test]

@@ -2670,6 +2670,16 @@ mod tests {
             Some((Assembly::Grch37, locus("1", 10, 10)))
         );
         assert_eq!(
+            choose_variant_locus(
+                &VariantSpec {
+                    grch38: Some(locus("3", 30, 30)),
+                    ..VariantSpec::default()
+                },
+                Path::new("ref/hg19.fa")
+            ),
+            Some((Assembly::Grch38, locus("3", 30, 30)))
+        );
+        assert_eq!(
             choose_variant_locus(&variant, Path::new("ref/unknown.fa")),
             Some((Assembly::Grch38, locus("2", 20, 20)))
         );
@@ -2771,10 +2781,21 @@ mod tests {
         let short_row = parser.consume_record("bad,row").unwrap().unwrap();
         assert_eq!(short_row.rsid.as_deref(), Some("bad"));
         assert_eq!(short_row.genotype, "--");
+        assert_eq!(
+            parser.consume_line("rs4,4,40,tt").unwrap(),
+            Some(("rs4".to_owned(), "TT".to_owned()))
+        );
+        assert!(parser.consume_record(",,").unwrap().is_none());
+        assert_eq!(parser.default_header(2), vec!["rsid", "chromosome"]);
         assert_eq!(parser.default_header(6).len(), 6);
 
         let mut indexes = None;
         let mut comment_header = None;
+        assert!(
+            parse_streaming_row("", Delimiter::Space, &mut indexes, &mut comment_header)
+                .unwrap()
+                .is_none()
+        );
         assert!(
             parse_streaming_row(
                 "// marker chromosome position result",
@@ -2917,6 +2938,24 @@ mod tests {
             &row,
             &VariantSpec::default(),
             None
+        ));
+        assert!(!vcf_row_matches_variant(
+            &row,
+            &VariantSpec {
+                grch38: Some(locus("2", 10, 10)),
+                kind: Some(VariantKind::Snp),
+                ..VariantSpec::default()
+            },
+            Some(Assembly::Grch38)
+        ));
+        assert!(vcf_row_matches_variant(
+            &row,
+            &VariantSpec {
+                grch38: Some(locus("1", 10, 10)),
+                kind: Some(VariantKind::Other),
+                ..VariantSpec::default()
+            },
+            Some(Assembly::Grch38)
         ));
     }
 
@@ -3089,6 +3128,81 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("streaming delimited backend only supports")
+        );
+    }
+
+    #[test]
+    fn genotype_public_entry_points_cover_in_memory_sources_and_fallbacks() {
+        let text_store =
+            GenotypeStore::from_bytes("sample.txt", b"rsid genotype\nrs1 AG\nrs2 CT\n").unwrap();
+        assert_eq!(text_store.backend_name(), "text");
+        assert!(text_store.supports(QueryKind::GenotypeByRsid));
+        assert!(!text_store.supports(QueryKind::GenotypeByLocus));
+        assert_eq!(text_store.get("rs1").unwrap().as_deref(), Some("AG"));
+        let observations = text_store
+            .lookup_variants(&[
+                VariantSpec {
+                    rsids: vec!["rs2".to_owned()],
+                    ..VariantSpec::default()
+                },
+                VariantSpec {
+                    rsids: vec!["missing".to_owned()],
+                    ..VariantSpec::default()
+                },
+            ])
+            .unwrap();
+        assert_eq!(observations[0].genotype.as_deref(), Some("CT"));
+        assert!(observations[1].evidence[0].contains("no matching rsid"));
+
+        let vcf_store = GenotypeStore::from_bytes(
+            "sample.vcf",
+            b"##fileformat=VCFv4.3\n\
+              #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+              1\t10\trs10\tA\tG\t.\tPASS\t.\tGT\t0/1\n\
+              1\t20\t.\tA\tG\t.\tPASS\t.\tGT\t0/1\n\
+              1\t30\trs_bad\t.\tG\t.\tPASS\t.\tGT\t0/1\n",
+        )
+        .unwrap();
+        assert_eq!(vcf_store.backend_name(), "vcf");
+        assert_eq!(vcf_store.get("rs10").unwrap().as_deref(), Some("AG"));
+
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        writer
+            .add_directory("nested/", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .start_file("nested/sample.vcf", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .write_all(
+                b"##fileformat=VCFv4.3\n\
+                  #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+                  2\t20\trs20\tC\tT\t.\tPASS\t.\tGT\t1/1\n",
+            )
+            .unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let zip_store = GenotypeStore::from_bytes("sample.zip", &bytes).unwrap();
+        assert_eq!(zip_store.backend_name(), "vcf");
+        assert_eq!(zip_store.get("rs20").unwrap().as_deref(), Some("TT"));
+
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        writer
+            .add_directory("empty/", SimpleFileOptions::default())
+            .unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let err = GenotypeStore::from_bytes("empty.zip", &bytes).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("does not contain a supported genotype file"),
+            "{err}"
+        );
+
+        assert!(
+            GenotypeSourceFormat::from_str("unknown")
+                .unwrap_err()
+                .contains("unsupported input format")
         );
     }
 

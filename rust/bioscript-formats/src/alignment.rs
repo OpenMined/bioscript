@@ -5,7 +5,7 @@ use std::{
 };
 
 use noodles::{
-    core::{Position, Region},
+    core::{Position, Region, region::Interval},
     cram::{self, crai, io::reader::Container},
     fasta::{self, repository::adapters::IndexedReader as FastaIndexedReader},
     sam::{
@@ -465,34 +465,15 @@ where
                 &external_data_srcs,
                 true,
                 |record| {
-                    let alignment_record = match build_alignment_record_from_cram(label, record) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            callback_err = Some(e);
-                            return Ok(false);
-                        }
-                    };
-
-                    if alignment_record.start > locus_end {
-                        stop = true;
-                        return Ok(false);
-                    }
-
-                    if !alignment_record_intersects_interval(&alignment_record, interval) {
-                        return Ok(true);
-                    }
-
-                    match on_record(record.clone()) {
-                        Ok(true) => Ok(true),
-                        Ok(false) => {
-                            stop = true;
-                            Ok(false)
-                        }
-                        Err(e) => {
-                            callback_err = Some(e);
-                            Ok(false)
-                        }
-                    }
+                    Ok(handle_decoded_cram_record(
+                        label,
+                        record,
+                        interval,
+                        locus_end,
+                        &mut stop,
+                        &mut callback_err,
+                        on_record,
+                    ))
                 },
             );
 
@@ -516,38 +497,15 @@ where
                             &external_data_srcs,
                             false,
                             |record| {
-                                let alignment_record =
-                                    match build_alignment_record_from_cram(label, record) {
-                                        Ok(r) => r,
-                                        Err(e) => {
-                                            callback_err = Some(e);
-                                            return Ok(false);
-                                        }
-                                    };
-
-                                if alignment_record.start > locus_end {
-                                    stop = true;
-                                    return Ok(false);
-                                }
-
-                                if !alignment_record_intersects_interval(
-                                    &alignment_record,
+                                Ok(handle_decoded_cram_record(
+                                    label,
+                                    record,
                                     interval,
-                                ) {
-                                    return Ok(true);
-                                }
-
-                                match on_record(record.clone()) {
-                                    Ok(true) => Ok(true),
-                                    Ok(false) => {
-                                        stop = true;
-                                        Ok(false)
-                                    }
-                                    Err(e) => {
-                                        callback_err = Some(e);
-                                        Ok(false)
-                                    }
-                                }
+                                    locus_end,
+                                    &mut stop,
+                                    &mut callback_err,
+                                    on_record,
+                                ))
                             },
                         )
                         .map_err(|err| {
@@ -583,6 +541,48 @@ where
     }
 
     Ok(())
+}
+
+fn handle_decoded_cram_record<F>(
+    label: &str,
+    record: &cram::Record<'_>,
+    interval: Interval,
+    locus_end: i64,
+    stop: &mut bool,
+    callback_err: &mut Option<RuntimeError>,
+    on_record: &mut F,
+) -> bool
+where
+    F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
+{
+    let alignment_record = match build_alignment_record_from_cram(label, record) {
+        Ok(record) => record,
+        Err(err) => {
+            *callback_err = Some(err);
+            return false;
+        }
+    };
+
+    if alignment_record.start > locus_end {
+        *stop = true;
+        return false;
+    }
+
+    if !alignment_record_intersects_interval(&alignment_record, interval) {
+        return true;
+    }
+
+    match on_record(record.clone()) {
+        Ok(true) => true,
+        Ok(false) => {
+            *stop = true;
+            false
+        }
+        Err(err) => {
+            *callback_err = Some(err);
+            false
+        }
+    }
 }
 
 fn is_reference_md5_mismatch(err: &std::io::Error) -> bool {

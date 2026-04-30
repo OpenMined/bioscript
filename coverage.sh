@@ -24,7 +24,7 @@ Usage: ./coverage.sh [--full-clean|-c] [--open] [--large] [--all-tests] [--no-li
   --all-tests       Run all tests for the first-party BioScript crates
   --no-lint         Skip cargo fmt and clippy checks
   --focused-test    Run one focused integration test target:
-                    file_formats, formats_lib, inspect, prepare, cli, schema, core,
+                    file_formats, formats_lib, inspect, prepare, cli, cli_bin, schema, core,
                     runtime_lib, runtime_security, or runtime_resources
 
 Environment:
@@ -172,6 +172,9 @@ if [[ -n "$FOCUSED_TEST" ]]; then
     cli)
       env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-cli --test cli -- --nocapture --test-threads="$TEST_THREADS"
       ;;
+    cli_bin)
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-cli --bin bioscript
+      ;;
     schema)
       env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-schema --test validate_variants -- --nocapture --test-threads="$TEST_THREADS"
       ;;
@@ -201,6 +204,7 @@ else
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-formats --test inspect -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-formats --test prepare -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-cli --test cli -- --nocapture --test-threads="$TEST_THREADS"
+  env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-cli --bin bioscript
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-schema --test validate_variants -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --lib
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --lib

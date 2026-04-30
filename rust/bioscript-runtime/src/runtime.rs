@@ -1541,6 +1541,20 @@ fn update_nesting_depth(mut depth: usize, line: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "bioscript-runtime-unit-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     fn attr<'a>(obj: &'a MontyObject, name: &str) -> Option<&'a MontyObject> {
         let MontyObject::Dataclass { attrs, .. } = obj else {
@@ -1683,5 +1697,290 @@ mod tests {
                 .to_string()
                 .contains("expected Variant object")
         );
+    }
+
+    #[test]
+    fn runtime_private_methods_cover_dispatch_and_path_errors() {
+        let root = temp_dir("dispatch");
+        fs::write(root.join("input.txt"), "hello").unwrap();
+        let runtime = BioscriptRuntime::new(&root).unwrap();
+        let bioscript = MontyObject::Dataclass {
+            name: "Bioscript".to_owned(),
+            type_id: 1,
+            field_names: vec![],
+            attrs: vec![].into(),
+            frozen: true,
+        };
+
+        let err = runtime
+            .dispatch_method_call("missing", std::slice::from_ref(&bioscript), &[])
+            .unwrap_err();
+        assert!(err.to_string().contains("no attribute"));
+
+        assert!(
+            runtime
+                .method_read_text(&[], &[])
+                .unwrap_err()
+                .to_string()
+                .contains("expects self and path")
+        );
+        assert!(
+            runtime
+                .method_write_text(&[], &[])
+                .unwrap_err()
+                .to_string()
+                .contains("expects self, path, text")
+        );
+        assert!(
+            runtime
+                .resolve_user_path("/absolute")
+                .unwrap_err()
+                .to_string()
+                .contains("absolute paths")
+        );
+        assert!(
+            runtime
+                .resolve_user_path("../escape")
+                .unwrap_err()
+                .to_string()
+                .contains("escapes bioscript root")
+        );
+        assert!(
+            runtime
+                .resolve_existing_user_path("missing.txt")
+                .unwrap_err()
+                .to_string()
+                .contains("failed to resolve")
+        );
+
+        let nested = runtime
+            .resolve_user_write_path("new/deep/file.txt")
+            .unwrap();
+        assert_eq!(
+            nested,
+            root.canonicalize().unwrap().join("new/deep/file.txt")
+        );
+        assert_eq!(
+            deepest_existing_ancestor(&root.join("new/deep/file.txt")),
+            root.as_path()
+        );
+
+        let mut config = RuntimeConfig::default();
+        config.loader.input_index = Some(PathBuf::from("input.txt"));
+        config.loader.reference_file = Some(PathBuf::from("/tmp/reference.fa"));
+        let runtime = BioscriptRuntime::with_config(&root, config).unwrap();
+        let loader = runtime.resolved_loader_options().unwrap();
+        assert_eq!(
+            loader.input_index.as_deref(),
+            Some(root.canonicalize().unwrap().join("input.txt").as_path())
+        );
+        assert_eq!(
+            loader.reference_file.as_deref(),
+            Some(Path::new("/tmp/reference.fa"))
+        );
+    }
+
+    #[test]
+    fn runtime_private_methods_cover_unknown_genotype_handles() {
+        let root = temp_dir("handles");
+        let runtime = BioscriptRuntime::new(&root).unwrap();
+        let genotype = genotype_file_object(99);
+        let variant = variant_object(&VariantSpec {
+            rsids: vec!["rs1".to_owned()],
+            ..VariantSpec::default()
+        });
+        let plan = variant_plan_object(&[VariantSpec {
+            rsids: vec!["rs1".to_owned()],
+            ..VariantSpec::default()
+        }]);
+
+        for (method, args) in [
+            (
+                "get",
+                vec![genotype.clone(), MontyObject::String("rs1".to_owned())],
+            ),
+            ("lookup_variant", vec![genotype.clone(), variant.clone()]),
+            (
+                "lookup_variant_details",
+                vec![genotype.clone(), variant.clone()],
+            ),
+            ("lookup_variants", vec![genotype.clone(), plan.clone()]),
+            ("lookup_variants_details", vec![genotype.clone(), plan]),
+        ] {
+            let err = runtime
+                .dispatch_method_call(method, &args, &[])
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("unknown genotype handle"), "{method}: {err}");
+        }
+
+        assert!(
+            dataclass_handle_id(&MontyObject::None, "GenotypeFile")
+                .unwrap_err()
+                .to_string()
+                .contains("expected GenotypeFile object")
+        );
+        let missing_handle = MontyObject::Dataclass {
+            name: "GenotypeFile".to_owned(),
+            type_id: 2,
+            field_names: vec![],
+            attrs: vec![].into(),
+            frozen: true,
+        };
+        assert!(
+            dataclass_handle_id(&missing_handle, "GenotypeFile")
+                .unwrap_err()
+                .to_string()
+                .contains("missing handle_id")
+        );
+    }
+
+    #[test]
+    fn runtime_private_methods_cover_successful_genotype_paths() {
+        let root = temp_dir("success-paths");
+        fs::write(
+            root.join("genotypes.tsv"),
+            "rsid\tchromosome\tposition\tgenotype\nrs1\t1\t10\tAG\nrs2\t2\t20\tCT\n",
+        )
+        .unwrap();
+        let runtime = BioscriptRuntime::new(&root).unwrap();
+        let bioscript = bioscript_object();
+
+        let genotype = runtime
+            .method_load_genotypes(
+                &[
+                    bioscript.clone(),
+                    MontyObject::String("genotypes.tsv".to_owned()),
+                ],
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(
+            attr(&genotype, "handle_id"),
+            Some(MontyObject::Int(id)) if *id > 0
+        ));
+
+        let value = runtime
+            .method_genotype_get(
+                &[genotype.clone(), MontyObject::String("rs1".to_owned())],
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(value, MontyObject::String(ref text) if text == "AG"));
+        let missing = runtime
+            .method_genotype_get(
+                &[genotype.clone(), MontyObject::String("missing".to_owned())],
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(missing, MontyObject::None));
+
+        let variant = runtime
+            .method_variant(
+                std::slice::from_ref(&bioscript),
+                &[
+                    (
+                        MontyObject::String("rsid".to_owned()),
+                        MontyObject::String("rs2".to_owned()),
+                    ),
+                    (
+                        MontyObject::String("grch38".to_owned()),
+                        MontyObject::String("2:20".to_owned()),
+                    ),
+                    (
+                        MontyObject::String("kind".to_owned()),
+                        MontyObject::String("snp".to_owned()),
+                    ),
+                ],
+            )
+            .unwrap();
+        let lookup = runtime
+            .method_genotype_lookup_variant(&[genotype.clone(), variant.clone()], &[])
+            .unwrap();
+        assert!(matches!(lookup, MontyObject::String(ref text) if text == "CT"));
+        let details = runtime
+            .method_genotype_lookup_variant_details(&[genotype.clone(), variant.clone()], &[])
+            .unwrap();
+        assert!(matches!(
+            attr(&details, "matched_rsid"),
+            Some(MontyObject::String(text)) if text == "rs2"
+        ));
+
+        let plan = runtime
+            .method_query_plan(&[bioscript.clone(), MontyObject::List(vec![variant])], &[])
+            .unwrap();
+        let values = runtime
+            .method_genotype_lookup_variants(&[genotype.clone(), plan.clone()], &[])
+            .unwrap();
+        assert!(matches!(values, MontyObject::List(items) if items.len() == 1));
+        let detail_values = runtime
+            .method_genotype_lookup_variants_details(&[genotype, plan], &[])
+            .unwrap();
+        assert!(matches!(detail_values, MontyObject::List(items) if items.len() == 1));
+        assert!(runtime.timing_snapshot().len() >= 4);
+    }
+
+    #[test]
+    fn runtime_private_methods_cover_successful_text_tsv_and_trace_paths() {
+        let root = temp_dir("host-output");
+        let runtime = BioscriptRuntime::new(&root).unwrap();
+        let bioscript = bioscript_object();
+        let rows = MontyObject::List(vec![MontyObject::Dict(
+            vec![
+                (
+                    MontyObject::String("rsid".to_owned()),
+                    MontyObject::String("rs1".to_owned()),
+                ),
+                (MontyObject::String("count".to_owned()), MontyObject::Int(2)),
+                (
+                    MontyObject::String("ok".to_owned()),
+                    MontyObject::Bool(true),
+                ),
+                (MontyObject::String("note".to_owned()), MontyObject::None),
+            ]
+            .into(),
+        )]);
+        runtime
+            .method_write_tsv(
+                &[
+                    bioscript.clone(),
+                    MontyObject::String("out/table.tsv".to_owned()),
+                    rows,
+                ],
+                &[],
+            )
+            .unwrap();
+        let table = fs::read_to_string(root.join("out/table.tsv")).unwrap();
+        assert!(table.contains("rs1"));
+        assert!(table.contains("true"));
+
+        runtime
+            .method_write_text(
+                &[
+                    bioscript.clone(),
+                    MontyObject::String("out/text.txt".to_owned()),
+                    MontyObject::String("hello".to_owned()),
+                ],
+                &[],
+            )
+            .unwrap();
+        let text = runtime
+            .method_read_text(
+                &[bioscript, MontyObject::String("out/text.txt".to_owned())],
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(text, MontyObject::String(ref value) if value == "hello"));
+
+        runtime.state.trace_lines.lock().unwrap().extend([1, 2, 99]);
+        runtime
+            .write_trace_report(
+                &root.join("trace/report.tsv"),
+                "bioscript.variant(rsid='rs1')\nplain = 1\n",
+            )
+            .unwrap();
+        let trace = fs::read_to_string(root.join("trace/report.tsv")).unwrap();
+        assert!(trace.contains("https://www.ncbi.nlm.nih.gov/snp/rs1"));
+        assert_eq!(runtime.timing_snapshot().len(), 1);
     }
 }
