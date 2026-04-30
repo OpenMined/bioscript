@@ -37,6 +37,8 @@ use bioscript_core::{Assembly, RuntimeError};
 use noodles::bgzf;
 use zip::ZipArchive;
 
+const MAX_ZIP_SAMPLE_ENTRY_BYTES: u64 = 128 * 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileContainer {
     Plain,
@@ -277,12 +279,11 @@ fn read_zip_sample_lines_from_bytes(
         ))
     })?;
     if selected_entry.to_ascii_lowercase().ends_with(".vcf.gz") {
-        let mut inner = Vec::new();
-        entry.read_to_end(&mut inner).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to read compressed zip entry {selected_entry}: {err}"
-            ))
-        })?;
+        let inner = read_entry_limited(
+            &mut entry,
+            MAX_ZIP_SAMPLE_ENTRY_BYTES,
+            &format!("compressed zip entry {selected_entry}"),
+        )?;
         let reader = bgzf::io::Reader::new(Cursor::new(inner));
         return read_sample_lines_from_reader(BufReader::new(reader));
     }
@@ -477,18 +478,37 @@ fn read_zip_sample_lines(path: &Path, selected_entry: &str) -> Result<Vec<String
     })?;
 
     if selected_entry.to_ascii_lowercase().ends_with(".vcf.gz") {
-        let mut bytes = Vec::new();
-        entry.read_to_end(&mut bytes).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to read compressed zip entry {selected_entry} in {}: {err}",
+        let bytes = read_entry_limited(
+            &mut entry,
+            MAX_ZIP_SAMPLE_ENTRY_BYTES,
+            &format!(
+                "compressed zip entry {selected_entry} in {}",
                 path.display()
-            ))
-        })?;
+            ),
+        )?;
         let reader = bgzf::io::Reader::new(Cursor::new(bytes));
         return read_sample_lines_from_reader(BufReader::new(reader));
     }
 
     read_sample_lines_from_reader(BufReader::new(entry))
+}
+
+fn read_entry_limited<R: Read>(
+    reader: &mut R,
+    max_bytes: u64,
+    label: &str,
+) -> Result<Vec<u8>, RuntimeError> {
+    let mut bytes = Vec::new();
+    reader
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|err| RuntimeError::Io(format!("failed to read {label}: {err}")))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_bytes {
+        return Err(RuntimeError::InvalidArguments(format!(
+            "{label} exceeds decompressed limit of {max_bytes} bytes"
+        )));
+    }
+    Ok(bytes)
 }
 
 fn read_sample_lines_from_reader<R: BufRead>(mut reader: R) -> Result<Vec<String>, RuntimeError> {
@@ -937,5 +957,109 @@ fn render_bool(value: Option<bool>) -> &'static str {
         Some(true) => "true",
         Some(false) => "false",
         None => "",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn inspect_zip_entry_limited_reader_rejects_oversized_output() {
+        let mut reader = Cursor::new(b"abcdef".to_vec());
+        let err = read_entry_limited(&mut reader, 5, "inspect zip entry").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("inspect zip entry exceeds decompressed limit of 5 bytes"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn inspect_helpers_cover_text_shape_source_and_assembly_edges() {
+        assert_eq!(split_fields("rs1\t1\t2\tAA"), vec!["rs1", "1", "2", "AA"]);
+        assert_eq!(split_fields("\"rs1\", 1, 2, \"AG\""), vec!["rs1", "1", "2", "AG"]);
+        assert!(looks_like_genotype_text(&[
+            "// header".to_owned(),
+            "i12345 XY 10 A G".to_owned(),
+            "rs2 chr26 20 DD".to_owned(),
+        ]));
+        assert!(!looks_like_genotype_text(&["not enough fields".to_owned()]));
+        assert!(!matches_genotype_shape(&["bad".to_owned(), "1".to_owned(), "2".to_owned(), "AA".to_owned()]));
+        assert!(!matches_genotype_shape(&["rs1".to_owned(), "badchr".to_owned(), "2".to_owned(), "AA".to_owned()]));
+        assert!(!is_valid_genotype(""));
+        assert!(!is_valid_genotype("ACGTI"));
+        assert!(!is_valid_allele("N"));
+
+        let gfg = detect_source(
+            "genesforgood.txt",
+            &["# Genes for Good v1 export".to_owned()],
+            DetectedKind::GenotypeText,
+        )
+        .unwrap();
+        assert_eq!(gfg.vendor.as_deref(), Some("Genes for Good"));
+        assert_eq!(gfg.platform_version.as_deref(), Some("v1"));
+
+        let twenty_three = detect_source("/tmp/v5/23andme.txt", &[], DetectedKind::GenotypeText).unwrap();
+        assert_eq!(twenty_three.vendor.as_deref(), Some("23andMe"));
+        assert_eq!(twenty_three.platform_version.as_deref(), Some("v5"));
+        assert_eq!(
+            detect_source("sequencing.com.vcf", &["##source=sequencing.com".to_owned()], DetectedKind::Vcf)
+                .unwrap()
+                .confidence,
+            DetectionConfidence::WeakHeuristic
+        );
+        assert_eq!(
+            detect_source("cari-genetics.txt", &[], DetectedKind::GenotypeText)
+                .unwrap()
+                .vendor
+                .as_deref(),
+            Some("CariGenetics")
+        );
+        assert_eq!(canonicalize_ancestry_version("v2.0"), "V2.0");
+
+        assert_eq!(
+            detect_assembly("sample", &["##reference=human_g1k_v37".to_owned()]),
+            Some(Assembly::Grch37)
+        );
+        assert_eq!(
+            detect_assembly("sample", &["##contig=<ID=chr1,length=248956422>".to_owned()]),
+            Some(Assembly::Grch38)
+        );
+        assert_eq!(detect_assembly("sample", &[]), None);
+    }
+
+    #[test]
+    fn inspect_helpers_cover_index_and_render_edges() {
+        let explicit = PathBuf::from("/tmp/explicit.idx");
+        let options = InspectOptions {
+            input_index: Some(explicit.clone()),
+            ..InspectOptions::default()
+        };
+        assert_eq!(
+            detect_index(Path::new("sample.txt"), DetectedKind::GenotypeText, &options),
+            (Some(false), Some(explicit))
+        );
+
+        let no_ext_ref = Path::new("reference");
+        assert_eq!(
+            detect_index(no_ext_ref, DetectedKind::ReferenceFasta, &InspectOptions::default()).1,
+            Some(PathBuf::from("reference.fai"))
+        );
+        assert_eq!(
+            detect_index(Path::new("sample.dat"), DetectedKind::AlignmentCram, &InspectOptions::default()),
+            (Some(false), None)
+        );
+
+        assert_eq!(render_container(FileContainer::Plain), "plain");
+        assert_eq!(render_container(FileContainer::Zip), "zip");
+        assert_eq!(render_kind(DetectedKind::AlignmentBam), "alignment_bam");
+        assert_eq!(render_kind(DetectedKind::Unknown), "unknown");
+        assert_eq!(render_confidence(DetectionConfidence::Unknown), "unknown");
+        assert_eq!(render_assembly(None), "");
+        assert_eq!(render_bool(Some(true)), "true");
+        assert_eq!(render_bool(Some(false)), "false");
+        assert_eq!(render_bool(None), "");
     }
 }

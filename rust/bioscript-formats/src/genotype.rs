@@ -24,6 +24,7 @@ use crate::alignment::{self, AlignmentOpKind, AlignmentRecord};
 const COMMENT_PREFIXES: [&str; 2] = ["#", "//"];
 const DEFAULT_MPILEUP_MIN_BASE_QUALITY: u8 = 13;
 const DEFAULT_MPILEUP_MIN_MAPPING_QUALITY: u8 = 0;
+const MAX_ZIP_ENTRY_BYTES: u64 = 128 * 1024 * 1024;
 
 const RSID_ALIASES: &[&str] = &["rsid", "name", "snp", "marker", "id", "snpid"];
 const CHROM_ALIASES: &[&str] = &["chromosome", "chr", "chrom"];
@@ -127,6 +128,7 @@ pub struct GenotypeLoadOptions {
     pub input_index: Option<PathBuf>,
     pub reference_file: Option<PathBuf>,
     pub reference_index: Option<PathBuf>,
+    pub allow_reference_md5_mismatch: bool,
 }
 
 impl GenotypeStore {
@@ -197,12 +199,11 @@ impl GenotypeStore {
                 "failed to open genotype entry {selected} in {name}: {err}"
             ))
         })?;
-        let mut contents = Vec::new();
-        entry.read_to_end(&mut contents).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to read genotype entry {selected} in {name}: {err}"
-            ))
-        })?;
+        let contents = read_zip_entry_limited(
+            &mut entry,
+            MAX_ZIP_ENTRY_BYTES,
+            &format!("genotype entry {selected} in {name}"),
+        )?;
         let lines =
             read_lines_from_reader(BufReader::new(Cursor::new(contents)), Path::new(&selected))?;
         if selected.to_ascii_lowercase().ends_with(".vcf") {
@@ -973,7 +974,14 @@ fn observe_snp_pileup(
     let mut reader =
         alignment::build_cram_indexed_reader_from_path(cram_path, options, repository)?;
     let label = cram_path.display().to_string();
-    snp_pileup_with_reader(&mut reader, &label, locus, reference, alternate)
+    snp_pileup_with_reader(
+        &mut reader,
+        &label,
+        locus,
+        reference,
+        alternate,
+        options.allow_reference_md5_mismatch,
+    )
 }
 
 fn snp_pileup_with_reader<R: Read + Seek>(
@@ -982,6 +990,7 @@ fn snp_pileup_with_reader<R: Read + Seek>(
     locus: &GenomicLocus,
     reference: char,
     alternate: char,
+    allow_reference_md5_mismatch: bool,
 ) -> Result<SnpPileupCounts, RuntimeError> {
     let mut counts = SnpPileupCounts::default();
     let target_position = Position::try_from(usize::try_from(locus.start).map_err(|_| {
@@ -990,80 +999,86 @@ fn snp_pileup_with_reader<R: Read + Seek>(
     .map_err(|_| RuntimeError::InvalidArguments("SNP locus start is out of range".to_owned()))?;
     let reference_base = reference as u8;
 
-    alignment::for_each_raw_cram_record_with_reader(reader, label, locus, |record| {
-        let flags = record
-            .flags()
-            .map_err(|err| RuntimeError::Io(format!("failed to read CRAM flags: {err}")))?;
-        if flags.is_unmapped() {
-            counts.filtered_unmapped += 1;
-            return Ok(true);
-        }
-        if flags.is_secondary() {
-            counts.filtered_secondary += 1;
-            return Ok(true);
-        }
-        if flags.is_qc_fail() {
-            counts.filtered_qc_fail += 1;
-            return Ok(true);
-        }
-        if flags.is_duplicate() {
-            counts.filtered_duplicate += 1;
-            return Ok(true);
-        }
-        if flags.is_segmented() && !flags.is_properly_segmented() {
-            counts.filtered_improper_pair += 1;
-            return Ok(true);
-        }
-
-        let Some((base, base_quality)) =
-            record.base_quality_at_reference_position(target_position, reference_base)
-        else {
-            return Ok(true);
-        };
-
-        let normalized_base = normalize_pileup_base(base);
-        record.mapping_quality().transpose().map_err(|err| {
-            RuntimeError::Io(format!("failed to read CRAM mapping quality: {err}"))
-        })?;
-        let is_reverse = flags.is_reverse_complemented();
-        if let Some(base) = normalized_base {
-            counts.raw_depth += 1;
-            *counts.raw_base_counts.entry(base.to_string()).or_insert(0) += 1;
-            let strand_counts = if is_reverse {
-                &mut counts.raw_reverse_counts
-            } else {
-                &mut counts.raw_forward_counts
-            };
-            *strand_counts.entry(base.to_string()).or_insert(0) += 1;
-            if base == reference {
-                counts.raw_ref_count += 1;
-            } else if base == alternate {
-                counts.raw_alt_count += 1;
+    alignment::for_each_raw_cram_record_with_reader_inner(
+        reader,
+        label,
+        locus,
+        allow_reference_md5_mismatch,
+        |record| {
+            let flags = record
+                .flags()
+                .map_err(|err| RuntimeError::Io(format!("failed to read CRAM flags: {err}")))?;
+            if flags.is_unmapped() {
+                counts.filtered_unmapped += 1;
+                return Ok(true);
             }
-        }
+            if flags.is_secondary() {
+                counts.filtered_secondary += 1;
+                return Ok(true);
+            }
+            if flags.is_qc_fail() {
+                counts.filtered_qc_fail += 1;
+                return Ok(true);
+            }
+            if flags.is_duplicate() {
+                counts.filtered_duplicate += 1;
+                return Ok(true);
+            }
+            if flags.is_segmented() && !flags.is_properly_segmented() {
+                counts.filtered_improper_pair += 1;
+                return Ok(true);
+            }
 
-        if base_quality < DEFAULT_MPILEUP_MIN_BASE_QUALITY {
-            counts.filtered_low_base_quality += 1;
-            return Ok(true);
-        }
+            let Some((base, base_quality)) =
+                record.base_quality_at_reference_position(target_position, reference_base)
+            else {
+                return Ok(true);
+            };
 
-        let Some(base) = normalized_base else {
-            counts.filtered_non_acgt += 1;
-            return Ok(true);
-        };
+            let normalized_base = normalize_pileup_base(base);
+            record.mapping_quality().transpose().map_err(|err| {
+                RuntimeError::Io(format!("failed to read CRAM mapping quality: {err}"))
+            })?;
+            let is_reverse = flags.is_reverse_complemented();
+            if let Some(base) = normalized_base {
+                counts.raw_depth += 1;
+                *counts.raw_base_counts.entry(base.to_string()).or_insert(0) += 1;
+                let strand_counts = if is_reverse {
+                    &mut counts.raw_reverse_counts
+                } else {
+                    &mut counts.raw_forward_counts
+                };
+                *strand_counts.entry(base.to_string()).or_insert(0) += 1;
+                if base == reference {
+                    counts.raw_ref_count += 1;
+                } else if base == alternate {
+                    counts.raw_alt_count += 1;
+                }
+            }
 
-        counts.filtered_depth += 1;
-        *counts
-            .filtered_base_counts
-            .entry(base.to_string())
-            .or_insert(0) += 1;
-        if base == reference {
-            counts.filtered_ref_count += 1;
-        } else if base == alternate {
-            counts.filtered_alt_count += 1;
-        }
-        Ok(true)
-    })?;
+            if base_quality < DEFAULT_MPILEUP_MIN_BASE_QUALITY {
+                counts.filtered_low_base_quality += 1;
+                return Ok(true);
+            }
+
+            let Some(base) = normalized_base else {
+                counts.filtered_non_acgt += 1;
+                return Ok(true);
+            };
+
+            counts.filtered_depth += 1;
+            *counts
+                .filtered_base_counts
+                .entry(base.to_string())
+                .or_insert(0) += 1;
+            if base == reference {
+                counts.filtered_ref_count += 1;
+            } else if base == alternate {
+                counts.filtered_alt_count += 1;
+            }
+            Ok(true)
+        },
+    )?;
 
     Ok(counts)
 }
@@ -1085,7 +1100,7 @@ pub fn observe_cram_snp_with_reader<R: Read + Seek>(
     matched_rsid: Option<String>,
     assembly: Option<Assembly>,
 ) -> Result<VariantObservation, RuntimeError> {
-    let pileup = snp_pileup_with_reader(reader, label, locus, reference, alternate)?;
+    let pileup = snp_pileup_with_reader(reader, label, locus, reference, alternate, false)?;
     let ref_count = pileup.filtered_ref_count;
     let alt_count = pileup.filtered_alt_count;
     let depth = pileup.filtered_depth;
@@ -2471,6 +2486,24 @@ fn read_lines_from_reader<R: BufRead>(
     Ok(lines)
 }
 
+fn read_zip_entry_limited<R: Read>(
+    reader: &mut R,
+    max_bytes: u64,
+    label: &str,
+) -> Result<Vec<u8>, RuntimeError> {
+    let mut contents = Vec::new();
+    reader
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut contents)
+        .map_err(|err| RuntimeError::Io(format!("failed to read {label}: {err}")))?;
+    if u64::try_from(contents.len()).unwrap_or(u64::MAX) > max_bytes {
+        return Err(RuntimeError::InvalidArguments(format!(
+            "{label} exceeds decompressed limit of {max_bytes} bytes"
+        )));
+    }
+    Ok(contents)
+}
+
 fn detect_source_format(
     path: &Path,
     forced: Option<GenotypeSourceFormat>,
@@ -2571,4 +2604,498 @@ fn is_symbolic_vcf_alt(alternate: &str) -> bool {
 
 fn normalize_sequence_token(value: &str) -> String {
     value.trim().to_ascii_uppercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        io::Write,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use zip::write::SimpleFileOptions;
+
+    use crate::alignment::AlignmentOp;
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "bioscript-genotype-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn locus(chrom: &str, start: i64, end: i64) -> GenomicLocus {
+        GenomicLocus {
+            chrom: chrom.to_owned(),
+            start,
+            end,
+        }
+    }
+
+    fn variant_with_loci() -> VariantSpec {
+        VariantSpec {
+            rsids: vec!["rs1".to_owned()],
+            grch37: Some(locus("1", 10, 10)),
+            grch38: Some(locus("2", 20, 20)),
+            reference: Some("A".to_owned()),
+            alternate: Some("G".to_owned()),
+            kind: Some(VariantKind::Snp),
+            deletion_length: None,
+            motifs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn genotype_private_helpers_cover_assembly_sorting_and_decision_rules() {
+        let variant = variant_with_loci();
+
+        assert_eq!(
+            choose_variant_locus(&variant, Path::new("ref/hg38.fa")),
+            Some((Assembly::Grch38, locus("2", 20, 20)))
+        );
+        assert_eq!(
+            choose_variant_locus(&variant, Path::new("ref/hg19.fa")),
+            Some((Assembly::Grch37, locus("1", 10, 10)))
+        );
+        assert_eq!(
+            choose_variant_locus(&variant, Path::new("ref/unknown.fa")),
+            Some((Assembly::Grch38, locus("2", 20, 20)))
+        );
+        assert_eq!(
+            choose_variant_locus_for_assembly(&variant, Some(Assembly::Grch37)),
+            Some(locus("1", 10, 10))
+        );
+        assert_eq!(
+            detect_reference_assembly(Path::new("assembly37.fa")),
+            Some(Assembly::Grch37)
+        );
+        assert_eq!(
+            detect_reference_assembly(Path::new("assembly38.fa")),
+            Some(Assembly::Grch38)
+        );
+        assert_eq!(detect_reference_assembly(Path::new("other.fa")), None);
+
+        assert_eq!(describe_locus(&locus("chr1", 7, 9)), "chr1:7-9");
+        assert_eq!(anchor_window(&locus("1", 1, 4)), locus("1", 0, 0));
+        assert_eq!(first_base(" tg"), Some('T'));
+        assert_eq!(first_base(""), None);
+
+        assert_eq!(infer_snp_genotype('A', 'G', 0, 0, 0), None);
+        assert_eq!(
+            infer_snp_genotype('A', 'G', 9, 1, 10).as_deref(),
+            Some("AA")
+        );
+        assert_eq!(
+            infer_snp_genotype('A', 'G', 1, 9, 10).as_deref(),
+            Some("GG")
+        );
+        assert_eq!(
+            infer_snp_genotype('A', 'G', 5, 5, 10).as_deref(),
+            Some("AG")
+        );
+        assert!(describe_snp_decision_rule('A', 'G', 0, 0, 0).contains("no covering reads"));
+        assert!(describe_snp_decision_rule('A', 'G', 0, 0, 3).contains("no reads matched"));
+        assert!(describe_snp_decision_rule('A', 'G', 2, 8, 10).contains("alt_fraction=0.800"));
+
+        assert_eq!(infer_copy_number_genotype("I", "D", 0, 0, 0), None);
+        assert_eq!(
+            infer_copy_number_genotype("I", "D", 9, 1, 10).as_deref(),
+            Some("II")
+        );
+        assert_eq!(
+            infer_copy_number_genotype("I", "D", 1, 9, 10).as_deref(),
+            Some("DD")
+        );
+        assert_eq!(
+            infer_copy_number_genotype("I", "D", 5, 5, 10).as_deref(),
+            Some("ID")
+        );
+        assert!(
+            describe_copy_number_decision_rule("I", "D", 0, 0, 0).contains("no covering reads")
+        );
+
+        assert_eq!(chrom_sort_key("chr2"), "002");
+        assert_eq!(chrom_sort_key("X"), "023");
+        assert_eq!(chrom_sort_key("MT"), "025");
+        assert_eq!(chrom_sort_key("GL0001"), "999-GL0001");
+        assert_eq!(variant_sort_key(&variant).0, 0);
+        assert_eq!(describe_query(&variant), "variant_by_locus");
+        assert_eq!(describe_query(&VariantSpec::default()), "variant_by_rsid");
+    }
+
+    #[test]
+    fn genotype_private_helpers_cover_row_parsing_and_normalization() {
+        assert!(matches!(
+            detect_delimiter(&["# skip".to_owned(), "a,b".to_owned()]),
+            Delimiter::Comma
+        ));
+        assert!(matches!(
+            detect_delimiter(&["a b".to_owned()]),
+            Delimiter::Space
+        ));
+        assert!(matches!(detect_delimiter(&Vec::new()), Delimiter::Tab));
+
+        assert_eq!(strip_bom("\u{feff}rs1"), "rs1");
+        assert_eq!(normalize_name("Base Pair-Position"), "basepairposition");
+        assert_eq!(strip_inline_comment("AG # note"), "AG");
+        assert_eq!(strip_inline_comment("AG // note"), "AG");
+        assert_eq!(normalize_genotype("n/a"), "--");
+        assert_eq!(normalize_genotype("a / g"), "AG");
+        assert_eq!(normalize_genotype("A/-"), "ID");
+        assert_eq!(split_csv_line(r#"rs1,"1,2",AG"#), vec!["rs1", "1,2", "AG"]);
+
+        let mut parser = RowParser::new(Delimiter::Comma);
+        assert!(
+            parser
+                .consume_record("# snpid,chr,pos,allele_a,allele_b")
+                .unwrap()
+                .is_none()
+        );
+        let row = parser.consume_record("rs1,1,10,A,G").unwrap().unwrap();
+        assert_eq!(row.rsid.as_deref(), Some("rs1"));
+        assert_eq!(row.chrom.as_deref(), Some("1"));
+        assert_eq!(row.position, Some(10));
+        assert_eq!(row.genotype, "AG");
+        let short_row = parser.consume_record("bad,row").unwrap().unwrap();
+        assert_eq!(short_row.rsid.as_deref(), Some("bad"));
+        assert_eq!(short_row.genotype, "--");
+        assert_eq!(parser.default_header(6).len(), 6);
+
+        let mut indexes = None;
+        let mut comment_header = None;
+        assert!(
+            parse_streaming_row(
+                "// marker chromosome position result",
+                Delimiter::Space,
+                &mut indexes,
+                &mut comment_header
+            )
+            .unwrap()
+            .is_none()
+        );
+        let row = parse_streaming_row(
+            "rs2 chr2 20 ct",
+            Delimiter::Space,
+            &mut indexes,
+            &mut comment_header,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(row.rsid.as_deref(), Some("rs2"));
+        assert_eq!(row.genotype, "CT");
+
+        let header = vec![
+            "marker".to_owned(),
+            "chrom".to_owned(),
+            "base_pair_position".to_owned(),
+            "allele1".to_owned(),
+            "allele2".to_owned(),
+        ];
+        let cols = build_column_indexes(&header);
+        assert_eq!(cols.rsid, Some(0));
+        assert_eq!(cols.chrom, Some(1));
+        assert_eq!(cols.position, Some(2));
+        assert_eq!(cols.allele1, Some(3));
+        assert_eq!(cols.allele2, Some(4));
+        assert_eq!(default_column_indexes(2).position, None);
+        assert_eq!(find_header_index(&header, GENOTYPE_ALIASES), None);
+        assert!(looks_like_header_fields(&["rsid".to_owned()]));
+        assert!(!looks_like_header_fields(&["sample".to_owned()]));
+    }
+
+    #[test]
+    fn genotype_private_helpers_cover_vcf_parsing_and_matching() {
+        assert!(parse_vcf_record("").unwrap().is_none());
+        assert!(parse_vcf_record("#CHROM\tPOS").unwrap().is_none());
+        assert!(parse_vcf_record("1\t10\trs1").unwrap().is_none());
+        assert!(
+            parse_vcf_record("1\t10\trs1\t.\tG\t.\tPASS\t.\tGT\t0/1")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            parse_vcf_record("1\t10\trs1\tA\t.\t.\tPASS\t.\tGT\t0/1")
+                .unwrap()
+                .is_none()
+        );
+        assert!(parse_vcf_record("1\tbad\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1").is_err());
+
+        let row = parse_vcf_record("chr1\t10\trs1\tA\tG,T\t.\tPASS\t.\tDP:GT\t8:1|2")
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.rsid.as_deref(), Some("rs1"));
+        assert_eq!(row.genotype, "GT");
+        assert_eq!(
+            extract_vcf_sample_genotype("DP:AD", "8:1,2", "A", &["G".to_owned()]),
+            None
+        );
+        assert_eq!(
+            genotype_from_vcf_gt(".", "A", &["G"]).as_deref(),
+            Some("--")
+        );
+        assert_eq!(
+            genotype_from_vcf_gt("./1", "A", &["G"]).as_deref(),
+            Some("--")
+        );
+        assert_eq!(
+            genotype_from_vcf_gt("bad", "A", &["G"]).as_deref(),
+            Some("--")
+        );
+        assert_eq!(genotype_from_vcf_gt("2/2", "A", &["G"]), None);
+        assert_eq!(vcf_reference_token("AT", &["A"]), "I");
+        assert_eq!(vcf_reference_token("A", &["AT"]), "D");
+        assert_eq!(vcf_reference_token("A", &["<NON_REF>"]), "A");
+        assert_eq!(vcf_alt_token("AT", "A"), "D");
+        assert_eq!(vcf_alt_token("A", "AT"), "I");
+        assert_eq!(vcf_alt_token("A", "<NON_REF>"), "--");
+        assert!(is_symbolic_vcf_alt("<DEL>"));
+        assert_eq!(normalize_sequence_token(" ag "), "AG");
+
+        assert_eq!(
+            detect_vcf_assembly(Path::new("sample.vcf"), &["##reference=hg19".to_owned()]),
+            Some(Assembly::Grch37)
+        );
+        assert_eq!(
+            detect_vcf_assembly(Path::new("sample.vcf"), &["##assembly=GRCh38".to_owned()]),
+            Some(Assembly::Grch38)
+        );
+        assert_eq!(
+            detect_vcf_assembly(Path::new("sample.b37.vcf"), &[]),
+            Some(Assembly::Grch37)
+        );
+        assert_eq!(
+            detect_vcf_assembly(Path::new("sample.b38.vcf"), &[]),
+            Some(Assembly::Grch38)
+        );
+        assert_eq!(normalize_chromosome_name("chrX"), "x");
+
+        let snp = VariantSpec {
+            grch38: Some(locus("1", 10, 10)),
+            reference: Some("A".to_owned()),
+            alternate: Some("G".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        };
+        assert!(vcf_row_matches_variant(&row, &snp, Some(Assembly::Grch38)));
+        let deletion_row = parse_vcf_record("1\t9\trsdel\tATC\tA\t.\tPASS\t.\tGT\t0/1")
+            .unwrap()
+            .unwrap();
+        let deletion = VariantSpec {
+            grch38: Some(locus("1", 10, 12)),
+            kind: Some(VariantKind::Deletion),
+            deletion_length: Some(2),
+            ..VariantSpec::default()
+        };
+        assert!(vcf_row_matches_variant(
+            &deletion_row,
+            &deletion,
+            Some(Assembly::Grch38)
+        ));
+        let insertion = VariantSpec {
+            grch38: Some(locus("1", 10, 10)),
+            kind: Some(VariantKind::Insertion),
+            ..VariantSpec::default()
+        };
+        assert!(vcf_row_matches_variant(
+            &deletion_row,
+            &insertion,
+            Some(Assembly::Grch38)
+        ));
+        assert!(!vcf_row_matches_variant(
+            &row,
+            &VariantSpec::default(),
+            None
+        ));
+    }
+
+    #[test]
+    fn genotype_private_helpers_cover_indel_record_classification() {
+        let record = AlignmentRecord {
+            start: 10,
+            end: 20,
+            is_unmapped: false,
+            cigar: vec![
+                AlignmentOp {
+                    kind: AlignmentOpKind::Match,
+                    len: 2,
+                },
+                AlignmentOp {
+                    kind: AlignmentOpKind::Insertion,
+                    len: 3,
+                },
+                AlignmentOp {
+                    kind: AlignmentOpKind::Deletion,
+                    len: 2,
+                },
+                AlignmentOp {
+                    kind: AlignmentOpKind::SoftClip,
+                    len: 4,
+                },
+            ],
+        };
+        assert!(spans_position(&record, 9));
+        assert!(record_overlaps_locus(&record, &locus("1", 15, 16)));
+        assert_eq!(
+            indel_at_anchor(&record, 11),
+            Some((AlignmentOpKind::Insertion, 3))
+        );
+        let deletion_record = AlignmentRecord {
+            start: 10,
+            end: 20,
+            is_unmapped: false,
+            cigar: vec![
+                AlignmentOp {
+                    kind: AlignmentOpKind::Match,
+                    len: 3,
+                },
+                AlignmentOp {
+                    kind: AlignmentOpKind::Deletion,
+                    len: 2,
+                },
+            ],
+        };
+        assert_eq!(
+            indel_at_anchor(&deletion_record, 12),
+            Some((AlignmentOpKind::Deletion, 2))
+        );
+        assert_eq!(indel_at_anchor(&record, 30), None);
+        assert_eq!(len_as_i64(usize::MAX), None);
+
+        let insertion = classify_expected_indel(&record, &locus("1", 12, 12), 1, "ATGC").unwrap();
+        assert!(insertion.covering);
+        assert!(insertion.matches_alt);
+        assert_eq!(insertion.observed_len, 4);
+        let deletion =
+            classify_expected_indel(&deletion_record, &locus("1", 13, 13), 3, "A").unwrap();
+        assert!(deletion.matches_alt);
+        assert_eq!(deletion.observed_len, 1);
+        let reference_like =
+            classify_expected_indel(&record, &locus("1", 18, 18), 1, "AT").unwrap();
+        assert!(reference_like.reference_like);
+        let not_covering = classify_expected_indel(&record, &locus("1", 1, 2), 2, "A").unwrap();
+        assert!(!not_covering.covering);
+
+        assert_eq!(normalize_pileup_base(b'a'), Some('A'));
+        assert_eq!(normalize_pileup_base(b'n'), None);
+        let pileup = SnpPileupCounts {
+            filtered_depth: 2,
+            filtered_ref_count: 1,
+            filtered_alt_count: 1,
+            raw_depth: 3,
+            raw_ref_count: 2,
+            raw_alt_count: 1,
+            filtered_low_base_quality: 1,
+            filtered_non_acgt: 1,
+            ..SnpPileupCounts::default()
+        };
+        let evidence = pileup.evidence_lines("1:10-10", 10);
+        assert_eq!(evidence.len(), 4);
+        assert!(evidence[0].contains("filtered_depth=2"));
+    }
+
+    #[test]
+    fn genotype_private_helpers_cover_file_and_zip_scanning_paths() {
+        let dir = temp_dir("file-zip-scanning");
+        let text = dir.join("sample.txt");
+        fs::write(
+            &text,
+            "# rsid chromosome position genotype\n\
+             rs1 1 10 AG\n\
+             rs2 2 20 CT\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            detect_source_format(&text, None).unwrap(),
+            GenotypeSourceFormat::Text
+        ));
+        assert!(matches!(
+            detect_source_format(&text, Some(GenotypeSourceFormat::Cram)).unwrap(),
+            GenotypeSourceFormat::Cram
+        ));
+        assert!(!looks_like_vcf_lines(&["rsid\tgenotype".to_owned()]));
+
+        let backend = DelimitedBackend {
+            format: GenotypeSourceFormat::Text,
+            path: text.clone(),
+            zip_entry_name: None,
+        };
+        let variants = vec![
+            VariantSpec {
+                rsids: vec!["rs2".to_owned()],
+                ..VariantSpec::default()
+            },
+            VariantSpec {
+                grch38: Some(locus("1", 10, 10)),
+                ..VariantSpec::default()
+            },
+            VariantSpec {
+                rsids: vec!["missing".to_owned()],
+                ..VariantSpec::default()
+            },
+        ];
+        let results = scan_delimited_variants(&backend, &variants).unwrap();
+        assert_eq!(results[0].genotype.as_deref(), Some("CT"));
+        assert_eq!(results[1].genotype.as_deref(), Some("AG"));
+        assert!(results[2].evidence[0].contains("no matching rsid"));
+        assert_eq!(backend.get("rs1").unwrap().as_deref(), Some("AG"));
+        assert_eq!(
+            backend
+                .lookup_variant(&VariantSpec {
+                    rsids: vec!["rs2".to_owned()],
+                    ..VariantSpec::default()
+                })
+                .unwrap()
+                .genotype
+                .as_deref(),
+            Some("CT")
+        );
+
+        let zip_path = dir.join("sample.zip");
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        writer
+            .add_directory("nested/", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .start_file("nested/sample.csv", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .write_all(b"rsid,chromosome,position,genotype\nrs3,3,30,GG\n")
+            .unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        fs::write(&zip_path, bytes).unwrap();
+        assert_eq!(select_zip_entry(&zip_path).unwrap(), "nested/sample.csv");
+        let zip_backend = GenotypeStore::from_file(&zip_path).unwrap();
+        assert_eq!(zip_backend.get("rs3").unwrap().as_deref(), Some("GG"));
+
+        let unsupported_backend = DelimitedBackend {
+            format: GenotypeSourceFormat::Vcf,
+            path: text,
+            zip_entry_name: None,
+        };
+        let err = scan_delimited_variants(&unsupported_backend, &variants).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("streaming delimited backend only supports")
+        );
+    }
+
+    #[test]
+    fn zip_entry_limited_reader_rejects_oversized_output() {
+        let mut reader = std::io::Cursor::new(b"abcdef".to_vec());
+        let err = read_zip_entry_limited(&mut reader, 5, "test zip entry").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("test zip entry exceeds decompressed limit of 5 bytes"),
+            "{err}"
+        );
+    }
 }

@@ -780,3 +780,221 @@ fn remote_resource_resolution_handles_json_versions_and_plain_relative_urls() {
         "{err}"
     );
 }
+
+#[test]
+fn validate_variants_covers_remaining_identity_coordinate_and_allele_edges() {
+    let dir = temp_dir("validate-variant-more-edges");
+    fs::write(
+        dir.join("not-a-variant.yaml"),
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "panel-shape"
+members: []
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("many-errors.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+tags:
+  - 7
+  - ""
+identifiers:
+  aliases:
+    - 7
+    - "bad-alias"
+    - "rs22"
+    - "rs22"
+coordinates:
+  grch37:
+    pos: 12
+  grch38:
+    chrom: "2"
+alleles:
+  kind: "snv"
+provenance:
+  sources:
+    - kind: "database"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("range-and-alleles.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "range-and-alleles"
+coordinates:
+  grch37:
+    chrom: "3"
+    start: 0
+    end: 0
+  grch38:
+    chrom: "4"
+    start: "bad"
+    end: 9
+alleles:
+  kind: "deletion"
+  ref: "A"
+  alts: "T"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("empty-alts.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "empty-alts"
+coordinates:
+  grch38:
+    chrom: "5"
+    pos: 11
+alleles:
+  kind: "insertion"
+  ref: "A"
+  alts: []
+"#,
+    )
+    .unwrap();
+
+    let report = validate_variants_path(&dir).unwrap();
+    let text = report.render_text();
+
+    assert_eq!(report.files_scanned, 4);
+    assert!(report.total_issues() >= 19, "{text}");
+    for expected in [
+        "missing required field",
+        "tags[0]: expected string",
+        "tags[1]: empty tag string",
+        "identifiers.aliases[0]: expected string",
+        "expected rsid like rs123, found 'bad-alias'",
+        "duplicate identifier 'rs22'",
+        "coordinates.grch37.chrom: missing chrom",
+        "coordinates.grch38: expected either pos or start/end",
+        "coordinates.grch37.start: expected integer >= 1",
+        "coordinates.grch37.end: expected integer >= 1",
+        "coordinates.grch38: expected integer start/end",
+        "alleles.ref: missing required field",
+        "alleles.alts: expected a non-empty sequence of strings",
+        "alleles.alts: expected at least one alternate allele",
+        "provenance.sources[0].label: missing required field",
+        "provenance.sources[0].url: missing required field",
+    ] {
+        assert!(text.contains(expected), "{expected}\n{text}");
+    }
+    assert!(!text.contains("panel-shape"));
+}
+
+#[test]
+fn validate_panels_and_loaders_cover_parse_error_edges() {
+    let dir = temp_dir("validate-panel-more-edges");
+    let non_panel = dir.join("variant.yaml");
+    fs::write(
+        &non_panel,
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "rs1"
+"#,
+    )
+    .unwrap();
+    let missing_schema = dir.join("missing-schema.yaml");
+    fs::write(
+        &missing_schema,
+        r#"
+version: "1.0"
+name: "missing-schema"
+"#,
+    )
+    .unwrap();
+
+    let report = validate_panels_path(&dir).unwrap();
+    let text = report.render_text();
+    assert_eq!(report.files_scanned, 2);
+    assert_eq!(report.total_errors(), 1, "{text}");
+    assert!(text.contains("missing schema"));
+    assert!(!text.contains("rs1"));
+
+    let invalid_panel = dir.join("invalid-panel.yaml");
+    fs::write(
+        &invalid_panel,
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+downloads:
+  - id: ""
+    url: "http://"
+    sha256: ""
+members:
+  - download: ""
+  - "not-a-map"
+"#,
+    )
+    .unwrap();
+    let err = load_panel_manifest(&invalid_panel).unwrap_err();
+    assert!(err.contains("name: missing required field"), "{err}");
+    assert!(err.contains("downloads[0].id: empty string"), "{err}");
+    assert!(err.contains("downloads[0].version: missing required field"), "{err}");
+    assert!(err.contains("members[0].kind: missing required field"), "{err}");
+    assert!(err.contains("members[0].download: empty string"), "{err}");
+    assert!(err.contains("members[1]: expected mapping"), "{err}");
+
+    let downloads_not_mapping = dir.join("downloads-not-mapping.yaml");
+    fs::write(
+        &downloads_not_mapping,
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "bad-download"
+downloads:
+  - "not-a-map"
+members:
+  - kind: "variant"
+    path: "rs1.yaml"
+"#,
+    )
+    .unwrap();
+    let err = load_panel_manifest(&downloads_not_mapping).unwrap_err();
+    assert!(err.contains("downloads[0]: expected mapping"), "{err}");
+
+    let members_not_mapping = dir.join("members-not-mapping.yaml");
+    fs::write(
+        &members_not_mapping,
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "bad-member"
+members:
+  - "not-a-map"
+"#,
+    )
+    .unwrap();
+    let err = load_panel_manifest(&members_not_mapping).unwrap_err();
+    assert!(err.contains("members[0]: expected mapping"), "{err}");
+
+    let invalid_lookup = load_variant_manifest_text_for_lookup(
+        "bad-lookup.yaml",
+        r#"
+schema: "wrong"
+version: "1.0"
+name: "bad-lookup"
+coordinates:
+  grch38:
+    chrom: "1"
+    pos: 0
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts: ["G"]
+"#,
+    )
+    .unwrap_err();
+    assert!(invalid_lookup.contains("schema: expected schema"), "{invalid_lookup}");
+    assert!(
+        invalid_lookup.contains("coordinates.grch38.pos: expected integer >= 1"),
+        "{invalid_lookup}"
+    );
+}

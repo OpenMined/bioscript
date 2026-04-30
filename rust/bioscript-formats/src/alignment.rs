@@ -65,7 +65,13 @@ where
     let repository = build_reference_repository(reference_file)?;
     let mut reader = build_cram_indexed_reader_from_path(path, options, repository)?;
     let label = path.display().to_string();
-    for_each_cram_record_with_reader(&mut reader, &label, locus, on_record)
+    for_each_cram_record_with_reader_inner(
+        &mut reader,
+        &label,
+        locus,
+        options.allow_reference_md5_mismatch,
+        on_record,
+    )
 }
 
 pub(crate) fn query_cram_records(
@@ -89,6 +95,20 @@ pub fn for_each_cram_record_with_reader<R, F>(
     reader: &mut cram::io::indexed_reader::IndexedReader<R>,
     label: &str,
     locus: &GenomicLocus,
+    on_record: F,
+) -> Result<(), RuntimeError>
+where
+    R: Read + Seek,
+    F: FnMut(AlignmentRecord) -> Result<bool, RuntimeError>,
+{
+    for_each_cram_record_with_reader_inner(reader, label, locus, false, on_record)
+}
+
+fn for_each_cram_record_with_reader_inner<R, F>(
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
+    label: &str,
+    locus: &GenomicLocus,
+    allow_reference_md5_mismatch: bool,
     mut on_record: F,
 ) -> Result<(), RuntimeError>
 where
@@ -122,6 +142,7 @@ where
         &region,
         locus.end,
         &selected_containers,
+        allow_reference_md5_mismatch,
         &mut on_record,
     )
 }
@@ -134,6 +155,20 @@ pub fn for_each_raw_cram_record_with_reader<R, F>(
     reader: &mut cram::io::indexed_reader::IndexedReader<R>,
     label: &str,
     locus: &GenomicLocus,
+    on_record: F,
+) -> Result<(), RuntimeError>
+where
+    R: Read + Seek,
+    F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
+{
+    for_each_raw_cram_record_with_reader_inner(reader, label, locus, false, on_record)
+}
+
+pub(crate) fn for_each_raw_cram_record_with_reader_inner<R, F>(
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
+    label: &str,
+    locus: &GenomicLocus,
+    allow_reference_md5_mismatch: bool,
     mut on_record: F,
 ) -> Result<(), RuntimeError>
 where
@@ -169,6 +204,7 @@ where
         &region,
         locus.end,
         &selected_containers,
+        allow_reference_md5_mismatch,
         &mut on_record,
     )
 }
@@ -326,6 +362,7 @@ fn stream_selected_alignment_records<R, F>(
     region: &Region,
     locus_end: i64,
     selected_containers: &[SelectedContainer],
+    allow_reference_md5_mismatch: bool,
     on_record: &mut F,
 ) -> Result<(), RuntimeError>
 where
@@ -339,6 +376,7 @@ where
         region,
         locus_end,
         selected_containers,
+        allow_reference_md5_mismatch,
         &mut |record| {
             let alignment_record = build_alignment_record_from_cram(label, &record)?;
             on_record(alignment_record)
@@ -353,6 +391,7 @@ fn stream_selected_cram_records<R, F>(
     region: &Region,
     locus_end: i64,
     selected_containers: &[SelectedContainer],
+    allow_reference_md5_mismatch: bool,
     on_record: &mut F,
 ) -> Result<(), RuntimeError>
 where
@@ -459,7 +498,7 @@ where
 
             match decode_result {
                 Ok(()) => {}
-                Err(err) if is_reference_md5_mismatch(&err) => {
+                Err(err) if allow_reference_md5_mismatch && is_reference_md5_mismatch(&err) => {
                     eprintln!(
                         "[bioscript] warning: CRAM reference MD5 mismatch for {label} slice landmark {landmark} — \
                          retrying without checksum validation. Results may be incorrect if the \
@@ -516,6 +555,11 @@ where
                                 "failed to decode CRAM slice records from {label} (unchecked): {err}"
                             ))
                         })?;
+                }
+                Err(err) if is_reference_md5_mismatch(&err) => {
+                    return Err(RuntimeError::Io(format!(
+                        "CRAM reference MD5 mismatch for {label} slice landmark {landmark}; rerun with --allow-md5-mismatch only if this lenient decode is intentional. Details: {err}"
+                    )));
                 }
                 Err(err) => {
                     return Err(RuntimeError::Io(format!(
@@ -677,5 +721,199 @@ fn map_op(op: sam::alignment::record::cigar::Op) -> AlignmentOp {
     AlignmentOp {
         kind,
         len: op.len(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::num::NonZero;
+
+    use noodles::sam::{
+        self,
+        alignment::record::cigar::{Op, op::Kind},
+        header::record::value::{Map, map::ReferenceSequence},
+    };
+
+    fn locus(chrom: &str, start: i64, end: i64) -> GenomicLocus {
+        GenomicLocus {
+            chrom: chrom.to_owned(),
+            start,
+            end,
+        }
+    }
+
+    fn header() -> sam::Header {
+        sam::Header::builder()
+            .add_reference_sequence(
+                "chr1",
+                Map::<ReferenceSequence>::new(NonZero::new(100).unwrap()),
+            )
+            .add_reference_sequence(
+                "2",
+                Map::<ReferenceSequence>::new(NonZero::new(200).unwrap()),
+            )
+            .build()
+    }
+
+    #[test]
+    fn alignment_helpers_cover_header_region_and_interval_logic() {
+        let header = header();
+        assert_eq!(
+            resolve_reference_name(&header, "1").as_deref(),
+            Some("chr1")
+        );
+        assert_eq!(
+            resolve_reference_name(&header, "chr2").as_deref(),
+            Some("2")
+        );
+        assert_eq!(resolve_reference_name(&header, "3"), None);
+        assert_eq!(resolve_reference_sequence_id(&header, b"chr1"), Some(0));
+        assert_eq!(resolve_reference_sequence_id(&header, b"2"), Some(1));
+        assert_eq!(resolve_reference_sequence_id(&header, b"missing"), None);
+
+        let region = build_region(&header, &locus("1", 10, 20)).unwrap();
+        assert_eq!(region.name(), b"chr1");
+        assert!(build_region(&header, &locus("missing", 10, 20)).is_none());
+        assert!(build_region(&header, &locus("1", -1, 20)).is_none());
+
+        let interval = region.interval();
+        let hit = crai::Record::new(Some(0), Position::new(12), 3, 100, 1, 20);
+        let miss_ref = crai::Record::new(Some(1), Position::new(12), 3, 100, 1, 20);
+        let no_start = crai::Record::new(Some(0), None, 3, 100, 1, 20);
+        let zero_span = crai::Record::new(Some(0), Position::new(12), 0, 100, 1, 20);
+        assert!(record_intersects_interval(&hit, interval));
+        assert!(record_intersects_interval(&miss_ref, interval));
+        assert!(!record_intersects_interval(&no_start, interval));
+        assert!(!record_intersects_interval(&zero_span, interval));
+
+        let alignment_hit = AlignmentRecord {
+            start: 11,
+            end: 13,
+            is_unmapped: false,
+            cigar: Vec::new(),
+        };
+        let alignment_miss = AlignmentRecord {
+            start: 30,
+            end: 40,
+            is_unmapped: false,
+            cigar: Vec::new(),
+        };
+        let bad_start = AlignmentRecord {
+            start: -1,
+            end: 10,
+            is_unmapped: false,
+            cigar: Vec::new(),
+        };
+        assert!(alignment_record_intersects_interval(
+            &alignment_hit,
+            interval
+        ));
+        assert!(!alignment_record_intersects_interval(
+            &alignment_miss,
+            interval
+        ));
+        assert!(!alignment_record_intersects_interval(&bad_start, interval));
+    }
+
+    #[test]
+    fn alignment_helpers_cover_index_selection_and_operation_mapping() {
+        let header = header();
+        let region = build_region(&header, &locus("1", 10, 20)).unwrap();
+        let index = vec![
+            crai::Record::new(Some(0), Position::new(8), 5, 100, 1, 20),
+            crai::Record::new(Some(0), Position::new(19), 3, 100, 2, 20),
+            crai::Record::new(Some(1), Position::new(12), 3, 200, 3, 20),
+            crai::Record::new(Some(0), Position::new(30), 3, 300, 4, 20),
+        ];
+        let selected = select_query_containers(&index, &header, &region).unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].offset, 100);
+        assert!(selected[0].landmarks.contains(&1));
+        assert!(selected[0].landmarks.contains(&2));
+
+        let missing_region: Region = "missing:1-2".parse().unwrap();
+        let err = select_query_containers(&index, &header, &missing_region).unwrap_err();
+        assert!(err.to_string().contains("does not contain contig"));
+
+        let cases = [
+            (Kind::Match, AlignmentOpKind::Match),
+            (Kind::Insertion, AlignmentOpKind::Insertion),
+            (Kind::Deletion, AlignmentOpKind::Deletion),
+            (Kind::Skip, AlignmentOpKind::Skip),
+            (Kind::SoftClip, AlignmentOpKind::SoftClip),
+            (Kind::HardClip, AlignmentOpKind::HardClip),
+            (Kind::Pad, AlignmentOpKind::Pad),
+            (Kind::SequenceMatch, AlignmentOpKind::SequenceMatch),
+            (Kind::SequenceMismatch, AlignmentOpKind::SequenceMismatch),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(
+                map_op(Op::new(kind, 7)),
+                AlignmentOp {
+                    kind: expected,
+                    len: 7
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn alignment_helpers_cover_parser_and_builder_errors() {
+        assert!(
+            parse_crai_bytes(b"not a crai")
+                .unwrap_err()
+                .to_string()
+                .contains("CRAM index")
+        );
+        assert!(
+            parse_fai_bytes(b"not a fai")
+                .unwrap_err()
+                .to_string()
+                .contains("FASTA index")
+        );
+        assert!(
+            parse_tbi_bytes(b"not a tbi")
+                .unwrap_err()
+                .to_string()
+                .contains("tabix index")
+        );
+        assert!(
+            build_reference_repository(Path::new("/definitely/missing/reference.fa"))
+                .unwrap_err()
+                .to_string()
+                .contains("failed to open indexed FASTA")
+        );
+
+        let repository = build_reference_repository_from_readers(
+            std::io::Cursor::new(Vec::<u8>::new()),
+            fasta::fai::Index::default(),
+        );
+        let options = GenotypeLoadOptions {
+            input_index: Some(Path::new("/definitely/missing/input.crai").to_path_buf()),
+            ..GenotypeLoadOptions::default()
+        };
+        let Err(err) =
+            build_cram_indexed_reader_from_path(Path::new("sample.cram"), &options, repository)
+        else {
+            panic!("expected missing CRAM index to fail");
+        };
+        assert!(err.to_string().contains("failed to read CRAM index"));
+
+        let repository = build_reference_repository_from_readers(
+            std::io::Cursor::new(Vec::<u8>::new()),
+            fasta::fai::Index::default(),
+        );
+        let reader = build_cram_indexed_reader_from_reader(
+            std::io::Cursor::new(Vec::<u8>::new()),
+            crai::Index::default(),
+            repository,
+        );
+        assert!(reader.is_ok());
+
+        let err = std::io::Error::other("reference sequence checksum mismatch: expected");
+        assert!(is_reference_md5_mismatch(&err));
+        let err = std::io::Error::other("other decode error");
+        assert!(!is_reference_md5_mismatch(&err));
     }
 }

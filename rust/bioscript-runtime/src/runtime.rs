@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
+    io::Read,
     path::{Component, Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -21,6 +22,8 @@ type HostFunction = fn(
     &[MontyObject],
     &[(MontyObject, MontyObject)],
 ) -> Result<MontyObject, RuntimeError>;
+
+const MAX_HOST_TEXT_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -299,8 +302,11 @@ impl BioscriptRuntime {
                 "bioscript.load_genotypes expects self and path".to_owned(),
             ));
         }
-        let path =
-            self.resolve_user_path(&expect_string_arg(args, 1, "bioscript.load_genotypes")?)?;
+        let path = self.resolve_existing_user_path(&expect_string_arg(
+            args,
+            1,
+            "bioscript.load_genotypes",
+        )?)?;
         let loader = self.resolved_loader_options()?;
         let store = GenotypeStore::from_file_with_options(&path, &loader)?;
         let handle = self.state.next_handle();
@@ -543,7 +549,8 @@ impl BioscriptRuntime {
                 "bioscript.write_tsv expects self, path, rows".to_owned(),
             ));
         }
-        let path = self.resolve_user_path(&expect_string_arg(args, 1, "bioscript.write_tsv")?)?;
+        let path =
+            self.resolve_user_write_path(&expect_string_arg(args, 1, "bioscript.write_tsv")?)?;
         let rows = expect_rows(&args[2])?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|err| {
@@ -634,6 +641,47 @@ impl BioscriptRuntime {
             }
         }
         Ok(self.root.join(path))
+    }
+
+    fn resolve_existing_user_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
+        let path = self.resolve_user_path(raw_path)?;
+        let canonical = path.canonicalize().map_err(|err| {
+            RuntimeError::Io(format!("failed to resolve {}: {err}", path.display()))
+        })?;
+        self.ensure_under_root(&canonical, raw_path)?;
+        Ok(canonical)
+    }
+
+    fn resolve_user_write_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
+        let path = self.resolve_user_path(raw_path)?;
+        if path.exists() {
+            let canonical = path.canonicalize().map_err(|err| {
+                RuntimeError::Io(format!("failed to resolve {}: {err}", path.display()))
+            })?;
+            self.ensure_under_root(&canonical, raw_path)?;
+            return Ok(canonical);
+        }
+
+        let parent = path.parent().unwrap_or(&self.root);
+        let existing_parent = deepest_existing_ancestor(parent);
+        let canonical_parent = existing_parent.canonicalize().map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to resolve parent dir {}: {err}",
+                existing_parent.display()
+            ))
+        })?;
+        self.ensure_under_root(&canonical_parent, raw_path)?;
+        Ok(path)
+    }
+
+    fn ensure_under_root(&self, path: &Path, raw_path: &str) -> Result<(), RuntimeError> {
+        if path.starts_with(&self.root) {
+            Ok(())
+        } else {
+            Err(RuntimeError::InvalidArguments(format!(
+                "path escapes bioscript root: {raw_path}"
+            )))
+        }
     }
 
     fn write_trace_report(
@@ -1310,9 +1358,8 @@ fn host_read_text(
     kwargs: &[(MontyObject, MontyObject)],
 ) -> Result<MontyObject, RuntimeError> {
     reject_kwargs(kwargs, "read_text")?;
-    let path = runtime.resolve_user_path(&expect_string_arg(args, 0, "read_text")?)?;
-    let content = fs::read_to_string(&path)
-        .map_err(|err| RuntimeError::Io(format!("failed to read {}: {err}", path.display())))?;
+    let path = runtime.resolve_existing_user_path(&expect_string_arg(args, 0, "read_text")?)?;
+    let content = read_text_limited(&path, MAX_HOST_TEXT_BYTES)?;
     Ok(MontyObject::String(content))
 }
 
@@ -1322,8 +1369,13 @@ fn host_write_text(
     kwargs: &[(MontyObject, MontyObject)],
 ) -> Result<MontyObject, RuntimeError> {
     reject_kwargs(kwargs, "write_text")?;
-    let path = runtime.resolve_user_path(&expect_string_arg(args, 0, "write_text")?)?;
+    let path = runtime.resolve_user_write_path(&expect_string_arg(args, 0, "write_text")?)?;
     let content = expect_string_arg(args, 1, "write_text")?;
+    if u64::try_from(content.len()).unwrap_or(u64::MAX) > MAX_HOST_TEXT_BYTES {
+        return Err(RuntimeError::InvalidArguments(format!(
+            "write_text content exceeds {MAX_HOST_TEXT_BYTES} bytes"
+        )));
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| {
             RuntimeError::Io(format!(
@@ -1335,6 +1387,40 @@ fn host_write_text(
     fs::write(&path, content)
         .map_err(|err| RuntimeError::Io(format!("failed to write {}: {err}", path.display())))?;
     Ok(MontyObject::None)
+}
+
+fn deepest_existing_ancestor(path: &Path) -> &Path {
+    let mut current = path;
+    while !current.exists() {
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent;
+    }
+    current
+}
+
+fn read_text_limited(path: &Path, max_bytes: u64) -> Result<String, RuntimeError> {
+    let mut file = fs::File::open(path)
+        .map_err(|err| RuntimeError::Io(format!("failed to read {}: {err}", path.display())))?;
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|err| RuntimeError::Io(format!("failed to read {}: {err}", path.display())))?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max_bytes {
+        return Err(RuntimeError::InvalidArguments(format!(
+            "read_text input {} exceeds {} bytes",
+            path.display(),
+            max_bytes
+        )));
+    }
+    String::from_utf8(bytes).map_err(|err| {
+        RuntimeError::Io(format!(
+            "failed to decode {} as UTF-8: {err}",
+            path.display()
+        ))
+    })
 }
 
 fn host_trace(
@@ -1450,4 +1536,119 @@ fn update_nesting_depth(mut depth: usize, line: &str) -> usize {
     }
 
     depth
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn attr<'a>(obj: &'a MontyObject, name: &str) -> Option<&'a MontyObject> {
+        let MontyObject::Dataclass { attrs, .. } = obj else {
+            return None;
+        };
+        attrs.into_iter().find_map(|(key, value)| {
+            matches!(key, MontyObject::String(text) if text == name).then_some(value)
+        })
+    }
+
+    #[test]
+    fn trace_helpers_cover_coordinates_rsids_and_statement_edges() {
+        assert_eq!(
+            trace_lookup_metadata("bioscript.variant(rsid='rs12345')").0,
+            Some("rs12345".to_owned())
+        );
+        let (key, url) = trace_lookup_metadata("bioscript.variant(grch37='chr1:10-20')");
+        assert_eq!(key.as_deref(), Some("1:10-20"));
+        assert!(url.unwrap().starts_with("https://grch37.ensembl.org"));
+        let (key, _) = trace_lookup_metadata("bioscript.variant(grch38='2:30')");
+        assert_eq!(key.as_deref(), Some("2:30-30"));
+        assert_eq!(trace_lookup_metadata("no lookup here"), (None, None));
+
+        let lines = ["plan = bioscript.query_plan([", "    RS1,", "])"];
+        assert_eq!(
+            statement_context(&lines, 1),
+            "plan = bioscript.query_plan([ RS1, ])"
+        );
+        assert_eq!(statement_context(&lines, 0), "");
+        assert_eq!(statement_context(&lines, 9), "");
+
+        assert_eq!(extract_rsid("x rs42 y"), Some("rs42".to_owned()));
+        assert_eq!(extract_rsid("notrs42"), None);
+        assert_eq!(extract_coordinate("chrX:7;"), Some("X:7-7".to_owned()));
+        assert_eq!(extract_coordinate("chrM:7-8"), Some("M:7-8".to_owned()));
+        assert_eq!(extract_coordinate("chr1:x-y"), None);
+    }
+
+    #[test]
+    fn instrument_source_tracks_continuations_comments_and_strings() {
+        let source = "value = (\n    'not ) counted'\n)\n# skip\nnext_value = 1\\\n    + 2\n";
+        let instrumented = instrument_source(source);
+
+        assert!(instrumented.contains("__bioscript_trace__(1)\nvalue = ("));
+        assert!(!instrumented.contains("__bioscript_trace__(2)"));
+        assert!(!instrumented.contains("__bioscript_trace__(3)"));
+        assert!(!instrumented.contains("__bioscript_trace__(4)"));
+        assert!(instrumented.contains("__bioscript_trace__(5)\nnext_value = 1\\"));
+        assert!(!instrumented.contains("__bioscript_trace__(6)"));
+        assert!(instrumented.ends_with('\n'));
+
+        assert!(ends_with_unescaped_backslash("x = 1\\"));
+        assert!(!ends_with_unescaped_backslash("x = '\\\\'"));
+        assert_eq!(update_nesting_depth(0, "call(') still string', [1]) # ignored"), 0);
+        assert_eq!(update_nesting_depth(0, "call(["), 2);
+        assert_eq!(update_nesting_depth(2, "])"), 0);
+    }
+
+    #[test]
+    fn object_helpers_cover_optional_fields_and_conversion_errors() {
+        let observation = bioscript_core::VariantObservation {
+            backend: "vcf".to_owned(),
+            matched_rsid: Some("rs1".to_owned()),
+            assembly: Some(bioscript_core::Assembly::Grch37),
+            genotype: Some("AG".to_owned()),
+            ref_count: Some(3),
+            alt_count: Some(2),
+            depth: Some(5),
+            raw_counts: BTreeMap::from([("A".to_owned(), 3), ("G".to_owned(), 2)]),
+            decision: Some("heterozygous".to_owned()),
+            evidence: vec!["resolved".to_owned()],
+        };
+        let object = variant_observation_object(&observation);
+        assert!(matches!(attr(&object, "assembly"), Some(MontyObject::String(v)) if v == "grch37"));
+        assert!(matches!(attr(&object, "ref_count"), Some(MontyObject::Int(3))));
+        assert!(matches!(attr(&object, "alt_count"), Some(MontyObject::Int(2))));
+        assert!(matches!(attr(&object, "depth"), Some(MontyObject::Int(5))));
+
+        let missing = variant_observation_object(&bioscript_core::VariantObservation::default());
+        assert!(matches!(attr(&missing, "assembly"), Some(MontyObject::None)));
+        assert!(matches!(attr(&missing, "genotype"), Some(MontyObject::None)));
+
+        assert_eq!(string_or_list(&MontyObject::None).unwrap(), Vec::<String>::new());
+        assert_eq!(
+            string_list_from_object(&MontyObject::None).unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(string_from_optional(&MontyObject::None).unwrap(), None);
+        assert_eq!(int_from_optional(&MontyObject::None).unwrap(), None);
+        assert!(string_list_from_object(&MontyObject::String("x".to_owned())).is_err());
+
+        let bad_plan = MontyObject::Dataclass {
+            name: "VariantPlan".to_owned(),
+            type_id: 4,
+            field_names: vec![],
+            attrs: vec![].into(),
+            frozen: true,
+        };
+        assert!(variant_specs_from_plan(&bad_plan).unwrap_err().to_string().contains("missing variants"));
+
+        let bad_variant = MontyObject::Dataclass {
+            name: "Other".to_owned(),
+            type_id: 9,
+            field_names: vec![],
+            attrs: vec![].into(),
+            frozen: true,
+        };
+        assert!(dataclass_to_variant_spec(&bad_variant).unwrap_err().to_string().contains("got Other"));
+        assert!(dataclass_to_variant_spec(&MontyObject::None).unwrap_err().to_string().contains("expected Variant object"));
+    }
 }

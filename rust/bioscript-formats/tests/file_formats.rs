@@ -629,6 +629,7 @@ fn forced_cram_store(dir: &std::path::Path, reference_name: &str) -> GenotypeSto
             reference_file: Some(dir.join(reference_name)),
             reference_index: Some(dir.join(format!("{reference_name}.fai"))),
             input_index: Some(dir.join("missing.cram.crai")),
+            allow_reference_md5_mismatch: false,
         },
     )
     .unwrap()
@@ -1212,6 +1213,13 @@ fn chr_y_cram_fixture_or_skip(test_name: &str) -> Option<CramFixture> {
 }
 
 fn open_cram_store(fx: &CramFixture) -> GenotypeStore {
+    open_cram_store_with_md5_policy(fx, false)
+}
+
+fn open_cram_store_with_md5_policy(
+    fx: &CramFixture,
+    allow_reference_md5_mismatch: bool,
+) -> GenotypeStore {
     GenotypeStore::from_file_with_options(
         &fx.cram,
         &GenotypeLoadOptions {
@@ -1219,6 +1227,7 @@ fn open_cram_store(fx: &CramFixture) -> GenotypeStore {
             input_index: Some(fx.input_index.clone()),
             reference_file: Some(fx.reference.clone()),
             reference_index: Some(fx.reference_index.clone()),
+            allow_reference_md5_mismatch,
         },
     )
     .expect("open cram store")
@@ -1293,13 +1302,13 @@ fn cram_mini_fixture_streams_only_locus_overlapping_reads() {
 }
 
 #[test]
-fn cram_mini_fixture_md5_mismatch_is_tolerated() {
+fn cram_mini_fixture_md5_mismatch_is_tolerated_when_allowed() {
     // mini_bad_ref.fa has a single-base mutation at chr_test:2800, inside the
     // slice span but far from our query locus at 1000. noodles' strict MD5
     // check will fail; bioscript must warn + retry unchecked + still return
     // the correct genotype (the bases at pos 1000 are identical in both refs).
     let fx = mini_cram_fixture_with_bad_ref();
-    let store = open_cram_store(&fx);
+    let store = open_cram_store_with_md5_policy(&fx, true);
 
     let observation = store
         .lookup_variant(&VariantSpec {
@@ -1432,7 +1441,7 @@ fn cram_md5_mismatch_is_tolerated_and_returns_correct_result() {
     else {
         return;
     };
-    let store = open_cram_store(&fx);
+    let store = open_cram_store_with_md5_policy(&fx, true);
 
     let observation = store
         .lookup_variant(&VariantSpec {
@@ -1483,7 +1492,7 @@ fn cram_rs9357296_reports_heterozygous_counts_for_na06985() {
     else {
         return;
     };
-    let store = open_cram_store(&fx);
+    let store = open_cram_store_with_md5_policy(&fx, true);
 
     let observation = store
         .lookup_variant(&VariantSpec {

@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test: [file_formats, inspect, prepare, cli, schema, core, runtime_security, runtime_resources]
+        test: [file_formats, formats_lib, inspect, prepare, cli, schema, core, runtime_security, runtime_resources]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

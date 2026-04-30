@@ -2,6 +2,7 @@
     clippy::case_sensitive_file_extension_comparisons,
     clippy::missing_errors_doc,
     clippy::must_use_candidate,
+    clippy::too_many_arguments,
     clippy::too_many_lines,
     clippy::unnecessary_wraps,
     clippy::unused_self

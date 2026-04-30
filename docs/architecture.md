@@ -58,7 +58,7 @@ Given a single SNP or indel locus, the read path is:
 5. For each selected slice:
    - `decode_blocks()` — decompresses the CRAM blocks once per slice.
    - `records_while(..., validate_reference_md5 = true, on_record)` — streams records one at a time. For each record we construct an `AlignmentRecord` (start/end/sequence/CIGAR) and either skip it (outside the interval), forward it to the caller, or **stop** (once `record.start > locus.end`, since slices are coordinate-sorted).
-6. On `reference sequence checksum mismatch`, the call is retried with `validate_reference_md5 = false`, a loud warning is written to `stderr`, and decoding proceeds. Results may be wrong at positions where the supplied FASTA actually differs from the encoding reference — the warning tells the user to investigate.
+6. On `reference sequence checksum mismatch`, decoding fails closed by default. Callers may explicitly pass `--allow-md5-mismatch` to retry with `validate_reference_md5 = false`; in that mode a loud warning is written to `stderr`, and results may be wrong at positions where the supplied FASTA actually differs from the encoding reference.
 
 Compared to calling upstream `Slice::records()` directly, the streaming path turns decoding ~10 000 records into decoding ~40 — roughly three orders of magnitude less work per locus.
 

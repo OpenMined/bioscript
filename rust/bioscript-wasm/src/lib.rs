@@ -428,6 +428,27 @@ pub fn lookup_genotype_bytes_variants(
     serde_json::to_string(&rows).map_err(|err| JsError::new(&format!("encode results: {err}")))
 }
 
+#[wasm_bindgen(js_name = lookupGenotypeBytesRsids)]
+pub fn lookup_genotype_bytes_rsids(
+    name: &str,
+    bytes: &[u8],
+    rsids_json: &str,
+) -> Result<String, JsError> {
+    let store = GenotypeStore::from_bytes(name, bytes)
+        .map_err(|err| JsError::new(&format!("load genotype bytes {name}: {err:?}")))?;
+    let rsids: Vec<String> = serde_json::from_str(rsids_json)
+        .map_err(|err| JsError::new(&format!("parse rsidsJson: {err}")))?;
+    let values = rsids
+        .iter()
+        .map(|rsid| {
+            store
+                .get(rsid)
+                .map_err(|err| JsError::new(&format!("lookup genotype rsid {rsid}: {err:?}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    serde_json::to_string(&values).map_err(|err| JsError::new(&format!("encode results: {err}")))
+}
+
 fn ensure_single_base_variant(variant: &VariantInput) -> Result<(), JsError> {
     let kind = variant
         .kind

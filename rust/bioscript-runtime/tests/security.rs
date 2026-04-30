@@ -1,12 +1,12 @@
 use std::{
     fs,
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use bioscript_formats::GenotypeLoadOptions;
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig};
-use monty::MontyObject;
+use monty::{MontyObject, ResourceLimits};
 
 fn temp_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -129,6 +129,142 @@ if __name__ == "__main__":
 
     let written = fs::read_to_string(dir.join("outputs/nested/result.txt")).unwrap();
     assert_eq!(written, "hello nested output");
+}
+
+#[cfg(unix)]
+#[test]
+fn host_read_text_rejects_symlink_escape() {
+    let dir = temp_dir("read-symlink-escape");
+    let outside = temp_dir("read-symlink-outside");
+    fs::write(outside.join("secret.txt"), "secret").unwrap();
+    std::os::unix::fs::symlink(outside.join("secret.txt"), dir.join("linked-secret.txt")).unwrap();
+
+    let Err(err) = run_script_with_inputs(
+        &dir,
+        r#"
+def main():
+    bioscript.read_text("linked-secret.txt")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    ) else {
+        panic!("expected symlink read to fail");
+    };
+    assert!(err.contains("path escapes bioscript root"), "{err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn host_write_text_rejects_symlink_escape() {
+    let dir = temp_dir("write-symlink-escape");
+    let outside = temp_dir("write-symlink-outside");
+    fs::write(outside.join("target.txt"), "before").unwrap();
+    std::os::unix::fs::symlink(outside.join("target.txt"), dir.join("linked-target.txt")).unwrap();
+
+    let Err(err) = run_script_with_inputs(
+        &dir,
+        r#"
+def main():
+    bioscript.write_text("linked-target.txt", "after")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    ) else {
+        panic!("expected symlink write to fail");
+    };
+    assert!(err.contains("path escapes bioscript root"), "{err}");
+    assert_eq!(
+        fs::read_to_string(outside.join("target.txt")).unwrap(),
+        "before"
+    );
+}
+
+#[test]
+fn host_read_text_rejects_oversized_file() {
+    let dir = temp_dir("oversized-read");
+    fs::write(dir.join("large.txt"), vec![b'a'; 16 * 1024 * 1024 + 1]).unwrap();
+
+    let Err(err) = run_script_with_inputs(
+        &dir,
+        r#"
+def main():
+    bioscript.read_text("large.txt")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    ) else {
+        panic!("expected oversized read to fail");
+    };
+    assert!(err.contains("exceeds 16777216 bytes"), "{err}");
+}
+
+#[test]
+fn host_read_text_rejects_invalid_utf8() {
+    let dir = temp_dir("invalid-utf8-read");
+    fs::write(dir.join("invalid.txt"), [0xff, 0xfe, b'a']).unwrap();
+
+    let Err(err) = run_script_with_inputs(
+        &dir,
+        r#"
+def main():
+    bioscript.read_text("invalid.txt")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    ) else {
+        panic!("expected invalid UTF-8 read to fail");
+    };
+    assert!(err.contains("failed to decode"), "{err}");
+}
+
+#[test]
+fn host_write_text_rejects_oversized_content() {
+    let dir = temp_dir("oversized-write");
+    let script = dir.join("script.py");
+    fs::write(
+        &script,
+        r#"
+def main():
+    bioscript.write_text("large.txt", content)
+
+if __name__ == "__main__":
+    main()
+"#,
+    )
+    .unwrap();
+    let huge = "a".repeat(16 * 1024 * 1024 + 1);
+    let runtime = BioscriptRuntime::with_config(
+        &dir,
+        RuntimeConfig {
+            limits: ResourceLimits::new()
+                .max_duration(Duration::from_millis(100))
+                .max_memory(64 * 1024 * 1024)
+                .max_allocations(200_000)
+                .gc_interval(1000)
+                .max_recursion_depth(Some(200)),
+            ..RuntimeConfig::default()
+        },
+    )
+    .unwrap();
+
+    let Err(err) = runtime.run_file(&script, None, vec![("content", MontyObject::String(huge))])
+    else {
+        panic!("expected oversized write to fail");
+    };
+    let err = err.to_string();
+    assert!(
+        err.contains("write_text content exceeds 16777216 bytes"),
+        "{err}"
+    );
+    assert!(!dir.join("large.txt").exists());
 }
 
 #[test]
@@ -572,6 +708,7 @@ fn runtime_loader_paths_are_resolved_and_escape_checks_apply() {
                 input_index: Some(PathBuf::from("indexes/input.crai")),
                 reference_file: Some(PathBuf::from("refs/ref.fa")),
                 reference_index: Some(PathBuf::from("refs/ref.fa.fai")),
+                ..GenotypeLoadOptions::default()
             },
             ..RuntimeConfig::default()
         },
