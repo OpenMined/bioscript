@@ -257,3 +257,154 @@ members:
         "https://github.com/madhavajay/exvitae/blob/main/assays/pgx/GLP1/variants/rs2048683.yaml"
     );
 }
+
+#[test]
+fn remote_resource_resolution_classifies_python_without_parsing() {
+    let text = "print('hello from remote bioscript')\n";
+
+    let resolved = resolve_remote_resource_text(
+        "https://github.com/OpenMined/bioscript/blob/main/example.py",
+        "example.py",
+        text,
+    )
+    .unwrap();
+
+    assert_eq!(resolved.kind, RemoteResourceKind::Python);
+    assert_eq!(resolved.schema, None);
+    assert_eq!(resolved.title, "example.py");
+    assert_eq!(
+        resolved.sha256,
+        "b6d9c1ee20c7fb054ebd7defd271d7956b25d8d0c3ef451eaf6adcfda8a61b0f"
+    );
+}
+
+#[test]
+fn remote_resource_resolution_classifies_schema_kinds() {
+    let cases = [
+        (
+            "variant.yaml",
+            "bioscript:variant:1.0",
+            RemoteResourceKind::Variant,
+        ),
+        (
+            "panel.yaml",
+            "bioscript:panel:1.0",
+            RemoteResourceKind::Panel,
+        ),
+        (
+            "catalogue.yaml",
+            "bioscript:catalogue:1.0",
+            RemoteResourceKind::Catalogue,
+        ),
+        (
+            "assay.yaml",
+            "bioscript:assay:1.0",
+            RemoteResourceKind::Assay,
+        ),
+    ];
+
+    for (name, schema, expected) in cases {
+        let text = format!(
+            r#"
+schema: "{schema}"
+version: "1.0"
+name: "{name}"
+"#
+        );
+
+        let resolved =
+            resolve_remote_resource_text("https://example.com/resources/index.yaml", name, &text)
+                .unwrap();
+
+        assert_eq!(resolved.kind, expected, "{name}");
+        assert_eq!(resolved.schema.as_deref(), Some(schema), "{name}");
+    }
+}
+
+#[test]
+fn remote_resource_resolution_infers_kind_from_fields_without_schema() {
+    let cases = [
+        ("members.yaml", "members: []\n", RemoteResourceKind::Panel),
+        ("variants.yaml", "variants: []\n", RemoteResourceKind::Panel),
+        (
+            "catalogue.yaml",
+            "assays: []\n",
+            RemoteResourceKind::Catalogue,
+        ),
+        (
+            "assay.yaml",
+            "assay:\n  package_version: \"2026.1\"\n",
+            RemoteResourceKind::Assay,
+        ),
+        (
+            "variant.yaml",
+            "variant_id: TEST_rs1\ncoordinates: {}\n",
+            RemoteResourceKind::Variant,
+        ),
+        (
+            "unknown.yaml",
+            "name: just-a-file\n",
+            RemoteResourceKind::Unknown,
+        ),
+    ];
+
+    for (name, text, expected) in cases {
+        let resolved =
+            resolve_remote_resource_text("https://example.com/resources/index.yaml", name, text)
+                .unwrap();
+
+        assert_eq!(resolved.kind, expected, "{name}");
+    }
+}
+
+#[test]
+fn remote_resource_resolution_resolves_github_dependencies_and_dedupes_urls() {
+    let text = r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+members:
+  - path: "variants/rs1.yaml"
+    version: "1.1"
+  - path: "variants/rs1.yaml"
+    version: "1.1"
+  - path: "/shared/rs2.yaml"
+downloads:
+  - url: "https://example.com/reference.json"
+"#;
+
+    let resolved = resolve_remote_resource_text(
+        "https://github.com/OpenMined/bioscript/blob/main/panels/panel.yaml",
+        "panel.yaml",
+        text,
+    )
+    .unwrap();
+
+    let urls = resolved
+        .dependencies
+        .iter()
+        .map(|dependency| dependency.url.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        urls,
+        vec![
+            "https://example.com/reference.json",
+            "https://github.com/OpenMined/bioscript/blob/main/panels/variants/rs1.yaml",
+            "https://github.com/OpenMined/bioscript/blob/main/shared/rs2.yaml",
+        ]
+    );
+    assert_eq!(resolved.dependencies[0].kind, "download");
+    assert_eq!(resolved.dependencies[1].kind, "member");
+    assert_eq!(resolved.dependencies[1].version.as_deref(), Some("1.1"));
+}
+
+#[test]
+fn remote_resource_resolution_reports_invalid_structured_text() {
+    let err = resolve_remote_resource_text("https://example.com/bad.yaml", "bad.yaml", ":\n")
+        .unwrap_err();
+
+    assert!(
+        err.contains("failed to parse YAML resource bad.yaml"),
+        "{err}"
+    );
+}

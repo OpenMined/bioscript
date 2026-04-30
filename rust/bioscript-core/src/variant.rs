@@ -59,3 +59,57 @@ impl VariantSpec {
         self.grch37.is_some() || self.grch38.is_some()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{GenomicLocus, VariantSpec};
+
+    #[test]
+    fn default_variant_spec_has_no_lookup_keys() {
+        let spec = VariantSpec::default();
+
+        assert!(!spec.has_rsids());
+        assert!(!spec.has_coordinates());
+    }
+
+    #[test]
+    fn variant_spec_reports_rsid_lookup_keys() {
+        let spec = VariantSpec {
+            rsids: vec!["rs73885319".to_owned()],
+            ..VariantSpec::default()
+        };
+
+        assert!(spec.has_rsids());
+        assert!(!spec.has_coordinates());
+    }
+
+    #[test]
+    fn variant_spec_reports_grch37_coordinates() {
+        let spec = VariantSpec {
+            grch37: Some(GenomicLocus {
+                chrom: "22".to_owned(),
+                start: 36_265_860,
+                end: 36_265_861,
+            }),
+            ..VariantSpec::default()
+        };
+
+        assert!(!spec.has_rsids());
+        assert!(spec.has_coordinates());
+    }
+
+    #[test]
+    fn variant_spec_reports_grch38_coordinates() {
+        let spec = VariantSpec {
+            grch38: Some(GenomicLocus {
+                chrom: "22".to_owned(),
+                start: 36_265_860,
+                end: 36_265_861,
+            }),
+            ..VariantSpec::default()
+        };
+
+        assert!(!spec.has_rsids());
+        assert!(spec.has_coordinates());
+    }
+}

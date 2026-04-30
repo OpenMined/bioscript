@@ -84,6 +84,38 @@ fn absolute_path_outside_root_is_rejected() {
 }
 
 #[test]
+fn absolute_path_inside_root_is_allowed() {
+    let root = temp_dir("absolute-inside-root");
+    let cwd = temp_dir("absolute-inside-cwd");
+    let input = root.join("sample.txt");
+    fs::write(&input, "rsid\tchromosome\tposition\tgenotype\n").unwrap();
+
+    let mut req = request(root, cwd, PathBuf::from("cache"));
+    req.input_file = Some(input.to_string_lossy().into_owned());
+
+    let prepared = prepare_indexes(&req).unwrap();
+
+    assert_eq!(
+        prepared.input_file.as_deref(),
+        Some(input.canonicalize().unwrap().as_path())
+    );
+}
+
+#[test]
+fn missing_input_file_returns_clear_error() {
+    let root = temp_dir("missing-input-root");
+    let cwd = temp_dir("missing-input-cwd");
+
+    let mut req = request(root, cwd, PathBuf::from("cache"));
+    req.input_file = Some("missing.txt".to_owned());
+
+    let err = prepare_indexes(&req).unwrap_err();
+
+    assert!(err.contains("failed to resolve"), "{err}");
+    assert!(err.contains("missing.txt"), "{err}");
+}
+
+#[test]
 fn absolute_cache_dir_is_preserved() {
     let root = temp_dir("absolute-cache-root");
     let cwd = temp_dir("absolute-cache-cwd");
@@ -113,6 +145,26 @@ fn adjacent_cram_index_is_detected_without_rebuilding() {
     assert_eq!(
         prepared.input_index.as_deref(),
         Some(expected_index.as_path())
+    );
+}
+
+#[test]
+fn adjacent_short_cram_index_is_detected_without_rebuilding() {
+    let root = temp_dir("adjacent-short-cram-root");
+    let cwd = temp_dir("adjacent-short-cram-cwd");
+    let input_path = root.join("sample.cram");
+    let index_path = root.join("sample.crai");
+    fs::write(&input_path, b"not a real cram").unwrap();
+    fs::write(&index_path, b"not a real crai").unwrap();
+
+    let mut req = request(root, cwd, PathBuf::from("cache"));
+    req.input_file = Some("sample.cram".to_owned());
+
+    let prepared = prepare_indexes(&req).unwrap();
+
+    assert_eq!(
+        prepared.input_index.as_deref(),
+        Some(index_path.canonicalize().unwrap().as_path())
     );
 }
 
@@ -180,6 +232,28 @@ fn fasta_index_is_generated_in_cache_when_missing() {
 }
 
 #[test]
+fn fasta_without_extension_uses_fai_extension() {
+    let root = temp_dir("fasta-no-extension-root");
+    let cwd = temp_dir("fasta-no-extension-cwd");
+    let cache = cwd.join("cache");
+    fs::write(root.join("reference"), b">chr1\nACGT\n").unwrap();
+
+    let mut req = request(root, cwd, PathBuf::from("cache"));
+    req.reference_file = Some("reference".to_owned());
+
+    let prepared = prepare_indexes(&req).unwrap();
+    let cached_reference = prepared.reference_file.expect("cached reference");
+    let cached_index = prepared.reference_index.expect("cached reference index");
+
+    assert!(cached_reference.starts_with(&cache));
+    assert_eq!(
+        cached_index.extension().and_then(|ext| ext.to_str()),
+        Some("fai")
+    );
+    assert!(cached_index.exists());
+}
+
+#[test]
 fn shell_flags_quote_paths_with_spaces_and_single_quotes() {
     let prepared = PreparedPaths {
         input_file: Some(PathBuf::from("/tmp/input files/sample's.cram")),
@@ -195,6 +269,16 @@ fn shell_flags_quote_paths_with_spaces_and_single_quotes() {
     assert!(flags.contains("--input-index '/tmp/input files/sample.cram.crai'"));
     assert!(flags.contains("--reference-file '/tmp/ref files/ref'\"'\"'s.fa'"));
     assert!(flags.contains("--reference-index '/tmp/ref files/ref.fa.fai'"));
+}
+
+#[test]
+fn shell_flags_are_empty_when_nothing_was_prepared() {
+    let prepared = PreparedPaths {
+        cache_dir: PathBuf::from("/tmp/cache"),
+        ..PreparedPaths::default()
+    };
+
+    assert_eq!(shell_flags(&prepared), "");
 }
 
 #[test]

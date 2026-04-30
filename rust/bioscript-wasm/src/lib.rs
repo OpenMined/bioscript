@@ -21,9 +21,8 @@ use std::{io::BufReader, path::PathBuf};
 use bioscript_core::{GenomicLocus, VariantKind, VariantObservation, VariantSpec};
 use bioscript_formats::{
     alignment, inspect_bytes as inspect_bytes_rs, observe_cram_indel_with_reader,
-    observe_cram_snp_with_reader,
-    observe_vcf_snp_with_reader, DetectedKind, DetectionConfidence, FileContainer, FileInspection,
-    GenotypeStore, InspectOptions, SourceMetadata,
+    observe_cram_snp_with_reader, observe_vcf_snp_with_reader, DetectedKind, DetectionConfidence,
+    FileContainer, FileInspection, GenotypeStore, InspectOptions, SourceMetadata,
 };
 use bioscript_schema::{
     load_variant_manifest_text_for_lookup,
@@ -272,42 +271,43 @@ pub fn lookup_cram_variants(
             end,
         };
         let kind = parse_variant_kind(variant.kind.as_deref()).unwrap_or(VariantKind::Snp);
-        let observation = match kind {
-            VariantKind::Snp => {
-                ensure_single_base_variant(&variant)?;
-                let ref_char = variant.ref_base.chars().next().ok_or_else(|| {
-                    JsError::new(&format!("variant {}: empty ref", variant.name))
-                })?;
-                let alt_char = variant.alt_base.chars().next().ok_or_else(|| {
-                    JsError::new(&format!("variant {}: empty alt", variant.name))
-                })?;
-                observe_cram_snp_with_reader(
+        let observation =
+            match kind {
+                VariantKind::Snp => {
+                    ensure_single_base_variant(&variant)?;
+                    let ref_char = variant.ref_base.chars().next().ok_or_else(|| {
+                        JsError::new(&format!("variant {}: empty ref", variant.name))
+                    })?;
+                    let alt_char = variant.alt_base.chars().next().ok_or_else(|| {
+                        JsError::new(&format!("variant {}: empty alt", variant.name))
+                    })?;
+                    observe_cram_snp_with_reader(
+                        &mut indexed,
+                        &variant.name,
+                        &locus,
+                        ref_char,
+                        alt_char,
+                        variant.rsid.clone(),
+                        assembly,
+                    )
+                }
+                VariantKind::Insertion | VariantKind::Indel => observe_cram_indel_with_reader(
                     &mut indexed,
                     &variant.name,
                     &locus,
-                    ref_char,
-                    alt_char,
+                    &variant.ref_base,
+                    &variant.alt_base,
                     variant.rsid.clone(),
                     assembly,
-                )
+                ),
+                other => {
+                    return Err(JsError::new(&format!(
+                        "variant {} has unsupported kind {:?} for web CRAM lookup",
+                        variant.name, other
+                    )));
+                }
             }
-            VariantKind::Insertion | VariantKind::Indel => observe_cram_indel_with_reader(
-                &mut indexed,
-                &variant.name,
-                &locus,
-                &variant.ref_base,
-                &variant.alt_base,
-                variant.rsid.clone(),
-                assembly,
-            ),
-            other => {
-                return Err(JsError::new(&format!(
-                    "variant {} has unsupported kind {:?} for web CRAM lookup",
-                    variant.name, other
-                )));
-            }
-        }
-        .map_err(|err| JsError::new(&format!("lookup {}: {err:?}", variant.name)))?;
+            .map_err(|err| JsError::new(&format!("lookup {}: {err:?}", variant.name)))?;
         results.push(VariantObservationJs {
             name: variant.name,
             backend: observation.backend,
@@ -429,9 +429,16 @@ pub fn lookup_genotype_bytes_variants(
 }
 
 fn ensure_single_base_variant(variant: &VariantInput) -> Result<(), JsError> {
-    let kind = variant.kind.as_deref().unwrap_or("snv").to_ascii_lowercase();
+    let kind = variant
+        .kind
+        .as_deref()
+        .unwrap_or("snv")
+        .to_ascii_lowercase();
     let is_snp_kind = matches!(kind.as_str(), "snp" | "snv" | "variant" | "");
-    if !is_snp_kind || variant.ref_base.chars().count() != 1 || variant.alt_base.chars().count() != 1 {
+    if !is_snp_kind
+        || variant.ref_base.chars().count() != 1
+        || variant.alt_base.chars().count() != 1
+    {
         return Err(JsError::new(&format!(
             "variant {} has kind/ref/alt {} {}/{}; web CRAM/VCF lookup currently supports single-base SNV observations only",
             variant.name,
@@ -487,7 +494,10 @@ fn parse_variant_kind(kind: Option<&str>) -> Option<VariantKind> {
     }
 }
 
-fn observation_to_js(variant: VariantInput, observation: VariantObservation) -> VariantObservationJs {
+fn observation_to_js(
+    variant: VariantInput,
+    observation: VariantObservation,
+) -> VariantObservationJs {
     VariantObservationJs {
         name: variant.name,
         backend: observation.backend,

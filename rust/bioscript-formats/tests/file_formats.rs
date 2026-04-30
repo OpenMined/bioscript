@@ -6,7 +6,7 @@ use std::{
 };
 
 use bioscript_core::{VariantKind, VariantSpec};
-use bioscript_formats::{GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore};
+use bioscript_formats::{GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, alignment};
 use zip::write::SimpleFileOptions;
 
 fn temp_dir(label: &str) -> PathBuf {
@@ -58,6 +58,174 @@ fn shared_fixture_or_skip(test_name: &str, relative: &str) -> Option<PathBuf> {
         return None;
     }
     Some(path)
+}
+
+fn zip_bytes(entry_name: &str, contents: &[u8]) -> Vec<u8> {
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(cursor);
+    writer
+        .start_file(entry_name, SimpleFileOptions::default())
+        .unwrap();
+    writer.write_all(contents).unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+#[test]
+fn genotype_store_from_bytes_handles_genotype_text() {
+    let store = GenotypeStore::from_bytes(
+        "sample.txt",
+        b"\xef\xbb\xbfrsid\tchromosome\tposition\tgenotype\n\
+          # skipped comment\n\
+          rs73885319\t22\t36265860\tag\n\
+          rs60910145\t22\t36265900\tN/A\n",
+    )
+    .unwrap();
+
+    assert_eq!(store.backend_name(), "text");
+    assert_eq!(store.get("rs73885319").unwrap().as_deref(), Some("AG"));
+    assert_eq!(store.get("rs60910145").unwrap().as_deref(), Some("--"));
+}
+
+#[test]
+fn genotype_store_from_bytes_handles_vcf() {
+    let store = GenotypeStore::from_bytes(
+        "sample.vcf",
+        b"##fileformat=VCFv4.2\n\
+          ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+          #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+          22\t36265860\trs73885319\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+    )
+    .unwrap();
+
+    assert_eq!(store.backend_name(), "vcf");
+    assert_eq!(store.get("rs73885319").unwrap().as_deref(), Some("AG"));
+}
+
+#[test]
+fn genotype_store_from_bytes_handles_zip() {
+    let bytes = zip_bytes(
+        "nested/sample.txt",
+        b"rsid\tchromosome\tposition\tgenotype\nrs73885319\t22\t36265860\tAG\n",
+    );
+
+    let store = GenotypeStore::from_bytes("sample.zip", &bytes).unwrap();
+
+    assert_eq!(store.backend_name(), "zip");
+    assert_eq!(store.get("rs73885319").unwrap().as_deref(), Some("AG"));
+}
+
+#[test]
+fn genotype_store_from_bytes_rejects_malformed_zip() {
+    let err = GenotypeStore::from_bytes("sample.zip", b"not a zip").unwrap_err();
+
+    assert!(
+        format!("{err:?}").contains("failed to read genotype zip sample.zip"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn genotype_store_from_bytes_rejects_zip_without_supported_entry() {
+    let bytes = zip_bytes("notes.bin", b"not genotype data");
+
+    let err = GenotypeStore::from_bytes("sample.zip", &bytes).unwrap_err();
+
+    assert!(
+        format!("{err:?}")
+            .contains("zip archive sample.zip does not contain a supported genotype file"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn alignment_index_parsers_handle_in_memory_bytes() {
+    let fai = alignment::parse_fai_bytes(b"chr1\t4\t6\t4\t5\n").unwrap();
+    let _repository = alignment::build_reference_repository_from_readers(
+        std::io::BufReader::new(std::io::Cursor::new(b">chr1\nACGT\n".to_vec())),
+        fai,
+    );
+
+    let err = alignment::parse_fai_bytes(b"not a fai").unwrap_err();
+    assert!(format!("{err:?}").contains("failed to parse FASTA index bytes"));
+
+    let err = alignment::parse_crai_bytes(b"not a crai").unwrap_err();
+    assert!(format!("{err:?}").contains("failed to parse CRAM index bytes"));
+
+    let err = alignment::parse_tbi_bytes(b"not a tbi").unwrap_err();
+    assert!(format!("{err:?}").contains("failed to parse tabix index bytes"));
+}
+
+#[test]
+fn delimited_parser_handles_comments_blank_lines_csv_and_split_alleles() {
+    let dir = temp_dir("csv-split-alleles");
+    let path = dir.join("sample.csv");
+    fs::write(
+        &path,
+        "\n\
+         # rsid,chromosome,position,allele1,allele2\n\
+         // ignored comment\n\
+         rs73885319,chr22,36265860,a,g\n\
+         rs60910145,22,36265900,n/a,\n",
+    )
+    .unwrap();
+
+    let store = GenotypeStore::from_file(&path).unwrap();
+
+    assert_eq!(store.get("rs73885319").unwrap().as_deref(), Some("AG"));
+    assert_eq!(store.get("rs60910145").unwrap().as_deref(), Some("--"));
+
+    let observation = store
+        .lookup_variant(&VariantSpec {
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "22".to_owned(),
+                start: 36_265_860,
+                end: 36_265_861,
+            }),
+            ..VariantSpec::default()
+        })
+        .unwrap();
+    assert_eq!(observation.genotype.as_deref(), Some("AG"));
+    assert_eq!(
+        observation.evidence,
+        vec!["resolved by locus chr22:36265860".to_owned()]
+    );
+}
+
+#[test]
+fn vcf_coordinate_lookup_normalizes_chr_prefix_and_handles_multiallelic_gt() {
+    let dir = temp_dir("vcf-chr-normalize");
+    let path = dir.join("sample.vcf");
+    fs::write(
+        &path,
+        "##fileformat=VCFv4.2\n\
+         ##reference=GRCh38\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+         chr1\t1000\t.\tA\tC,G\t.\tPASS\t.\tGT\t2/1\n",
+    )
+    .unwrap();
+
+    let store = GenotypeStore::from_file(&path).unwrap();
+    let observation = store
+        .lookup_variant(&VariantSpec {
+            grch38: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 1000,
+                end: 1001,
+            }),
+            reference: Some("A".to_owned()),
+            alternate: Some("G".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        })
+        .unwrap();
+
+    assert_eq!(observation.genotype.as_deref(), Some("GC"));
+    assert_eq!(observation.assembly, Some(bioscript_core::Assembly::Grch38));
+    assert_eq!(
+        observation.evidence,
+        vec!["resolved by locus chr1:1000".to_owned()]
+    );
 }
 
 #[test]

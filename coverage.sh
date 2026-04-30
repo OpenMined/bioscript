@@ -24,7 +24,8 @@ Usage: ./coverage.sh [--full-clean|-c] [--open] [--large] [--all-tests] [--no-li
   --all-tests       Run all tests for the first-party BioScript crates
   --no-lint         Skip cargo fmt and clippy checks
   --focused-test    Run one focused integration test target:
-                    file_formats, inspect, prepare, or cli
+                    file_formats, inspect, prepare, cli, schema, core, runtime_security,
+                    or runtime_resources
 
 Environment:
   AUTO_INSTALL_LLVM_COV=0    Do not auto-install cargo-llvm-cov
@@ -96,7 +97,7 @@ TEST_RUSTFLAGS="${RUSTFLAGS:-} -Aunused-assignments -Amissing-docs"
 if [[ "$NO_LINT_FLAG" != "1" ]]; then
   echo "==> Formatting and linting"
   cargo fmt --check "${PKG_ARGS[@]}"
-  cargo clippy "${PKG_ARGS[@]}" --all-targets --color=never -- -D warnings
+  RUSTFLAGS="$TEST_RUSTFLAGS" cargo clippy "${PKG_ARGS[@]}" --all-targets --color=never -- -D warnings
 fi
 
 echo "==> Checking cargo-llvm-cov availability"
@@ -168,6 +169,18 @@ if [[ -n "$FOCUSED_TEST" ]]; then
     cli)
       env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-cli --test cli --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG -- --nocapture --test-threads="$TEST_THREADS"
       ;;
+    schema)
+      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-schema --test validate_variants --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG -- --nocapture --test-threads="$TEST_THREADS"
+      ;;
+    core)
+      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-core --lib --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG
+      ;;
+    runtime_security)
+      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-runtime --test security --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG -- --nocapture --test-threads="$TEST_THREADS"
+      ;;
+    runtime_resources)
+      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-runtime --test resources_coverage --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG -- --nocapture --test-threads="$TEST_THREADS"
+      ;;
     *)
       echo "Unknown focused test target: $FOCUSED_TEST" >&2
       usage >&2
@@ -181,6 +194,10 @@ else
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-formats --test inspect -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-formats --test prepare -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-cli --test cli -- --nocapture --test-threads="$TEST_THREADS"
+  env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-schema --test validate_variants -- --nocapture --test-threads="$TEST_THREADS"
+  env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --lib
+  env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test security -- --nocapture --test-threads="$TEST_THREADS"
+  env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test resources_coverage -- --nocapture --test-threads="$TEST_THREADS"
   cargo llvm-cov report "${PKG_ARGS[@]}" --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG
 fi
 

@@ -1,11 +1,13 @@
 use std::{
     env,
+    io::Write as _,
     path::PathBuf,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use bioscript_core::Assembly;
-use bioscript_formats::{DetectedKind, FileContainer, InspectOptions, inspect_file};
+use bioscript_formats::{DetectedKind, FileContainer, InspectOptions, inspect_bytes, inspect_file};
+use zip::write::SimpleFileOptions;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -60,6 +62,86 @@ fn temp_dir(label: &str) -> PathBuf {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
+}
+
+fn zip_bytes(entry_name: &str, contents: &[u8]) -> Vec<u8> {
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(cursor);
+    writer
+        .start_file(entry_name, SimpleFileOptions::default())
+        .unwrap();
+    writer.write_all(contents).unwrap();
+    writer.finish().unwrap().into_inner()
+}
+
+#[test]
+fn inspect_bytes_handles_genotype_text() {
+    let inspection = inspect_bytes(
+        "sample.txt",
+        b"rsid\tchromosome\tposition\tgenotype\n\
+          rs73885319\t22\t36265860\tAG\n\
+          rs60910145\t22\t36265900\tTG\n\
+          rs71785313\t22\t36266005\tII\n",
+        &InspectOptions::default(),
+    )
+    .unwrap();
+
+    assert_eq!(inspection.container, FileContainer::Plain);
+    assert_eq!(inspection.detected_kind, DetectedKind::GenotypeText);
+}
+
+#[test]
+fn inspect_bytes_handles_vcf() {
+    let inspection = inspect_bytes(
+        "sample.vcf",
+        b"##fileformat=VCFv4.2\n\
+          #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+          22\t36265860\trs73885319\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+        &InspectOptions::default(),
+    )
+    .unwrap();
+
+    assert_eq!(inspection.container, FileContainer::Plain);
+    assert_eq!(inspection.detected_kind, DetectedKind::Vcf);
+    assert_eq!(inspection.phased, Some(false));
+}
+
+#[test]
+fn inspect_bytes_handles_zip() {
+    let bytes = zip_bytes(
+        "nested/sample.txt",
+        b"rsid\tchromosome\tposition\tgenotype\n\
+          rs73885319\t22\t36265860\tAG\n\
+          rs60910145\t22\t36265900\tTG\n\
+          rs71785313\t22\t36266005\tII\n",
+    );
+
+    let inspection = inspect_bytes("sample.zip", &bytes, &InspectOptions::default()).unwrap();
+
+    assert_eq!(inspection.container, FileContainer::Zip);
+    assert_eq!(inspection.detected_kind, DetectedKind::GenotypeText);
+    assert_eq!(
+        inspection.selected_entry.as_deref(),
+        Some("nested/sample.txt")
+    );
+}
+
+#[test]
+fn inspect_bytes_handles_unknown_bytes_conservatively() {
+    let inspection = inspect_bytes(
+        "sample.bin",
+        b"this is not recognizable genotype or alignment data\n",
+        &InspectOptions::default(),
+    )
+    .unwrap();
+
+    assert_eq!(inspection.container, FileContainer::Plain);
+    assert_eq!(inspection.detected_kind, DetectedKind::Unknown);
+    assert!(
+        inspection
+            .warnings
+            .contains(&"file did not match known textual heuristics".to_owned())
+    );
 }
 
 #[test]

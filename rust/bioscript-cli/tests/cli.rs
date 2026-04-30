@@ -97,6 +97,33 @@ fn trace_report_is_written_for_hello_world() {
 }
 
 #[test]
+fn timing_report_is_written_for_hello_world() {
+    let root = repo_root();
+    let timing_path = root.join("bioscripts/output/hello-world.timing.tsv");
+    if timing_path.exists() {
+        fs::remove_file(&timing_path).unwrap();
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--timing-report")
+        .arg("bioscripts/output/hello-world.timing.tsv")
+        .arg("bioscripts/hello-world.py")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let timing = fs::read_to_string(timing_path).unwrap();
+    assert!(timing.contains("stage\tduration_ms\tdetail"));
+    assert!(timing.contains("run_file_total\t"));
+    assert!(timing.contains("script=bioscripts/hello-world.py"));
+}
+
+#[test]
 fn batch_lookup_query_plan_runs_and_preserves_requested_result_order() {
     let root = repo_root();
     let script = root.join("rust/bioscript-cli/tests/fixtures/batch_lookup.py");
@@ -169,6 +196,120 @@ fn inspect_subcommand_reports_detected_vendor_and_platform() {
     assert!(stdout.contains("platform_version\tV2.0"));
     assert!(stdout.contains("assembly\tgrch37"));
     assert!(stdout.contains("duration_ms\t"));
+}
+
+#[test]
+fn prepare_subcommand_reports_reference_index_flags() {
+    let root = repo_root();
+    let dir = temp_dir("prepare-cli");
+    let reference = dir.join("ref.fa");
+    fs::write(&reference, b">chr1\nACGT\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("prepare")
+        .arg("--root")
+        .arg(&dir)
+        .arg("--reference-file")
+        .arg("ref.fa")
+        .arg("--cache-dir")
+        .arg("cache")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--reference-file"));
+    assert!(stdout.contains("--reference-index"));
+    assert!(stdout.contains("cache"));
+}
+
+#[test]
+fn validate_variants_cli_returns_nonzero_and_writes_report() {
+    let root = repo_root();
+    let dir = temp_dir("validate-variants-cli");
+    let manifest = dir.join("bad-variant.yaml");
+    let report = dir.join("reports/variants.txt");
+    fs::write(
+        &manifest,
+        r#"
+schema: "bioscript:variant"
+version: "1.0"
+variant_id: "TEST_bad"
+name: "bad"
+identifiers:
+  rsids:
+    - "bad-rsid"
+coordinates:
+  grch38:
+    chrom: "chrUn"
+    pos: 0
+alleles:
+  kind: "snv"
+  ref: "AA"
+  alts: []
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("validate-variants")
+        .arg(&manifest)
+        .arg("--report")
+        .arg(&report)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("validation found"), "{stderr}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("errors"), "{stdout}");
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("bad-rsid"));
+}
+
+#[test]
+fn validate_panels_cli_returns_nonzero_and_writes_report() {
+    let root = repo_root();
+    let dir = temp_dir("validate-panels-cli");
+    let panel = dir.join("bad-panel.yaml");
+    let report = dir.join("reports/panels.txt");
+    fs::write(
+        &panel,
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "bad-panel"
+members:
+  - kind: "variant"
+    path: "../outside.yaml"
+    sha256: "not-a-sha"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("validate-panels")
+        .arg(&panel)
+        .arg("--report")
+        .arg(&report)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("validation found"), "{stderr}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("errors"), "{stdout}");
+    let report_text = fs::read_to_string(report).unwrap();
+    assert!(report_text.contains("members[0].sha256"));
 }
 
 #[test]
