@@ -9,7 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  lint-and-test:
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -29,9 +30,3 @@ jobs:
 
       - name: Lint (cargo fmt + clippy)
         run: ./lint.sh
-
-      - name: Test (cargo test)
-        run: ./test.sh
-
-      - name: Format integration tests (CRAM fixtures, MD5 fallback)
-        run: cargo test --manifest-path rust/Cargo.toml -p bioscript-formats --test file_formats -- --test-threads=1

@@ -6,7 +6,9 @@ use std::{
 };
 
 use bioscript_core::{VariantKind, VariantSpec};
-use bioscript_formats::{GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, alignment};
+use bioscript_formats::{
+    GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind, alignment,
+};
 use zip::write::SimpleFileOptions;
 
 fn temp_dir(label: &str) -> PathBuf {
@@ -87,6 +89,82 @@ fn genotype_store_from_bytes_handles_genotype_text() {
 }
 
 #[test]
+fn genotype_source_format_parses_supported_values_and_rejects_unknowns() {
+    assert_eq!(
+        "txt".parse::<GenotypeSourceFormat>().unwrap(),
+        GenotypeSourceFormat::Text
+    );
+    assert_eq!(
+        "GENOTYPE".parse::<GenotypeSourceFormat>().unwrap(),
+        GenotypeSourceFormat::Text
+    );
+    assert_eq!(
+        "zip".parse::<GenotypeSourceFormat>().unwrap(),
+        GenotypeSourceFormat::Zip
+    );
+    assert_eq!(
+        "vcf".parse::<GenotypeSourceFormat>().unwrap(),
+        GenotypeSourceFormat::Vcf
+    );
+    assert_eq!(
+        "cram".parse::<GenotypeSourceFormat>().unwrap(),
+        GenotypeSourceFormat::Cram
+    );
+
+    let err = "bam".parse::<GenotypeSourceFormat>().unwrap_err();
+    assert_eq!(err, "unsupported input format: bam");
+}
+
+#[test]
+fn backend_capabilities_match_query_backend_type() {
+    let rsid_map = GenotypeStore::from_bytes(
+        "sample.txt",
+        b"rsid\tchromosome\tposition\tgenotype\nrs1\t1\t10\tAG\n",
+    )
+    .unwrap();
+    assert_eq!(rsid_map.backend_name(), "text");
+    assert!(rsid_map.supports(QueryKind::GenotypeByRsid));
+    assert!(!rsid_map.supports(QueryKind::GenotypeByLocus));
+
+    let dir = temp_dir("backend-capabilities");
+    let text_path = dir.join("sample.txt");
+    fs::write(
+        &text_path,
+        "rsid\tchromosome\tposition\tgenotype\nrs1\t1\t10\tAG\n",
+    )
+    .unwrap();
+    let delimited = GenotypeStore::from_file(&text_path).unwrap();
+    assert_eq!(delimited.backend_name(), "text");
+    assert!(delimited.supports(QueryKind::GenotypeByRsid));
+    assert!(delimited.supports(QueryKind::GenotypeByLocus));
+
+    let vcf_path = dir.join("sample.vcf");
+    fs::write(
+        &vcf_path,
+        "##fileformat=VCFv4.2\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+         1\t10\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+    )
+    .unwrap();
+    let vcf = GenotypeStore::from_file(&vcf_path).unwrap();
+    assert_eq!(vcf.backend_name(), "vcf");
+    assert!(vcf.supports(QueryKind::GenotypeByRsid));
+    assert!(vcf.supports(QueryKind::GenotypeByLocus));
+
+    let cram = GenotypeStore::from_file_with_options(
+        &dir.join("sample.dat"),
+        &GenotypeLoadOptions {
+            format: Some(GenotypeSourceFormat::Cram),
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(cram.backend_name(), "cram");
+    assert!(!cram.supports(QueryKind::GenotypeByRsid));
+    assert!(cram.supports(QueryKind::GenotypeByLocus));
+}
+
+#[test]
 fn genotype_store_from_bytes_handles_vcf() {
     let store = GenotypeStore::from_bytes(
         "sample.vcf",
@@ -99,6 +177,71 @@ fn genotype_store_from_bytes_handles_vcf() {
 
     assert_eq!(store.backend_name(), "vcf");
     assert_eq!(store.get("rs73885319").unwrap().as_deref(), Some("AG"));
+}
+
+#[test]
+fn extensionless_vcf_is_detected_by_content_and_can_be_forced() {
+    let dir = temp_dir("extensionless-vcf");
+    let path = dir.join("sample.data");
+    fs::write(
+        &path,
+        "##fileformat=VCFv4.2\n\
+         ##reference=GRCh37\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+         1\t10\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+    )
+    .unwrap();
+
+    let detected = GenotypeStore::from_file(&path).unwrap();
+    assert_eq!(detected.backend_name(), "vcf");
+    assert_eq!(detected.get("rs1").unwrap().as_deref(), Some("AG"));
+
+    let forced = GenotypeStore::from_file_with_options(
+        &path,
+        &GenotypeLoadOptions {
+            format: Some(GenotypeSourceFormat::Vcf),
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(forced.backend_name(), "vcf");
+    assert_eq!(forced.get("rs1").unwrap().as_deref(), Some("AG"));
+}
+
+#[test]
+fn vcf_file_lookup_handles_gt_field_order_no_calls_and_bad_positions() {
+    let dir = temp_dir("vcf-field-order");
+    let path = dir.join("sample.vcf");
+    fs::write(
+        &path,
+        "##fileformat=VCFv4.2\n\
+         ##reference=GRCh38\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+         1\t10\trs1\tA\tG\t.\tPASS\t.\tDP:GT\t14:0|1\n\
+         1\t11\trs2\tC\tT\t.\tPASS\t.\tGT:DP\t./.:9\n",
+    )
+    .unwrap();
+
+    let store = GenotypeStore::from_file(&path).unwrap();
+    assert_eq!(store.get("rs1").unwrap().as_deref(), Some("AG"));
+    assert_eq!(store.get("rs2").unwrap().as_deref(), Some("--"));
+
+    let bad_path = dir.join("bad.vcf");
+    fs::write(
+        &bad_path,
+        "##fileformat=VCFv4.2\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+         1\tnot-a-pos\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+    )
+    .unwrap();
+    let err = GenotypeStore::from_file(&bad_path)
+        .unwrap()
+        .get("rs1")
+        .unwrap_err();
+    assert!(
+        format!("{err:?}").contains("failed to parse VCF position 'not-a-pos'"),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -225,6 +368,52 @@ fn vcf_coordinate_lookup_normalizes_chr_prefix_and_handles_multiallelic_gt() {
     assert_eq!(
         observation.evidence,
         vec!["resolved by locus chr1:1000".to_owned()]
+    );
+}
+
+#[test]
+fn batch_lookup_preserves_input_order_after_coordinate_sorting() {
+    let dir = temp_dir("batch-order");
+    let path = dir.join("sample.txt");
+    fs::write(
+        &path,
+        "rsid\tchromosome\tposition\tgenotype\n\
+         rs2\t1\t20\tCT\n\
+         rs1\t1\t10\tAG\n",
+    )
+    .unwrap();
+    let store = GenotypeStore::from_file(&path).unwrap();
+
+    let results = store
+        .lookup_variants(&[
+            VariantSpec {
+                grch38: Some(bioscript_core::GenomicLocus {
+                    chrom: "1".to_owned(),
+                    start: 20,
+                    end: 20,
+                }),
+                ..VariantSpec::default()
+            },
+            VariantSpec {
+                grch38: Some(bioscript_core::GenomicLocus {
+                    chrom: "1".to_owned(),
+                    start: 10,
+                    end: 10,
+                }),
+                ..VariantSpec::default()
+            },
+        ])
+        .unwrap();
+
+    assert_eq!(results[0].genotype.as_deref(), Some("CT"));
+    assert_eq!(
+        results[0].evidence,
+        vec!["resolved by locus 1:20".to_owned()]
+    );
+    assert_eq!(results[1].genotype.as_deref(), Some("AG"));
+    assert_eq!(
+        results[1].evidence,
+        vec!["resolved by locus 1:10".to_owned()]
     );
 }
 

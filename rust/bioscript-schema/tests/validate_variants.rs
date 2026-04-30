@@ -5,8 +5,9 @@ use std::{
 };
 
 use bioscript_schema::{
-    RemoteResourceKind, load_variant_manifest_text, load_variant_manifest_text_for_lookup,
-    resolve_remote_resource_text, validate_panels_path, validate_variants_path,
+    RemoteResourceKind, load_panel_manifest, load_variant_manifest_text,
+    load_variant_manifest_text_for_lookup, resolve_remote_resource_text, validate_panels_path,
+    validate_variants_path,
 };
 
 fn temp_dir(label: &str) -> PathBuf {
@@ -106,6 +107,47 @@ provenance:
 }
 
 #[test]
+fn validate_variants_scans_nested_yaml_files_and_ignores_other_files() {
+    let dir = temp_dir("validate-dir");
+    let nested = dir.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(dir.join("notes.txt"), "not yaml").unwrap();
+    fs::write(
+        dir.join("valid.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "rs1"
+identifiers:
+  rsids: ["rs1"]
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts: ["G"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        nested.join("missing-schema.yml"),
+        r#"
+version: "1.0"
+name: "rs2"
+"#,
+    )
+    .unwrap();
+
+    let report = validate_variants_path(&dir).unwrap();
+    let text = report.render_text();
+
+    assert_eq!(report.files_scanned, 2);
+    assert!(report.has_errors());
+    assert_eq!(report.total_errors(), 1);
+    assert!(text.contains("missing-schema.yml"));
+    assert!(text.contains("missing schema"));
+    assert!(!text.contains("notes.txt"));
+}
+
+#[test]
 fn load_variant_manifest_text_accepts_start_end_coordinates() {
     let manifest = load_variant_manifest_text(
         "rs71338792.yaml",
@@ -134,6 +176,45 @@ alleles:
     assert_eq!(grch38.chrom, "19");
     assert_eq!(grch38.start, 45_679_774);
     assert_eq!(grch38.end, 45_679_786);
+}
+
+#[test]
+fn load_panel_manifest_parses_downloads_permissions_and_member_metadata() {
+    let dir = temp_dir("load-panel");
+    let fixture = dir.join("panel.yaml");
+    fs::write(
+        &fixture,
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "traits-common"
+tags: ["type:trait"]
+permissions:
+  domains:
+    - "https://example.org"
+downloads:
+  - id: "remote-rs1"
+    url: "https://example.org/variants/rs1.yaml"
+    sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    version: "2026-01-01"
+members:
+  - kind: "variant"
+    download: "remote-rs1"
+    sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    version: "2026-01-01"
+"#,
+    )
+    .unwrap();
+
+    let panel = load_panel_manifest(&fixture).unwrap();
+
+    assert_eq!(panel.name, "traits-common");
+    assert_eq!(panel.tags, vec!["type:trait"]);
+    assert_eq!(panel.permissions.domains, vec!["https://example.org"]);
+    assert_eq!(panel.downloads.len(), 1);
+    assert_eq!(panel.downloads[0].origin, "https://example.org");
+    assert_eq!(panel.members.len(), 1);
+    assert_eq!(panel.members[0].download.as_deref(), Some("remote-rs1"));
 }
 
 #[test]
@@ -222,6 +303,59 @@ members:
     let report = validate_panels_path(&fixture).unwrap();
     assert_eq!(report.total_errors(), 0);
     assert_eq!(report.total_warnings(), 0);
+}
+
+#[test]
+fn validate_panels_reports_member_and_download_shape_issues() {
+    let dir = temp_dir("validate-panel-shape");
+    let fixture = dir.join("panel.yaml");
+    fs::write(
+        &fixture,
+        r#"
+schema: "bioscript:panel:1.0"
+version: "1.0"
+name: "traits-common"
+permissions:
+  domains:
+    - "https://example.org/path"
+    - "ftp://example.org"
+    - "https://example.org"
+    - "https://example.org"
+downloads:
+  - id: "remote-rs1"
+    url: "https://example.org/variants/rs1.yaml"
+    sha256: "not-a-sha"
+    version: "1.0"
+  - id: "remote-rs1"
+    url: "file:///tmp/rs1.yaml"
+    sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    version: ""
+members:
+  - kind: "script"
+    path: "variants/rs1.yaml"
+    download: "remote-rs1"
+    sha256: "not-a-sha"
+    version: ""
+  - kind: "variant"
+    download: "missing-download"
+  - kind: "variant"
+    path: ""
+"#,
+    )
+    .unwrap();
+
+    let report = validate_panels_path(&fixture).unwrap();
+    let text = report.render_text();
+
+    assert!(report.total_errors() >= 11, "{text}");
+    assert!(report.total_warnings() >= 1, "{text}");
+    assert!(text.contains("expected origin only"));
+    assert!(text.contains("expected http or https origin"));
+    assert!(text.contains("duplicate origin"));
+    assert!(text.contains("duplicate download id"));
+    assert!(text.contains("unknown download id"));
+    assert!(text.contains("unsupported member kind"));
+    assert!(text.contains("expected exactly one of path or download"));
 }
 
 #[test]

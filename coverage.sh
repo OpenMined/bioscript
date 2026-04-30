@@ -158,28 +158,28 @@ echo "==> Running coverage"
 if [[ -n "$FOCUSED_TEST" ]]; then
   case "$FOCUSED_TEST" in
     file_formats)
-      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-formats --test file_formats --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG -- --nocapture --test-threads="$TEST_THREADS"
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-formats --test file_formats -- --nocapture --test-threads="$TEST_THREADS"
       ;;
     inspect)
-      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-formats --test inspect --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG -- --nocapture --test-threads="$TEST_THREADS"
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-formats --test inspect -- --nocapture --test-threads="$TEST_THREADS"
       ;;
     prepare)
-      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-formats --test prepare --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG -- --nocapture --test-threads="$TEST_THREADS"
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-formats --test prepare -- --nocapture --test-threads="$TEST_THREADS"
       ;;
     cli)
-      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-cli --test cli --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG -- --nocapture --test-threads="$TEST_THREADS"
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-cli --test cli -- --nocapture --test-threads="$TEST_THREADS"
       ;;
     schema)
-      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-schema --test validate_variants --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG -- --nocapture --test-threads="$TEST_THREADS"
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-schema --test validate_variants -- --nocapture --test-threads="$TEST_THREADS"
       ;;
     core)
-      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-core --lib --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --lib
       ;;
     runtime_security)
-      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-runtime --test security --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG -- --nocapture --test-threads="$TEST_THREADS"
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test security -- --nocapture --test-threads="$TEST_THREADS"
       ;;
     runtime_resources)
-      env "${COV_ENV[@]}" cargo llvm-cov -p bioscript-runtime --test resources_coverage --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG -- --nocapture --test-threads="$TEST_THREADS"
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test resources_coverage -- --nocapture --test-threads="$TEST_THREADS"
       ;;
     *)
       echo "Unknown focused test target: $FOCUSED_TEST" >&2
@@ -188,7 +188,7 @@ if [[ -n "$FOCUSED_TEST" ]]; then
       ;;
   esac
 elif [[ "$ALL_TESTS_FLAG" == "1" ]]; then
-  env "${COV_ENV[@]}" cargo llvm-cov "${PKG_ARGS[@]}" --all-targets --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG
+  env "${COV_ENV[@]}" cargo llvm-cov --no-report "${PKG_ARGS[@]}" --all-targets
 else
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-formats --test file_formats -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-formats --test inspect -- --nocapture --test-threads="$TEST_THREADS"
@@ -198,8 +198,10 @@ else
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --lib
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test security -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test resources_coverage -- --nocapture --test-threads="$TEST_THREADS"
-  cargo llvm-cov report "${PKG_ARGS[@]}" --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG
 fi
+
+echo "==> Generating HTML report"
+cargo llvm-cov report "${PKG_ARGS[@]}" --html --ignore-filename-regex "$IGNORE_REGEX" $OPEN_FLAG
 
 echo "==> Exporting LCOV"
 cargo llvm-cov report "${PKG_ARGS[@]}" --ignore-filename-regex "$IGNORE_REGEX" --lcov --output-path "$LCOV_OUT"
