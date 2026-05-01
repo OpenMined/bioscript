@@ -25,3 +25,5 @@ filter_vendored() {
 }
 
 cargo clippy "${PKG_ARGS[@]}" --all-targets --color=never -- -D warnings 2> >(filter_vendored >&2)
+
+cargo test -p bioscript-core --test source_size -- --nocapture
