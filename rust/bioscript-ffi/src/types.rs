@@ -5,9 +5,12 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct RunFileRequest {
     pub script_path: String,
+    pub script_contents: Option<String>,
     pub root: Option<String>,
     pub input_file: Option<String>,
+    pub input_contents: Option<String>,
     pub output_file: Option<String>,
+    pub file_contents: Option<std::collections::BTreeMap<String, String>>,
     pub participant_id: Option<String>,
     pub trace_report_path: Option<String>,
     pub timing_report_path: Option<String>,

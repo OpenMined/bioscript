@@ -24,10 +24,11 @@ use crate::{
 /// Returns an error string when request parsing, optional index preparation,
 /// runtime construction, script execution, or report writing fails.
 pub fn run_file_request(request: RunFileRequest) -> Result<RunFileResult, String> {
-    let script_path = PathBuf::from(&request.script_path);
     let runtime_root = runtime_root(&request)?;
     let mut loader = build_loader(&request)?;
     let limits = build_limits(&request);
+    materialize_inline_files(&request, &runtime_root)?;
+    let script_path = materialize_script(&request, &runtime_root)?;
 
     let mut ffi_timings: Vec<StageTiming> = Vec::new();
     if request.auto_index.unwrap_or(false) {
@@ -62,6 +63,48 @@ fn runtime_root(request: &RunFileRequest) -> Result<PathBuf, String> {
     match request.root.as_deref() {
         Some(dir) => Ok(PathBuf::from(dir)),
         None => env::current_dir().map_err(|err| format!("failed to get current directory: {err}")),
+    }
+}
+
+fn materialize_inline_files(request: &RunFileRequest, runtime_root: &Path) -> Result<(), String> {
+    if let Some(files) = &request.file_contents {
+        for (path, contents) in files {
+            write_runtime_file(runtime_root, path, contents)?;
+        }
+    }
+    if let (Some(input_file), Some(contents)) = (&request.input_file, &request.input_contents) {
+        write_runtime_file(runtime_root, input_file, contents)?;
+    }
+    Ok(())
+}
+
+fn materialize_script(request: &RunFileRequest, runtime_root: &Path) -> Result<PathBuf, String> {
+    if let Some(contents) = &request.script_contents {
+        write_runtime_file(runtime_root, &request.script_path, contents)?;
+    }
+    Ok(resolve_runtime_path(runtime_root, &request.script_path))
+}
+
+fn write_runtime_file(runtime_root: &Path, path: &str, contents: &str) -> Result<(), String> {
+    let target = resolve_runtime_path(runtime_root, path);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "failed to create runtime file dir {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    fs::write(&target, contents)
+        .map_err(|err| format!("failed to write runtime file {}: {err}", target.display()))
+}
+
+fn resolve_runtime_path(runtime_root: &Path, path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        candidate
+    } else {
+        runtime_root.join(candidate)
     }
 }
 

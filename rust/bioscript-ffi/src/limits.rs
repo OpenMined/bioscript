@@ -44,9 +44,12 @@ mod tests {
     fn request_with_limits() -> RunFileRequest {
         RunFileRequest {
             script_path: "script.py".to_owned(),
+            script_contents: None,
             root: None,
             input_file: None,
+            input_contents: None,
             output_file: None,
+            file_contents: None,
             participant_id: None,
             trace_report_path: None,
             timing_report_path: None,
