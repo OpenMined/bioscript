@@ -16,6 +16,6 @@ production limit measures production code, not test scaffolding. Test files
 should still be split when they mix unrelated behavior or become hard to scan.
 
 When a production file grows past 500 lines, split it before adding more
-behavior. Temporary exceptions must be listed in
-`rust/bioscript-core/tests/source_size.rs` with their current line count, and
-that count should not increase.
+behavior. Temporary exceptions must be listed in this file under
+`Current Refactor Backlog`; the source-size guard reads that list and fails when
+it drifts from the code.

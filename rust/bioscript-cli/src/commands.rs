@@ -180,3 +180,167 @@ where
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bioscript_schema::ValidationReport;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "bioscript-cli-commands-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn empty_report() -> ValidationReport {
+        ValidationReport {
+            files_scanned: 1,
+            reports: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn command_parsers_report_prepare_and_inspect_argument_errors() {
+        for (args, expected) in [
+            (vec!["--root"], "--root requires a directory"),
+            (vec!["--input-file"], "--input-file requires a path"),
+            (vec!["--reference-file"], "--reference-file requires a path"),
+            (vec!["--input-format"], "--input-format requires a value"),
+            (vec!["--input-format", "bad"], "invalid --input-format"),
+            (vec!["--cache-dir"], "--cache-dir requires a path"),
+            (vec!["--unexpected"], "unexpected argument"),
+        ] {
+            let err = run_prepare(args.into_iter().map(str::to_owned).collect()).unwrap_err();
+            assert!(err.contains(expected), "{err}");
+        }
+
+        for (args, expected) in [
+            (Vec::<&str>::new(), "usage: bioscript inspect"),
+            (vec!["--input-index"], "--input-index requires a path"),
+            (vec!["--reference-file"], "--reference-file requires a path"),
+            (
+                vec!["--reference-index"],
+                "--reference-index requires a path",
+            ),
+            (vec!["input.txt", "extra"], "unexpected argument"),
+        ] {
+            let err = run_inspect(args.into_iter().map(str::to_owned).collect()).unwrap_err();
+            assert!(err.contains(expected), "{err}");
+        }
+    }
+
+    #[test]
+    fn validation_command_covers_report_success_and_error_paths() {
+        let dir = temp_dir("validation");
+        let input = dir.join("input.yaml");
+        fs::write(&input, "schema: bioscript:variant:1.0\n").unwrap();
+        let report = dir.join("reports/report.txt");
+
+        run_validation_command(
+            vec![
+                input.display().to_string(),
+                "--report".to_owned(),
+                report.display().to_string(),
+            ],
+            "usage",
+            |_| Ok(empty_report()),
+        )
+        .unwrap();
+        assert!(
+            fs::read_to_string(&report)
+                .unwrap()
+                .contains("files_scanned")
+        );
+
+        let err =
+            run_validation_command(Vec::new(), "usage text", |_| Ok(empty_report())).unwrap_err();
+        assert_eq!(err, "usage text");
+
+        let err =
+            run_validation_command(vec!["--report".to_owned()], "usage", |_| Ok(empty_report()))
+                .unwrap_err();
+        assert!(err.contains("--report requires a path"));
+
+        let err = run_validation_command(vec!["one".to_owned(), "two".to_owned()], "usage", |_| {
+            Ok(empty_report())
+        })
+        .unwrap_err();
+        assert!(err.contains("unexpected argument"));
+
+        let err = run_validation_command(vec!["input".to_owned()], "usage", |_| {
+            Err("validator failed".to_owned())
+        })
+        .unwrap_err();
+        assert_eq!(err, "validator failed");
+    }
+
+    #[test]
+    fn public_validation_and_inspect_commands_cover_successful_argument_branches() {
+        let dir = temp_dir("public-commands");
+        let vcf = dir.join("sample.vcf");
+        fs::write(
+            &vcf,
+            "##fileformat=VCFv4.3\n\
+             #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+             1\t10\trs10\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+        )
+        .unwrap();
+        let index = dir.join("sample.vcf.tbi");
+        let reference = dir.join("ref.fa");
+        let reference_index = dir.join("ref.fa.fai");
+        fs::write(&index, b"index").unwrap();
+        fs::write(&reference, b">chr1\nA\n").unwrap();
+        fs::write(&reference_index, b"chr1\t1\t6\t1\t2\n").unwrap();
+
+        run_inspect(vec![
+            vcf.display().to_string(),
+            "--input-index".to_owned(),
+            index.display().to_string(),
+            "--reference-file".to_owned(),
+            reference.display().to_string(),
+            "--reference-index".to_owned(),
+            reference_index.display().to_string(),
+        ])
+        .unwrap();
+
+        let invalid_variant = dir.join("invalid-variant.yaml");
+        fs::write(&invalid_variant, "schema: bioscript:variant:1.0\n").unwrap();
+        let variant_report = dir.join("variant-report.txt");
+        let err = run_validate_variants(vec![
+            invalid_variant.display().to_string(),
+            "--report".to_owned(),
+            variant_report.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(err.contains("validation found"));
+        assert!(
+            fs::read_to_string(&variant_report)
+                .unwrap()
+                .contains("errors:")
+        );
+
+        let invalid_panel = dir.join("invalid-panel.yaml");
+        fs::write(&invalid_panel, "schema: bioscript:panel:1.0\n").unwrap();
+        let panel_report = dir.join("panel-report.txt");
+        let err = run_validate_panels(vec![
+            invalid_panel.display().to_string(),
+            "--report".to_owned(),
+            panel_report.display().to_string(),
+        ])
+        .unwrap_err();
+        assert!(err.contains("validation found"));
+        assert!(
+            fs::read_to_string(&panel_report)
+                .unwrap()
+                .contains("errors:")
+        );
+    }
+}

@@ -513,6 +513,25 @@ mod tests {
         let missing = read_zip_sample_lines_from_bytes(&zip_bytes, "missing.vcf").unwrap_err();
         assert!(missing.to_string().contains("failed to open zip entry"));
 
+        assert_eq!(
+            read_plain_sample_lines_from_bytes("sample.txt", b"rs1\t1\t10\tAG\n")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            read_zip_sample_lines_from_bytes(b"not a zip", "sample.txt")
+                .unwrap_err()
+                .to_string()
+                .contains("failed to read zip bytes")
+        );
+        assert!(
+            select_zip_entry_from_bytes(b"not a zip")
+                .unwrap_err()
+                .to_string()
+                .contains("failed to read zip bytes")
+        );
+
         let dir =
             std::env::temp_dir().join(format!("bioscript-inspect-unit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -596,6 +615,7 @@ mod tests {
         let bytes = writer.finish().unwrap().into_inner();
         std::fs::write(&zip_path, &bytes).unwrap();
         assert_eq!(select_zip_entry(&zip_path).unwrap(), "notes.bin");
+        assert_eq!(select_zip_entry_from_bytes(&bytes).unwrap(), "notes.bin");
 
         let zip_gz_path = dir.join("vcf-gz.zip");
         let cursor = Cursor::new(Vec::new());
@@ -626,6 +646,14 @@ mod tests {
             err.to_string()
                 .contains("does not contain a supported file")
         );
+        assert!(
+            select_zip_entry_from_bytes(&std::fs::read(&empty_zip_path).unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("does not contain a supported file")
+        );
+        let err = read_zip_sample_lines(&zip_gz_path, "missing.vcf").unwrap_err();
+        assert!(err.to_string().contains("failed to open zip entry"));
 
         let source = detect_source(
             "dynamicdna.txt",

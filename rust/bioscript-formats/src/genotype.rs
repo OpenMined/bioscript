@@ -1,33 +1,35 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
-    fmt::Write as _,
+    collections::HashMap,
     fs::File,
-    io::{BufRead, BufReader, Cursor, Read, Seek},
+    io::{BufReader, Cursor},
     path::Path,
 };
 
-use noodles::bgzf;
-use noodles::core::{Position, Region};
-use noodles::cram;
-use noodles::csi::{self, BinningIndex};
-use noodles::sam::alignment::{
-    Record as _,
-    record::{Cigar as _, QualityScores as _, Sequence as _, cigar::op::Kind as CigarOpKind},
-};
-use noodles::tabix;
 use zip::ZipArchive;
 
-use bioscript_core::{
-    Assembly, GenomicLocus, RuntimeError, VariantKind, VariantObservation, VariantSpec,
-};
+#[cfg(test)]
+use bioscript_core::{Assembly, GenomicLocus, VariantKind};
+use bioscript_core::{RuntimeError, VariantObservation, VariantSpec};
 
-use crate::alignment::{self, AlignmentOpKind, AlignmentRecord};
-
+mod common;
+mod cram_backend;
 mod delimited;
 mod io;
 mod types;
+mod vcf;
 mod vcf_tokens;
 
+#[cfg(test)]
+use common::chrom_sort_key;
+pub(crate) use common::{describe_query, normalize_genotype, variant_sort_key};
+#[cfg(test)]
+use cram_backend::{
+    SnpPileupCounts, anchor_window, choose_variant_locus, classify_expected_indel,
+    describe_copy_number_decision_rule, describe_locus, describe_snp_decision_rule,
+    detect_reference_assembly, first_base, indel_at_anchor, infer_copy_number_genotype,
+    infer_snp_genotype, len_as_i64, normalize_pileup_base, record_overlaps_locus, spans_position,
+};
+pub use cram_backend::{observe_cram_indel_with_reader, observe_cram_snp_with_reader};
 #[cfg(test)]
 use delimited::{
     Delimiter, GENOTYPE_ALIASES, parse_streaming_row, split_csv_line, strip_bom,
@@ -49,14 +51,19 @@ pub use types::{
     BackendCapabilities, GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind,
 };
 use types::{CramBackend, DelimitedBackend, QueryBackend, RsidMapBackend, VcfBackend};
+pub use vcf::observe_vcf_snp_with_reader;
+#[cfg(test)]
+use vcf::{
+    choose_variant_locus_for_assembly, detect_vcf_assembly, extract_vcf_sample_genotype,
+    normalize_chromosome_name, parse_vcf_record, vcf_row_matches_variant,
+};
+use vcf::{lookup_indexed_vcf_variants, scan_vcf_variants};
 use vcf_tokens::genotype_from_vcf_gt;
 #[cfg(test)]
 use vcf_tokens::{
     is_symbolic_vcf_alt, normalize_sequence_token, vcf_alt_token, vcf_reference_token,
 };
 
-const DEFAULT_MPILEUP_MIN_BASE_QUALITY: u8 = 13;
-const DEFAULT_MPILEUP_MIN_MAPPING_QUALITY: u8 = 0;
 const MAX_ZIP_ENTRY_BYTES: u64 = 128 * 1024 * 1024;
 
 impl GenotypeStore {
@@ -435,1484 +442,6 @@ impl VcfBackend {
     }
 }
 
-impl CramBackend {
-    fn backend_name(&self) -> &'static str {
-        "cram"
-    }
-
-    fn lookup_variant(&self, variant: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
-        let Some(reference_file) = self.options.reference_file.as_ref() else {
-            return Err(RuntimeError::Unsupported(format!(
-                "backend '{}' cannot satisfy query '{}' for {} without --reference-file",
-                self.backend_name(),
-                describe_query(variant),
-                self.path.display()
-            )));
-        };
-
-        let Some((assembly, locus)) = choose_variant_locus(variant, reference_file) else {
-            let mut detail = format!(
-                "backend '{}' cannot satisfy query '{}' for {} using reference {}",
-                self.backend_name(),
-                describe_query(variant),
-                self.path.display(),
-                reference_file.display()
-            );
-            detail.push_str(". This backend needs GRCh37/GRCh38 coordinates, not only rsIDs");
-            if let Some(reference_index) = self.options.reference_index.as_ref() {
-                let _ = write!(detail, " (reference index {})", reference_index.display());
-            }
-            if let Some(input_index) = self.options.input_index.as_ref() {
-                let _ = write!(detail, " (input index {})", input_index.display());
-            }
-            return Err(RuntimeError::Unsupported(detail));
-        };
-
-        let observation = match variant.kind.unwrap_or(VariantKind::Other) {
-            VariantKind::Snp => self.observe_snp(variant, assembly, &locus, reference_file)?,
-            VariantKind::Deletion => {
-                self.observe_deletion(variant, assembly, &locus, reference_file)?
-            }
-            VariantKind::Insertion | VariantKind::Indel => {
-                self.observe_indel(variant, assembly, &locus, reference_file)?
-            }
-            VariantKind::Other => {
-                return Err(RuntimeError::Unsupported(format!(
-                    "backend '{}' does not yet support {:?} observation for {}",
-                    self.backend_name(),
-                    variant.kind.unwrap_or(VariantKind::Other),
-                    self.path.display()
-                )));
-            }
-        };
-
-        Ok(observation)
-    }
-
-    fn observe_snp(
-        &self,
-        variant: &VariantSpec,
-        assembly: Assembly,
-        locus: &GenomicLocus,
-        reference_file: &Path,
-    ) -> Result<VariantObservation, RuntimeError> {
-        let reference = variant
-            .reference
-            .as_deref()
-            .and_then(first_base)
-            .ok_or_else(|| {
-                RuntimeError::InvalidArguments("SNP variant requires ref/reference".to_owned())
-            })?;
-        let alternate = variant
-            .alternate
-            .as_deref()
-            .and_then(first_base)
-            .ok_or_else(|| {
-                RuntimeError::InvalidArguments("SNP variant requires alt/alternate".to_owned())
-            })?;
-
-        let target_pos = locus.start;
-        let pileup = observe_snp_pileup(
-            &self.path,
-            &self.options,
-            reference_file,
-            locus,
-            reference,
-            alternate,
-        )?;
-        let ref_count = pileup.filtered_ref_count;
-        let alt_count = pileup.filtered_alt_count;
-        let depth = pileup.filtered_depth;
-
-        let evidence = pileup.evidence_lines(&describe_locus(locus), target_pos);
-
-        Ok(VariantObservation {
-            backend: self.backend_name().to_owned(),
-            matched_rsid: variant.rsids.first().cloned(),
-            assembly: Some(assembly),
-            genotype: infer_snp_genotype(reference, alternate, ref_count, alt_count, depth),
-            ref_count: Some(ref_count),
-            alt_count: Some(alt_count),
-            depth: Some(depth),
-            raw_counts: pileup.raw_base_counts,
-            decision: Some(describe_snp_decision_rule(
-                reference, alternate, ref_count, alt_count, depth,
-            )),
-            evidence,
-        })
-    }
-
-    fn observe_deletion(
-        &self,
-        variant: &VariantSpec,
-        assembly: Assembly,
-        locus: &GenomicLocus,
-        reference_file: &Path,
-    ) -> Result<VariantObservation, RuntimeError> {
-        let deletion_length = variant.deletion_length.ok_or_else(|| {
-            RuntimeError::InvalidArguments("deletion variant requires deletion_length".to_owned())
-        })?;
-        let reference = variant.reference.clone().unwrap_or_else(|| "I".to_owned());
-        let alternate = variant.alternate.clone().unwrap_or_else(|| "D".to_owned());
-        let anchor_pos = locus.start.saturating_sub(1);
-
-        let mut alt_count = 0u32;
-        let mut ref_count = 0u32;
-        let mut depth = 0u32;
-
-        alignment::for_each_cram_record(
-            &self.path,
-            &self.options,
-            reference_file,
-            &anchor_window(locus),
-            |record| {
-                if record.is_unmapped || !spans_position(&record, anchor_pos) {
-                    return Ok(true);
-                }
-                depth += 1;
-                match indel_at_anchor(&record, anchor_pos) {
-                    Some((AlignmentOpKind::Deletion, len)) if len == deletion_length => {
-                        alt_count += 1;
-                    }
-                    _ => ref_count += 1,
-                }
-                Ok(true)
-            },
-        )?;
-
-        Ok(VariantObservation {
-            backend: self.backend_name().to_owned(),
-            matched_rsid: variant.rsids.first().cloned(),
-            assembly: Some(assembly),
-            genotype: infer_copy_number_genotype(
-                &reference, &alternate, ref_count, alt_count, depth,
-            ),
-            ref_count: Some(ref_count),
-            alt_count: Some(alt_count),
-            depth: Some(depth),
-            raw_counts: BTreeMap::new(),
-            decision: Some(describe_copy_number_decision_rule(
-                &reference, &alternate, ref_count, alt_count, depth,
-            )),
-            evidence: vec![format!(
-                "observed deletion anchor {}:{} len={} depth={} ref_count={} alt_count={}",
-                locus.chrom, anchor_pos, deletion_length, depth, ref_count, alt_count
-            )],
-        })
-    }
-
-    fn observe_indel(
-        &self,
-        variant: &VariantSpec,
-        assembly: Assembly,
-        locus: &GenomicLocus,
-        reference_file: &Path,
-    ) -> Result<VariantObservation, RuntimeError> {
-        let reference = variant.reference.clone().ok_or_else(|| {
-            RuntimeError::InvalidArguments("indel variant requires ref/reference".to_owned())
-        })?;
-        let alternate = variant.alternate.clone().ok_or_else(|| {
-            RuntimeError::InvalidArguments("indel variant requires alt/alternate".to_owned())
-        })?;
-        let records =
-            alignment::query_cram_records(&self.path, &self.options, reference_file, locus)?;
-
-        let mut alt_count = 0u32;
-        let mut ref_count = 0u32;
-        let mut depth = 0u32;
-        let mut matching_alt_lengths = BTreeSet::new();
-
-        for record in records {
-            if record.is_unmapped {
-                continue;
-            }
-            if !record_overlaps_locus(&record, locus) {
-                continue;
-            }
-            let classification =
-                classify_expected_indel(&record, locus, reference.len(), &alternate)?;
-            if !classification.covering {
-                continue;
-            }
-            depth += 1;
-            if classification.matches_alt {
-                alt_count += 1;
-                matching_alt_lengths.insert(classification.observed_len);
-            } else if classification.reference_like {
-                ref_count += 1;
-            }
-        }
-
-        let evidence_label = if matching_alt_lengths.is_empty() {
-            "none".to_owned()
-        } else {
-            matching_alt_lengths
-                .into_iter()
-                .map(|len| len.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        };
-
-        Ok(VariantObservation {
-            backend: self.backend_name().to_owned(),
-            matched_rsid: variant.rsids.first().cloned(),
-            assembly: Some(assembly),
-            genotype: infer_copy_number_genotype(
-                &reference, &alternate, ref_count, alt_count, depth,
-            ),
-            ref_count: Some(ref_count),
-            alt_count: Some(alt_count),
-            depth: Some(depth),
-            raw_counts: BTreeMap::new(),
-            decision: Some(describe_copy_number_decision_rule(
-                &reference, &alternate, ref_count, alt_count, depth,
-            )),
-            evidence: vec![format!(
-                "observed indel at {} depth={} ref_count={} alt_count={} matching_alt_lengths={}",
-                describe_locus(locus),
-                depth,
-                ref_count,
-                alt_count,
-                evidence_label
-            )],
-        })
-    }
-}
-
-fn choose_variant_locus(
-    variant: &VariantSpec,
-    reference_file: &Path,
-) -> Option<(Assembly, GenomicLocus)> {
-    match detect_reference_assembly(reference_file) {
-        Some(Assembly::Grch38) => variant
-            .grch38
-            .clone()
-            .map(|locus| (Assembly::Grch38, locus))
-            .or_else(|| {
-                variant
-                    .grch37
-                    .clone()
-                    .map(|locus| (Assembly::Grch37, locus))
-            }),
-        Some(Assembly::Grch37) => variant
-            .grch37
-            .clone()
-            .map(|locus| (Assembly::Grch37, locus))
-            .or_else(|| {
-                variant
-                    .grch38
-                    .clone()
-                    .map(|locus| (Assembly::Grch38, locus))
-            }),
-        None => variant
-            .grch38
-            .clone()
-            .map(|locus| (Assembly::Grch38, locus))
-            .or_else(|| {
-                variant
-                    .grch37
-                    .clone()
-                    .map(|locus| (Assembly::Grch37, locus))
-            }),
-    }
-}
-
-fn detect_reference_assembly(reference_file: &Path) -> Option<Assembly> {
-    let lower = reference_file.to_string_lossy().to_ascii_lowercase();
-    if lower.contains("grch38") || lower.contains("hg38") || lower.contains("assembly38") {
-        Some(Assembly::Grch38)
-    } else if lower.contains("grch37") || lower.contains("hg19") || lower.contains("assembly37") {
-        Some(Assembly::Grch37)
-    } else {
-        None
-    }
-}
-
-fn describe_locus(locus: &GenomicLocus) -> String {
-    format!("{}:{}-{}", locus.chrom, locus.start, locus.end)
-}
-
-fn anchor_window(locus: &GenomicLocus) -> GenomicLocus {
-    let anchor = locus.start.saturating_sub(1);
-    GenomicLocus {
-        chrom: locus.chrom.clone(),
-        start: anchor,
-        end: anchor,
-    }
-}
-
-fn first_base(value: &str) -> Option<char> {
-    value
-        .trim()
-        .chars()
-        .next()
-        .map(|ch| ch.to_ascii_uppercase())
-}
-
-fn infer_snp_genotype(
-    reference: char,
-    alternate: char,
-    ref_count: u32,
-    alt_count: u32,
-    depth: u32,
-) -> Option<String> {
-    if depth == 0 || ref_count + alt_count == 0 {
-        return None;
-    }
-    let alt_fraction = f64::from(alt_count) / f64::from(depth);
-    if alt_fraction >= 0.8 {
-        Some(format!("{alternate}{alternate}"))
-    } else if alt_fraction <= 0.2 {
-        Some(format!("{reference}{reference}"))
-    } else {
-        Some(format!("{reference}{alternate}"))
-    }
-}
-
-fn describe_snp_decision_rule(
-    reference: char,
-    alternate: char,
-    ref_count: u32,
-    alt_count: u32,
-    depth: u32,
-) -> String {
-    if depth == 0 {
-        return format!(
-            "no covering reads for SNP; genotype unresolved (ref={reference}, alt={alternate})"
-        );
-    }
-    if ref_count + alt_count == 0 {
-        return format!(
-            "no reads matched the declared SNP alleles; genotype unresolved; counts ref={ref_count} alt={alt_count} depth={depth} for {reference}>{alternate}"
-        );
-    }
-
-    let alt_fraction = f64::from(alt_count) / f64::from(depth);
-    format!(
-        "SNP genotype rule: alt_fraction={alt_fraction:.3} with thresholds ref<=0.200, het=(0.200,0.800), alt>=0.800; counts ref={ref_count} alt={alt_count} depth={depth} for {reference}>{alternate}"
-    )
-}
-
-fn infer_copy_number_genotype(
-    reference: &str,
-    alternate: &str,
-    _ref_count: u32,
-    alt_count: u32,
-    depth: u32,
-) -> Option<String> {
-    if depth == 0 {
-        return None;
-    }
-    let alt_fraction = f64::from(alt_count) / f64::from(depth);
-    if alt_fraction >= 0.8 {
-        Some(format!("{alternate}{alternate}"))
-    } else if alt_fraction <= 0.2 {
-        Some(format!("{reference}{reference}"))
-    } else {
-        Some(format!("{reference}{alternate}"))
-    }
-}
-
-fn describe_copy_number_decision_rule(
-    reference: &str,
-    alternate: &str,
-    ref_count: u32,
-    alt_count: u32,
-    depth: u32,
-) -> String {
-    if depth == 0 {
-        return format!(
-            "no covering reads for copy-number style variant; genotype unresolved (ref={reference}, alt={alternate})"
-        );
-    }
-
-    let alt_fraction = f64::from(alt_count) / f64::from(depth);
-    format!(
-        "copy-number genotype rule: alt_fraction={alt_fraction:.3} with thresholds ref<=0.200, het=(0.200,0.800), alt>=0.800; counts ref={ref_count} alt={alt_count} depth={depth} for {reference}->{alternate}"
-    )
-}
-
-#[derive(Debug, Clone, Default)]
-struct SnpPileupCounts {
-    filtered_depth: u32,
-    filtered_ref_count: u32,
-    filtered_alt_count: u32,
-    filtered_base_counts: BTreeMap<String, u32>,
-    raw_depth: u32,
-    raw_ref_count: u32,
-    raw_alt_count: u32,
-    raw_base_counts: BTreeMap<String, u32>,
-    filtered_low_base_quality: u32,
-    filtered_low_mapping_quality: u32,
-    filtered_non_acgt: u32,
-    filtered_unmapped: u32,
-    filtered_secondary: u32,
-    filtered_qc_fail: u32,
-    filtered_duplicate: u32,
-    filtered_improper_pair: u32,
-    raw_forward_counts: BTreeMap<String, u32>,
-    raw_reverse_counts: BTreeMap<String, u32>,
-}
-
-impl SnpPileupCounts {
-    fn evidence_lines(&self, locus: &str, target_pos: i64) -> Vec<String> {
-        vec![
-            format!(
-                "observed SNP pileup at {locus} target_pos={target_pos} filtered_depth={} ref_count={} alt_count={}",
-                self.filtered_depth, self.filtered_ref_count, self.filtered_alt_count
-            ),
-            format!(
-                "raw pileup depth={} ref_count={} alt_count={} raw_counts={:?}",
-                self.raw_depth, self.raw_ref_count, self.raw_alt_count, self.raw_base_counts
-            ),
-            format!(
-                "raw strand counts: forward={:?} reverse={:?}",
-                self.raw_forward_counts, self.raw_reverse_counts
-            ),
-            format!(
-                "filters applied: min_base_quality={} min_mapping_quality={} filtered_low_base_quality={} filtered_low_mapping_quality={} filtered_non_acgt={} filtered_unmapped={} filtered_secondary={} filtered_qc_fail={} filtered_duplicate={} filtered_improper_pair={}",
-                DEFAULT_MPILEUP_MIN_BASE_QUALITY,
-                DEFAULT_MPILEUP_MIN_MAPPING_QUALITY,
-                self.filtered_low_base_quality,
-                self.filtered_low_mapping_quality,
-                self.filtered_non_acgt,
-                self.filtered_unmapped,
-                self.filtered_secondary,
-                self.filtered_qc_fail,
-                self.filtered_duplicate,
-                self.filtered_improper_pair
-            ),
-        ]
-    }
-}
-
-fn observe_snp_pileup(
-    cram_path: &Path,
-    options: &GenotypeLoadOptions,
-    reference_file: &Path,
-    locus: &GenomicLocus,
-    reference: char,
-    alternate: char,
-) -> Result<SnpPileupCounts, RuntimeError> {
-    let repository = alignment::build_reference_repository(reference_file)?;
-    let mut reader =
-        alignment::build_cram_indexed_reader_from_path(cram_path, options, repository)?;
-    let label = cram_path.display().to_string();
-    snp_pileup_with_reader(
-        &mut reader,
-        &label,
-        locus,
-        reference,
-        alternate,
-        options.allow_reference_md5_mismatch,
-    )
-}
-
-fn snp_pileup_with_reader<R: Read + Seek>(
-    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
-    label: &str,
-    locus: &GenomicLocus,
-    reference: char,
-    alternate: char,
-    allow_reference_md5_mismatch: bool,
-) -> Result<SnpPileupCounts, RuntimeError> {
-    let mut counts = SnpPileupCounts::default();
-    let target_position = Position::try_from(usize::try_from(locus.start).map_err(|_| {
-        RuntimeError::InvalidArguments("SNP locus start is out of range".to_owned())
-    })?)
-    .map_err(|_| RuntimeError::InvalidArguments("SNP locus start is out of range".to_owned()))?;
-    let reference_base = reference as u8;
-
-    alignment::for_each_raw_cram_record_with_reader_inner(
-        reader,
-        label,
-        locus,
-        allow_reference_md5_mismatch,
-        |record| {
-            let flags = record
-                .flags()
-                .map_err(|err| RuntimeError::Io(format!("failed to read CRAM flags: {err}")))?;
-            if flags.is_unmapped() {
-                counts.filtered_unmapped += 1;
-                return Ok(true);
-            }
-            if flags.is_secondary() {
-                counts.filtered_secondary += 1;
-                return Ok(true);
-            }
-            if flags.is_qc_fail() {
-                counts.filtered_qc_fail += 1;
-                return Ok(true);
-            }
-            if flags.is_duplicate() {
-                counts.filtered_duplicate += 1;
-                return Ok(true);
-            }
-            if flags.is_segmented() && !flags.is_properly_segmented() {
-                counts.filtered_improper_pair += 1;
-                return Ok(true);
-            }
-
-            let Some((base, base_quality)) =
-                cram_base_quality_at_reference_position(&record, target_position, reference_base)?
-            else {
-                return Ok(true);
-            };
-
-            let normalized_base = normalize_pileup_base(base);
-            record.mapping_quality().transpose().map_err(|err| {
-                RuntimeError::Io(format!("failed to read CRAM mapping quality: {err}"))
-            })?;
-            let is_reverse = flags.is_reverse_complemented();
-            if let Some(base) = normalized_base {
-                counts.raw_depth += 1;
-                *counts.raw_base_counts.entry(base.to_string()).or_insert(0) += 1;
-                let strand_counts = if is_reverse {
-                    &mut counts.raw_reverse_counts
-                } else {
-                    &mut counts.raw_forward_counts
-                };
-                *strand_counts.entry(base.to_string()).or_insert(0) += 1;
-                if base == reference {
-                    counts.raw_ref_count += 1;
-                } else if base == alternate {
-                    counts.raw_alt_count += 1;
-                }
-            }
-
-            if base_quality < DEFAULT_MPILEUP_MIN_BASE_QUALITY {
-                counts.filtered_low_base_quality += 1;
-                return Ok(true);
-            }
-
-            let Some(base) = normalized_base else {
-                counts.filtered_non_acgt += 1;
-                return Ok(true);
-            };
-
-            counts.filtered_depth += 1;
-            *counts
-                .filtered_base_counts
-                .entry(base.to_string())
-                .or_insert(0) += 1;
-            if base == reference {
-                counts.filtered_ref_count += 1;
-            } else if base == alternate {
-                counts.filtered_alt_count += 1;
-            }
-            Ok(true)
-        },
-    )?;
-
-    Ok(counts)
-}
-
-fn cram_base_quality_at_reference_position(
-    record: &cram::Record<'_>,
-    target_position: Position,
-    reference_base: u8,
-) -> Result<Option<(u8, u8)>, RuntimeError> {
-    let Some(alignment_start) = record.alignment_start() else {
-        return Ok(None);
-    };
-    let alignment_start = alignment_start
-        .map_err(|err| RuntimeError::Io(format!("failed to read CRAM alignment start: {err}")))?;
-    let mut reference_position = usize::from(alignment_start);
-    let target = usize::from(target_position);
-    let mut read_position = 0usize;
-    let sequence = record.sequence();
-    let qualities = record.quality_scores();
-
-    for op in record.cigar().iter() {
-        let op = op.map_err(|err| RuntimeError::Io(format!("failed to read CRAM CIGAR: {err}")))?;
-        match op.kind() {
-            CigarOpKind::Match | CigarOpKind::SequenceMatch | CigarOpKind::SequenceMismatch => {
-                for offset in 0..op.len() {
-                    if reference_position + offset == target {
-                        let base = sequence
-                            .get(read_position + offset)
-                            .unwrap_or(reference_base);
-                        let quality = qualities
-                            .iter()
-                            .nth(read_position + offset)
-                            .transpose()
-                            .map_err(|err| {
-                                RuntimeError::Io(format!("failed to read CRAM base quality: {err}"))
-                            })?
-                            .unwrap_or(0);
-                        return Ok(Some((base, quality)));
-                    }
-                }
-                reference_position += op.len();
-                read_position += op.len();
-            }
-            CigarOpKind::Insertion | CigarOpKind::SoftClip => {
-                read_position += op.len();
-            }
-            CigarOpKind::Deletion | CigarOpKind::Skip => {
-                if target >= reference_position && target < reference_position + op.len() {
-                    return Ok(None);
-                }
-                reference_position += op.len();
-            }
-            CigarOpKind::HardClip | CigarOpKind::Pad => {}
-        }
-    }
-
-    Ok(None)
-}
-
-/// Observe a SNP at `locus` over an already-built CRAM `IndexedReader` and
-/// reference repository (held by the reader). Mirrors the internal
-/// `CramBackend::observe_snp` but reader-based, so non-filesystem callers
-/// (e.g. wasm with a JS-backed reader) don't need a `GenotypeStore` or paths.
-///
-/// `matched_rsid` and `assembly` are passed through to the returned
-/// observation unchanged — callers that already know them (e.g. from
-/// compiling a YAML variant) should supply them; otherwise `None`.
-pub fn observe_cram_snp_with_reader<R: Read + Seek>(
-    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
-    label: &str,
-    locus: &GenomicLocus,
-    reference: char,
-    alternate: char,
-    matched_rsid: Option<String>,
-    assembly: Option<Assembly>,
-) -> Result<VariantObservation, RuntimeError> {
-    let pileup = snp_pileup_with_reader(reader, label, locus, reference, alternate, false)?;
-    let ref_count = pileup.filtered_ref_count;
-    let alt_count = pileup.filtered_alt_count;
-    let depth = pileup.filtered_depth;
-    let evidence = pileup.evidence_lines(&describe_locus(locus), locus.start);
-
-    Ok(VariantObservation {
-        backend: "cram".to_owned(),
-        matched_rsid,
-        assembly,
-        genotype: infer_snp_genotype(reference, alternate, ref_count, alt_count, depth),
-        ref_count: Some(ref_count),
-        alt_count: Some(alt_count),
-        depth: Some(depth),
-        raw_counts: pileup.raw_base_counts,
-        decision: Some(describe_snp_decision_rule(
-            reference, alternate, ref_count, alt_count, depth,
-        )),
-        evidence,
-    })
-}
-
-/// Observe an insertion/indel-like variant at `locus` over an already-built
-/// CRAM `IndexedReader`.
-pub fn observe_cram_indel_with_reader<R: Read + Seek>(
-    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
-    label: &str,
-    locus: &GenomicLocus,
-    reference: &str,
-    alternate: &str,
-    matched_rsid: Option<String>,
-    assembly: Option<Assembly>,
-) -> Result<VariantObservation, RuntimeError> {
-    let mut alt_count = 0u32;
-    let mut ref_count = 0u32;
-    let mut depth = 0u32;
-    let mut matching_alt_lengths = BTreeSet::new();
-
-    alignment::for_each_cram_record_with_reader(reader, label, locus, |record| {
-        if record.is_unmapped || !record_overlaps_locus(&record, locus) {
-            return Ok(true);
-        }
-        let classification = classify_expected_indel(&record, locus, reference.len(), alternate)?;
-        if !classification.covering {
-            return Ok(true);
-        }
-        depth += 1;
-        if classification.matches_alt {
-            alt_count += 1;
-            matching_alt_lengths.insert(classification.observed_len);
-        } else if classification.reference_like {
-            ref_count += 1;
-        }
-        Ok(true)
-    })?;
-
-    let evidence_label = if matching_alt_lengths.is_empty() {
-        "none".to_owned()
-    } else {
-        matching_alt_lengths
-            .into_iter()
-            .map(|len| len.to_string())
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-
-    Ok(VariantObservation {
-        backend: "cram".to_owned(),
-        matched_rsid,
-        assembly,
-        genotype: infer_copy_number_genotype(reference, alternate, ref_count, alt_count, depth),
-        ref_count: Some(ref_count),
-        alt_count: Some(alt_count),
-        depth: Some(depth),
-        raw_counts: BTreeMap::new(),
-        decision: Some(describe_copy_number_decision_rule(
-            reference, alternate, ref_count, alt_count, depth,
-        )),
-        evidence: vec![format!(
-            "observed indel at {} depth={} ref_count={} alt_count={} matching_alt_lengths={}",
-            describe_locus(locus),
-            depth,
-            ref_count,
-            alt_count,
-            evidence_label
-        )],
-    })
-}
-
-/// Observe a SNP at `locus` over an already-built tabix-indexed bgzipped VCF
-/// reader. Mirrors the CRAM variant for VCF: caller builds
-/// `csi::io::IndexedReader::new(reader, tabix_index)` once and calls this per
-/// variant. Non-filesystem callers (wasm with a JS-backed reader) go through
-/// this path.
-///
-/// Only the locus-based match path is implemented — rsid-only variants would
-/// need a linear scan, which is a follow-up. Pass `matched_rsid` through if
-/// the caller already resolved it.
-pub fn observe_vcf_snp_with_reader<R>(
-    indexed: &mut csi::io::IndexedReader<bgzf::io::Reader<R>, tabix::Index>,
-    label: &str,
-    locus: &GenomicLocus,
-    reference: char,
-    alternate: char,
-    matched_rsid: Option<String>,
-    assembly: Option<Assembly>,
-) -> Result<VariantObservation, RuntimeError>
-where
-    R: Read + Seek,
-{
-    let locus_label = format!("{}:{}", locus.chrom, locus.start);
-
-    let Some(seq_name) = resolve_vcf_chrom_name(indexed.index(), &locus.chrom) else {
-        return Ok(VariantObservation {
-            backend: "vcf".to_owned(),
-            matched_rsid,
-            assembly,
-            evidence: vec![format!(
-                "{label}: tabix index has no contig matching {} (tried chr-prefixed and bare forms)",
-                locus.chrom
-            )],
-            ..VariantObservation::default()
-        });
-    };
-
-    let pos_usize = usize::try_from(locus.start).map_err(|err| {
-        RuntimeError::Io(format!(
-            "{label}: invalid VCF position {} for {locus_label}: {err}",
-            locus.start
-        ))
-    })?;
-    let position = Position::try_from(pos_usize).map_err(|err| {
-        RuntimeError::Io(format!(
-            "{label}: invalid VCF position {} for {locus_label}: {err}",
-            locus.start
-        ))
-    })?;
-    let region = Region::new(seq_name.as_str(), position..=position);
-
-    let query = indexed.query(&region).map_err(|err| {
-        RuntimeError::Io(format!("{label}: tabix query for {locus_label}: {err}"))
-    })?;
-
-    let reference_str = reference.to_ascii_uppercase().to_string();
-    let alternate_str = alternate.to_ascii_uppercase().to_string();
-
-    let mut saw_any = false;
-    for record_result in query {
-        let record = record_result
-            .map_err(|err| RuntimeError::Io(format!("{label}: tabix record iter: {err}")))?;
-        let line: &str = record.as_ref();
-        let Some(row) = parse_vcf_record(line)? else {
-            continue;
-        };
-        if row.position != locus.start {
-            continue;
-        }
-        saw_any = true;
-        if !row.reference.eq_ignore_ascii_case(&reference_str) {
-            continue;
-        }
-        if !row
-            .alternates
-            .iter()
-            .any(|alt| alt.eq_ignore_ascii_case(&alternate_str))
-        {
-            continue;
-        }
-
-        return Ok(VariantObservation {
-            backend: "vcf".to_owned(),
-            matched_rsid: matched_rsid.or_else(|| row.rsid.clone()),
-            assembly,
-            genotype: Some(row.genotype.clone()),
-            evidence: vec![format!("{label}: resolved by locus {locus_label}")],
-            ..VariantObservation::default()
-        });
-    }
-
-    let evidence = if saw_any {
-        vec![format!(
-            "{label}: {locus_label} present but ref={reference}/alt={alternate} did not match any record"
-        )]
-    } else {
-        vec![format!("{label}: no VCF record at {locus_label}")]
-    };
-    Ok(VariantObservation {
-        backend: "vcf".to_owned(),
-        matched_rsid,
-        assembly,
-        evidence,
-        ..VariantObservation::default()
-    })
-}
-
-/// Match the user-provided chromosome name against the tabix index's set of
-/// reference sequence names. VCFs vary: some use `chr22`, others `22`. Try
-/// the user's spelling verbatim, then toggle the `chr` prefix, then fall back
-/// to a case-insensitive compare against the normalized suffix.
-fn resolve_vcf_chrom_name(index: &tabix::Index, user_chrom: &str) -> Option<String> {
-    let header = index.header()?;
-    let names = header.reference_sequence_names();
-
-    let trimmed = user_chrom.trim();
-    let stripped = trimmed.strip_prefix("chr").unwrap_or(trimmed);
-
-    let candidates = [
-        trimmed.to_owned(),
-        stripped.to_owned(),
-        format!("chr{stripped}"),
-    ];
-    for cand in &candidates {
-        if names.contains(cand.as_bytes()) {
-            return Some(cand.clone());
-        }
-    }
-    // Case-insensitive fallback against the full set.
-    let target = stripped.to_ascii_lowercase();
-    for name in names {
-        let as_str = std::str::from_utf8(name.as_ref()).ok()?;
-        let as_stripped = as_str.strip_prefix("chr").unwrap_or(as_str);
-        if as_stripped.eq_ignore_ascii_case(&target) {
-            return Some(as_str.to_owned());
-        }
-    }
-    None
-}
-
-fn normalize_pileup_base(base: u8) -> Option<char> {
-    match (base as char).to_ascii_uppercase() {
-        'A' | 'C' | 'G' | 'T' => Some((base as char).to_ascii_uppercase()),
-        _ => None,
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct IndelClassification {
-    covering: bool,
-    reference_like: bool,
-    matches_alt: bool,
-    observed_len: usize,
-}
-
-fn len_as_i64(len: usize) -> Option<i64> {
-    i64::try_from(len).ok()
-}
-
-fn spans_position(record: &AlignmentRecord, pos: i64) -> bool {
-    pos >= record.start.saturating_sub(1) && pos <= record.end
-}
-
-fn record_overlaps_locus(record: &AlignmentRecord, locus: &GenomicLocus) -> bool {
-    record.end >= locus.start && record.start <= locus.end
-}
-
-fn indel_at_anchor(record: &AlignmentRecord, anchor_pos: i64) -> Option<(AlignmentOpKind, usize)> {
-    let mut ref_pos = record.start;
-
-    for op in &record.cigar {
-        match op.kind {
-            AlignmentOpKind::Match
-            | AlignmentOpKind::SequenceMatch
-            | AlignmentOpKind::SequenceMismatch
-            | AlignmentOpKind::Skip => {
-                ref_pos += len_as_i64(op.len)?;
-            }
-            AlignmentOpKind::Insertion => {
-                let anchor = ref_pos.saturating_sub(1);
-                if anchor == anchor_pos {
-                    return Some((AlignmentOpKind::Insertion, op.len));
-                }
-            }
-            AlignmentOpKind::Deletion => {
-                let anchor = ref_pos.saturating_sub(1);
-                if anchor == anchor_pos {
-                    return Some((AlignmentOpKind::Deletion, op.len));
-                }
-                ref_pos += len_as_i64(op.len)?;
-            }
-            AlignmentOpKind::SoftClip | AlignmentOpKind::HardClip | AlignmentOpKind::Pad => {}
-        }
-    }
-
-    None
-}
-
-fn classify_expected_indel(
-    record: &AlignmentRecord,
-    locus: &GenomicLocus,
-    reference_len: usize,
-    alternate: &str,
-) -> Result<IndelClassification, RuntimeError> {
-    let alt_len = alternate.len();
-    let anchor_start = locus.start.saturating_sub(1);
-    let anchor_end = locus.end;
-
-    let covering = record.start <= locus.start && record.end >= locus.end;
-    if !covering {
-        return Ok(IndelClassification {
-            covering: false,
-            reference_like: false,
-            matches_alt: false,
-            observed_len: reference_len,
-        });
-    }
-
-    let mut observed_len = reference_len;
-
-    for anchor in anchor_start..=anchor_end {
-        if let Some((kind, len)) = indel_at_anchor(record, anchor) {
-            observed_len = match kind {
-                AlignmentOpKind::Insertion => reference_len + len,
-                AlignmentOpKind::Deletion => reference_len.saturating_sub(len),
-                _ => reference_len,
-            };
-
-            return Ok(IndelClassification {
-                covering: true,
-                reference_like: false,
-                matches_alt: observed_len == alt_len,
-                observed_len,
-            });
-        }
-    }
-
-    Ok(IndelClassification {
-        covering: true,
-        reference_like: true,
-        matches_alt: false,
-        observed_len,
-    })
-}
-
-fn describe_query(variant: &VariantSpec) -> &'static str {
-    if variant.has_coordinates() {
-        "variant_by_locus"
-    } else {
-        "variant_by_rsid"
-    }
-}
-
-fn variant_sort_key(variant: &VariantSpec) -> (u8, String, i64, i64, String) {
-    if let Some(locus) = &variant.grch38 {
-        return (
-            0,
-            chrom_sort_key(&locus.chrom),
-            locus.start,
-            locus.end,
-            variant.rsids.first().cloned().unwrap_or_default(),
-        );
-    }
-    if let Some(locus) = &variant.grch37 {
-        return (
-            1,
-            chrom_sort_key(&locus.chrom),
-            locus.start,
-            locus.end,
-            variant.rsids.first().cloned().unwrap_or_default(),
-        );
-    }
-    (
-        2,
-        "~".to_owned(),
-        i64::MAX,
-        i64::MAX,
-        variant.rsids.first().cloned().unwrap_or_default(),
-    )
-}
-
-fn chrom_sort_key(raw: &str) -> String {
-    let chrom = raw.trim().strip_prefix("chr").unwrap_or(raw.trim());
-    if let Ok(value) = chrom.parse::<u32>() {
-        return format!("{value:03}");
-    }
-    match chrom.to_ascii_uppercase().as_str() {
-        "X" => "023".to_owned(),
-        "Y" => "024".to_owned(),
-        "M" | "MT" => "025".to_owned(),
-        other => format!("999-{other}"),
-    }
-}
-
-fn normalize_genotype(value: &str) -> String {
-    let cleaned = value.trim().replace(' ', "").to_ascii_uppercase();
-    if cleaned.is_empty() || matches!(cleaned.as_str(), "NA" | "N/A" | "#N/A" | "NONE") {
-        return "--".to_owned();
-    }
-    if cleaned.contains('/') {
-        let parts: Vec<&str> = cleaned.split('/').collect();
-        if parts.iter().any(|part| part.is_empty() || *part == "-") {
-            return "ID".to_owned();
-        }
-        return parts.concat();
-    }
-    cleaned
-}
-
-#[derive(Debug, Clone)]
-struct ParsedVcfRow {
-    rsid: Option<String>,
-    chrom: String,
-    position: i64,
-    reference: String,
-    alternates: Vec<String>,
-    genotype: String,
-}
-
-fn scan_vcf_variants(
-    backend: &VcfBackend,
-    variants: &[VariantSpec],
-) -> Result<Vec<VariantObservation>, RuntimeError> {
-    let mut indexed: Vec<(usize, &VariantSpec)> = variants.iter().enumerate().collect();
-    indexed.sort_by_cached_key(|(_, variant)| variant_sort_key(variant));
-
-    let mut probe_lines = Vec::new();
-    let detected_assembly = {
-        let file = File::open(&backend.path).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to open VCF file {}: {err}",
-                backend.path.display()
-            ))
-        })?;
-        let mut reader: Box<dyn BufRead> = if is_bgzf_path(&backend.path) {
-            Box::new(BufReader::new(bgzf::io::Reader::new(file)))
-        } else {
-            Box::new(BufReader::new(file))
-        };
-
-        let mut buf = String::new();
-        for _ in 0..256 {
-            buf.clear();
-            let bytes = reader.read_line(&mut buf).map_err(|err| {
-                RuntimeError::Io(format!(
-                    "failed to read VCF file {}: {err}",
-                    backend.path.display()
-                ))
-            })?;
-            if bytes == 0 {
-                break;
-            }
-            let line = buf.trim_end_matches(['\n', '\r']).to_owned();
-            let stop = line.starts_with("#CHROM\t");
-            probe_lines.push(line);
-            if stop {
-                break;
-            }
-        }
-
-        detect_vcf_assembly(&backend.path, &probe_lines)
-    };
-
-    let mut rsid_targets: HashMap<String, Vec<usize>> = HashMap::new();
-    let mut coord_targets: HashMap<(String, i64), Vec<usize>> = HashMap::new();
-    let mut results = vec![VariantObservation::default(); variants.len()];
-    let mut unresolved = variants.len();
-
-    for (idx, variant) in &indexed {
-        for rsid in &variant.rsids {
-            rsid_targets.entry(rsid.clone()).or_default().push(*idx);
-        }
-
-        if let Some(locus) = choose_variant_locus_for_assembly(variant, detected_assembly) {
-            let chrom = normalize_chromosome_name(&locus.chrom);
-            coord_targets
-                .entry((chrom.clone(), locus.start))
-                .or_default()
-                .push(*idx);
-            if matches!(
-                variant.kind,
-                Some(VariantKind::Deletion | VariantKind::Insertion | VariantKind::Indel)
-            ) {
-                let anchor = locus.start.saturating_sub(1);
-                coord_targets.entry((chrom, anchor)).or_default().push(*idx);
-            }
-        }
-    }
-
-    let targets = VcfResolutionTargets {
-        variants,
-        detected_assembly,
-        rsid_targets: &rsid_targets,
-        coord_targets: &coord_targets,
-    };
-
-    let file = File::open(&backend.path).map_err(|err| {
-        RuntimeError::Io(format!(
-            "failed to open VCF file {}: {err}",
-            backend.path.display()
-        ))
-    })?;
-    let mut reader: Box<dyn BufRead> = if is_bgzf_path(&backend.path) {
-        Box::new(BufReader::new(bgzf::io::Reader::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
-
-    let mut buf = String::new();
-    loop {
-        buf.clear();
-        let bytes = reader.read_line(&mut buf).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to read VCF file {}: {err}",
-                backend.path.display()
-            ))
-        })?;
-        if bytes == 0 || unresolved == 0 {
-            break;
-        }
-        if let Some(row) = parse_vcf_record(buf.trim_end_matches(['\n', '\r']))? {
-            resolve_vcf_row(backend, &row, &targets, &mut results, &mut unresolved);
-        }
-    }
-
-    for (idx, variant) in indexed {
-        if results[idx].genotype.is_none() {
-            results[idx] = VariantObservation {
-                backend: backend.backend_name().to_owned(),
-                assembly: detected_assembly,
-                evidence: vec![format!(
-                    "no matching rsid or locus found for {}",
-                    describe_query(variant)
-                )],
-                ..VariantObservation::default()
-            };
-        }
-    }
-
-    Ok(results)
-}
-
-fn lookup_indexed_vcf_variants(
-    backend: &VcfBackend,
-    variants: &[VariantSpec],
-) -> Result<Option<Vec<VariantObservation>>, RuntimeError> {
-    let Some(input_index) = backend.options.input_index.as_ref() else {
-        return Ok(None);
-    };
-    let detected_assembly = detect_vcf_assembly_from_path(&backend.path)?;
-    let mut indexed_variants = Vec::with_capacity(variants.len());
-    for (idx, variant) in variants.iter().enumerate() {
-        let Some(locus) = choose_variant_locus_for_assembly(variant, detected_assembly) else {
-            return Ok(None);
-        };
-        let Some(reference) = first_single_base_allele(variant.reference.as_deref()) else {
-            return Ok(None);
-        };
-        let Some(alternate) = first_single_base_allele(variant.alternate.as_deref()) else {
-            return Ok(None);
-        };
-        if !matches!(variant.kind, None | Some(VariantKind::Snp)) {
-            return Ok(None);
-        }
-        indexed_variants.push((idx, variant, locus, reference, alternate));
-    }
-
-    let tabix_index = alignment::parse_tbi_bytes(&std::fs::read(input_index).map_err(|err| {
-        RuntimeError::Io(format!(
-            "failed to read VCF index {}: {err}",
-            input_index.display()
-        ))
-    })?)?;
-    let mut indexed = csi::io::IndexedReader::new(
-        File::open(&backend.path).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to open VCF file {}: {err}",
-                backend.path.display()
-            ))
-        })?,
-        tabix_index,
-    );
-
-    let mut results = vec![VariantObservation::default(); variants.len()];
-    for (idx, variant, locus, reference, alternate) in indexed_variants {
-        results[idx] = observe_vcf_snp_with_reader(
-            &mut indexed,
-            &backend.path.display().to_string(),
-            &locus,
-            reference,
-            alternate,
-            variant.rsids.first().cloned(),
-            detected_assembly,
-        )?;
-    }
-    Ok(Some(results))
-}
-
-fn detect_vcf_assembly_from_path(path: &Path) -> Result<Option<Assembly>, RuntimeError> {
-    let mut probe_lines = Vec::new();
-    let file = File::open(path).map_err(|err| {
-        RuntimeError::Io(format!("failed to open VCF file {}: {err}", path.display()))
-    })?;
-    let mut reader: Box<dyn BufRead> = if is_bgzf_path(path) {
-        Box::new(BufReader::new(bgzf::io::Reader::new(file)))
-    } else {
-        Box::new(BufReader::new(file))
-    };
-
-    let mut buf = String::new();
-    for _ in 0..256 {
-        buf.clear();
-        let bytes = reader.read_line(&mut buf).map_err(|err| {
-            RuntimeError::Io(format!("failed to read VCF file {}: {err}", path.display()))
-        })?;
-        if bytes == 0 {
-            break;
-        }
-        let line = buf.trim_end_matches(['\n', '\r']).to_owned();
-        let stop = line.starts_with("#CHROM\t");
-        probe_lines.push(line);
-        if stop {
-            break;
-        }
-    }
-    Ok(detect_vcf_assembly(path, &probe_lines))
-}
-
-fn first_single_base_allele(value: Option<&str>) -> Option<char> {
-    let value = value?;
-    let mut chars = value.chars();
-    let base = chars.next()?;
-    chars.next().is_none().then_some(base)
-}
-
-struct VcfResolutionTargets<'a> {
-    variants: &'a [VariantSpec],
-    detected_assembly: Option<Assembly>,
-    rsid_targets: &'a HashMap<String, Vec<usize>>,
-    coord_targets: &'a HashMap<(String, i64), Vec<usize>>,
-}
-
-fn resolve_vcf_row(
-    backend: &VcfBackend,
-    row: &ParsedVcfRow,
-    targets: &VcfResolutionTargets<'_>,
-    results: &mut [VariantObservation],
-    unresolved: &mut usize,
-) {
-    if let Some(rsid) = row.rsid.as_ref()
-        && let Some(target_indexes) = targets.rsid_targets.get(rsid)
-    {
-        for &target_idx in target_indexes {
-            if results[target_idx].genotype.is_none() {
-                results[target_idx] = VariantObservation {
-                    backend: backend.backend_name().to_owned(),
-                    matched_rsid: Some(rsid.clone()),
-                    assembly: targets.detected_assembly,
-                    genotype: Some(row.genotype.clone()),
-                    evidence: vec![format!("resolved by rsid {rsid}")],
-                    ..VariantObservation::default()
-                };
-                *unresolved = (*unresolved).saturating_sub(1);
-            }
-        }
-    }
-
-    if *unresolved == 0 {
-        return;
-    }
-
-    let key = (normalize_chromosome_name(&row.chrom), row.position);
-    if let Some(target_indexes) = targets.coord_targets.get(&key) {
-        for &target_idx in target_indexes {
-            if results[target_idx].genotype.is_none()
-                && vcf_row_matches_variant(
-                    row,
-                    &targets.variants[target_idx],
-                    targets.detected_assembly,
-                )
-            {
-                results[target_idx] = VariantObservation {
-                    backend: backend.backend_name().to_owned(),
-                    matched_rsid: row.rsid.clone(),
-                    assembly: targets.detected_assembly,
-                    genotype: Some(row.genotype.clone()),
-                    evidence: vec![format!("resolved by locus {}:{}", row.chrom, row.position)],
-                    ..VariantObservation::default()
-                };
-                *unresolved = (*unresolved).saturating_sub(1);
-            }
-        }
-    }
-}
-
-fn parse_vcf_record(line: &str) -> Result<Option<ParsedVcfRow>, RuntimeError> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with('#') {
-        return Ok(None);
-    }
-
-    let fields: Vec<&str> = trimmed.split('\t').collect();
-    if fields.len() < 10 {
-        return Ok(None);
-    }
-
-    let chrom = fields[0].trim();
-    let position = fields[1].trim().parse::<i64>().map_err(|err| {
-        RuntimeError::Io(format!(
-            "failed to parse VCF position '{}': {err}",
-            fields[1].trim()
-        ))
-    })?;
-    let rsid = {
-        let value = fields[2].trim();
-        (!value.is_empty() && value != ".").then(|| value.to_owned())
-    };
-    let reference = fields[3].trim();
-    if reference.is_empty() || reference == "." {
-        return Ok(None);
-    }
-
-    let alternates: Vec<String> = fields[4]
-        .split(',')
-        .map(str::trim)
-        .filter(|alt| !alt.is_empty() && *alt != ".")
-        .map(ToOwned::to_owned)
-        .collect();
-    if alternates.is_empty() {
-        return Ok(None);
-    }
-
-    let genotype = extract_vcf_sample_genotype(fields[8], fields[9], reference, &alternates)
-        .unwrap_or_else(|| "--".to_owned());
-
-    Ok(Some(ParsedVcfRow {
-        rsid,
-        chrom: chrom.to_owned(),
-        position,
-        reference: reference.to_owned(),
-        alternates,
-        genotype,
-    }))
-}
-
-fn extract_vcf_sample_genotype(
-    format_field: &str,
-    sample_field: &str,
-    reference: &str,
-    alternates: &[String],
-) -> Option<String> {
-    let gt_index = format_field
-        .split(':')
-        .position(|field| field.eq_ignore_ascii_case("GT"))?;
-    let sample_parts: Vec<&str> = sample_field.split(':').collect();
-    let sample_gt = sample_parts.get(gt_index).copied().unwrap_or(".");
-    let alternate_refs: Vec<&str> = alternates.iter().map(String::as_str).collect();
-    genotype_from_vcf_gt(sample_gt, reference, &alternate_refs)
-}
-
-fn detect_vcf_assembly(path: &Path, probe_lines: &[String]) -> Option<Assembly> {
-    let combined = probe_lines.join("\n").to_ascii_lowercase();
-    if combined.contains("assembly=b37")
-        || combined.contains("assembly=grch37")
-        || combined.contains("assembly=hg19")
-        || combined.contains("reference=grch37")
-        || combined.contains("reference=hg19")
-    {
-        return Some(Assembly::Grch37);
-    }
-    if combined.contains("assembly=b38")
-        || combined.contains("assembly=grch38")
-        || combined.contains("assembly=hg38")
-        || combined.contains("reference=grch38")
-        || combined.contains("reference=hg38")
-    {
-        return Some(Assembly::Grch38);
-    }
-
-    let lower = path.to_string_lossy().to_ascii_lowercase();
-    if lower.contains("grch37") || lower.contains("hg19") || lower.contains("b37") {
-        Some(Assembly::Grch37)
-    } else if lower.contains("grch38") || lower.contains("hg38") || lower.contains("b38") {
-        Some(Assembly::Grch38)
-    } else {
-        None
-    }
-}
-
-fn choose_variant_locus_for_assembly(
-    variant: &VariantSpec,
-    assembly: Option<Assembly>,
-) -> Option<GenomicLocus> {
-    match assembly {
-        Some(Assembly::Grch37) => variant.grch37.clone().or_else(|| variant.grch38.clone()),
-        Some(Assembly::Grch38) => variant.grch38.clone().or_else(|| variant.grch37.clone()),
-        None => variant.grch37.clone().or_else(|| variant.grch38.clone()),
-    }
-}
-
-fn normalize_chromosome_name(value: &str) -> String {
-    value.trim().trim_start_matches("chr").to_ascii_lowercase()
-}
-
-fn vcf_row_matches_variant(
-    row: &ParsedVcfRow,
-    variant: &VariantSpec,
-    assembly: Option<Assembly>,
-) -> bool {
-    let Some(locus) = choose_variant_locus_for_assembly(variant, assembly) else {
-        return false;
-    };
-
-    if normalize_chromosome_name(&row.chrom) != normalize_chromosome_name(&locus.chrom) {
-        return false;
-    }
-
-    match variant.kind.unwrap_or(VariantKind::Other) {
-        VariantKind::Snp => {
-            row.position == locus.start
-                && variant
-                    .reference
-                    .as_ref()
-                    .is_none_or(|reference| reference.eq_ignore_ascii_case(&row.reference))
-                && variant.alternate.as_ref().is_none_or(|alternate| {
-                    row.alternates
-                        .iter()
-                        .any(|candidate| candidate.eq_ignore_ascii_case(alternate))
-                })
-        }
-        VariantKind::Deletion => {
-            let expected_len = variant.deletion_length.unwrap_or(0);
-            row.position == locus.start.saturating_sub(1)
-                && row.alternates.iter().any(|alternate| {
-                    let actual_len = row.reference.len().saturating_sub(alternate.len());
-                    (expected_len == 0 || actual_len == expected_len)
-                        && alternate.len() < row.reference.len()
-                })
-        }
-        VariantKind::Insertion | VariantKind::Indel => {
-            row.position == locus.start.saturating_sub(1)
-        }
-        VariantKind::Other => row.position == locus.start,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1924,9 +453,12 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use noodles::bgzf;
+    use noodles::csi;
     use zip::write::SimpleFileOptions;
 
-    use crate::alignment::AlignmentOp;
+    use crate::alignment::{AlignmentOp, AlignmentOpKind, AlignmentRecord};
+    use crate::genotype::{io::read_plain_lines, vcf::detect_vcf_assembly_from_path};
 
     fn temp_dir(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -2368,6 +900,16 @@ mod tests {
             detect_source_format(&text, None).unwrap(),
             GenotypeSourceFormat::Text
         ));
+        let vcf_like = dir.join("sample.dat");
+        fs::write(&vcf_like, "##fileformat=VCFv4.3\n#CHROM\tPOS\n").unwrap();
+        assert!(matches!(
+            detect_source_format(&vcf_like, None).unwrap(),
+            GenotypeSourceFormat::Vcf
+        ));
+        assert!(is_bgzf_path(Path::new("sample.VCF.GZ")));
+        assert!(!is_bgzf_path(Path::new("sample.vcf")));
+        let missing = read_plain_lines(&dir.join("missing.txt")).unwrap_err();
+        assert!(missing.to_string().contains("failed to open genotype file"));
         assert!(matches!(
             detect_source_format(&text, Some(GenotypeSourceFormat::Cram)).unwrap(),
             GenotypeSourceFormat::Cram
@@ -2427,6 +969,30 @@ mod tests {
         assert_eq!(select_zip_entry(&zip_path).unwrap(), "nested/sample.csv");
         let zip_backend = GenotypeStore::from_file(&zip_path).unwrap();
         assert_eq!(zip_backend.get("rs3").unwrap().as_deref(), Some("GG"));
+
+        let fallback_zip = dir.join("fallback.zip");
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        writer
+            .add_directory("nested/", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .start_file("nested/notes.bin", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"notes\n").unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        fs::write(&fallback_zip, bytes).unwrap();
+        assert_eq!(select_zip_entry(&fallback_zip).unwrap(), "nested/notes.bin");
+
+        let empty_zip = dir.join("empty.zip");
+        let cursor = std::io::Cursor::new(Vec::new());
+        let writer = zip::ZipWriter::new(cursor);
+        fs::write(&empty_zip, writer.finish().unwrap().into_inner()).unwrap();
+        let err = select_zip_entry(&empty_zip).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("does not contain a supported genotype file")
+        );
 
         let unsupported_backend = DelimitedBackend {
             format: GenotypeSourceFormat::Vcf,
@@ -2588,6 +1154,70 @@ mod tests {
         .unwrap_err();
         assert!(err.to_string().contains("failed to open VCF file"));
 
+        assert_eq!(
+            detect_vcf_assembly_from_path(&vcf_path).unwrap(),
+            Some(Assembly::Grch38)
+        );
+
+        let no_index = VcfBackend {
+            path: vcf_path.clone(),
+            options: GenotypeLoadOptions::default(),
+        };
+        assert!(
+            lookup_indexed_vcf_variants(&no_index, &[VariantSpec::default()])
+                .unwrap()
+                .is_none()
+        );
+
+        let indexed = VcfBackend {
+            path: vcf_path.clone(),
+            options: GenotypeLoadOptions {
+                input_index: Some(dir.join("missing.tbi")),
+                ..GenotypeLoadOptions::default()
+            },
+        };
+        for variant in [
+            VariantSpec::default(),
+            VariantSpec {
+                grch38: Some(locus("1", 10, 10)),
+                alternate: Some("G".to_owned()),
+                kind: Some(VariantKind::Snp),
+                ..VariantSpec::default()
+            },
+            VariantSpec {
+                grch38: Some(locus("1", 10, 10)),
+                reference: Some("AT".to_owned()),
+                alternate: Some("G".to_owned()),
+                kind: Some(VariantKind::Snp),
+                ..VariantSpec::default()
+            },
+            VariantSpec {
+                grch38: Some(locus("1", 10, 10)),
+                reference: Some("A".to_owned()),
+                alternate: Some("G".to_owned()),
+                kind: Some(VariantKind::Deletion),
+                ..VariantSpec::default()
+            },
+        ] {
+            assert!(
+                lookup_indexed_vcf_variants(&indexed, &[variant])
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let err = lookup_indexed_vcf_variants(
+            &indexed,
+            &[VariantSpec {
+                grch38: Some(locus("1", 10, 10)),
+                reference: Some("A".to_owned()),
+                alternate: Some("G".to_owned()),
+                kind: Some(VariantKind::Snp),
+                ..VariantSpec::default()
+            }],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("failed to read VCF index"));
+
         let bad_zip_backend = DelimitedBackend {
             format: GenotypeSourceFormat::Zip,
             path: zip_path.clone(),
@@ -2611,6 +1241,15 @@ mod tests {
             err.to_string().contains("failed to open genotype entry"),
             "{err}"
         );
+
+        let missing_text_backend = DelimitedBackend {
+            format: GenotypeSourceFormat::Text,
+            path: dir.join("missing.txt"),
+            zip_entry_name: None,
+        };
+        let err =
+            scan_delimited_variants(&missing_text_backend, &[VariantSpec::default()]).unwrap_err();
+        assert!(err.to_string().contains("failed to open genotype file"));
     }
 
     #[test]
