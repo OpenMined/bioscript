@@ -1,80 +1,47 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
-use bioscript_core::{GenomicLocus, RuntimeError, VariantKind, VariantSpec};
-use bioscript_formats::{GenotypeLoadOptions, GenotypeStore};
-use monty::{
-    LimitedTracker, MontyException, MontyObject, MontyRun, NameLookupResult, PrintWriter,
-    ResourceLimits, RunProgress,
+use bioscript_core::RuntimeError;
+use monty::{LimitedTracker, MontyObject, MontyRun, NameLookupResult, PrintWriter, RunProgress};
+
+mod args;
+mod host_io;
+mod methods;
+mod objects;
+mod state;
+mod trace;
+mod variants;
+
+#[cfg(test)]
+use bioscript_core::VariantSpec;
+use host_io::{deepest_existing_ancestor, host_read_text, host_write_text};
+use objects::bioscript_object;
+#[cfg(test)]
+use objects::{
+    genotype_file_object, variant_object, variant_observation_object, variant_plan_object,
 };
+pub use state::{RuntimeConfig, StageTiming};
+use state::{RuntimeState, monty_error};
+#[cfg(test)]
+use trace::{
+    ends_with_unescaped_backslash, extract_coordinate, extract_rsid, update_nesting_depth,
+};
+use trace::{host_trace, instrument_source, statement_context, trace_lookup_metadata};
+#[cfg(test)]
+use variants::{dataclass_handle_id, dataclass_to_variant_spec, variant_specs_from_plan};
+#[cfg(test)]
+use variants::{int_from_optional, string_from_optional, string_list_from_object, string_or_list};
 
 type HostFunction = fn(
     &BioscriptRuntime,
     &[MontyObject],
     &[(MontyObject, MontyObject)],
 ) -> Result<MontyObject, RuntimeError>;
-
-#[derive(Debug, Clone)]
-pub struct RuntimeConfig {
-    pub limits: ResourceLimits,
-    pub loader: GenotypeLoadOptions,
-}
-
-impl Default for RuntimeConfig {
-    fn default() -> Self {
-        let limits = ResourceLimits::new()
-            .max_duration(Duration::from_millis(100))
-            .max_memory(8 * 1024 * 1024)
-            .max_allocations(200_000)
-            .gc_interval(1000)
-            .max_recursion_depth(Some(200));
-        Self {
-            limits,
-            loader: GenotypeLoadOptions::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StageTiming {
-    pub stage: String,
-    pub duration_ms: u128,
-    pub detail: String,
-}
-
-fn monty_error(value: MontyException) -> RuntimeError {
-    RuntimeError::Monty(value.to_string())
-}
-
-struct RuntimeState {
-    next_handle: AtomicU64,
-    genotype_files: Mutex<HashMap<u64, GenotypeStore>>,
-    trace_lines: Mutex<Vec<usize>>,
-    timings: Mutex<Vec<StageTiming>>,
-}
-
-impl RuntimeState {
-    fn new() -> Self {
-        Self {
-            next_handle: AtomicU64::new(1),
-            genotype_files: Mutex::new(HashMap::new()),
-            trace_lines: Mutex::new(Vec::new()),
-            timings: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn next_handle(&self) -> u64 {
-        self.next_handle.fetch_add(1, Ordering::Relaxed)
-    }
-}
 
 #[derive(Clone)]
 pub struct BioscriptRuntime {
@@ -287,297 +254,6 @@ impl BioscriptRuntime {
         }
     }
 
-    fn method_load_genotypes(
-        &self,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
-        reject_kwargs(kwargs, "bioscript.load_genotypes")?;
-        if args.len() != 2 {
-            return Err(RuntimeError::InvalidArguments(
-                "bioscript.load_genotypes expects self and path".to_owned(),
-            ));
-        }
-        let path =
-            self.resolve_user_path(&expect_string_arg(args, 1, "bioscript.load_genotypes")?)?;
-        let loader = self.resolved_loader_options()?;
-        let store = GenotypeStore::from_file_with_options(&path, &loader)?;
-        let handle = self.state.next_handle();
-        self.state
-            .genotype_files
-            .lock()
-            .expect("genotype mutex poisoned")
-            .insert(handle, store);
-        self.record_timing(
-            "load_genotypes",
-            started.elapsed(),
-            format!("path={}", path.display()),
-        );
-        Ok(genotype_file_object(handle))
-    }
-
-    fn resolved_loader_options(&self) -> Result<GenotypeLoadOptions, RuntimeError> {
-        let mut loader = self.config.loader.clone();
-        loader.input_index = resolve_optional_loader_path(self, loader.input_index)?;
-        loader.reference_file = resolve_optional_loader_path(self, loader.reference_file)?;
-        loader.reference_index = resolve_optional_loader_path(self, loader.reference_index)?;
-        Ok(loader)
-    }
-
-    fn method_genotype_get(
-        &self,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        reject_kwargs(kwargs, "GenotypeFile.get")?;
-        if args.len() != 2 {
-            return Err(RuntimeError::InvalidArguments(
-                "GenotypeFile.get expects self and rsid".to_owned(),
-            ));
-        }
-        let handle = dataclass_handle_id(&args[0], "GenotypeFile")?;
-        let rsid = expect_string_arg(args, 1, "GenotypeFile.get")?;
-        let guard = self
-            .state
-            .genotype_files
-            .lock()
-            .expect("genotype mutex poisoned");
-        let Some(store) = guard.get(&handle) else {
-            return Err(RuntimeError::InvalidArguments(format!(
-                "unknown genotype handle: {handle}"
-            )));
-        };
-        Ok(match store.get(&rsid)? {
-            Some(value) => MontyObject::String(value),
-            None => MontyObject::None,
-        })
-    }
-
-    fn method_variant(
-        &self,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        if args.len() != 1 {
-            return Err(RuntimeError::InvalidArguments(
-                "bioscript.variant expects only self as a positional argument".to_owned(),
-            ));
-        }
-        let spec = variant_spec_from_kwargs(kwargs)?;
-        Ok(variant_object(&spec))
-    }
-
-    fn method_query_plan(
-        &self,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        reject_kwargs(kwargs, "bioscript.query_plan")?;
-        if args.len() != 2 {
-            return Err(RuntimeError::InvalidArguments(
-                "bioscript.query_plan expects self and a list of variants".to_owned(),
-            ));
-        }
-        let variants = variant_specs_from_plan(&args[1])?;
-        Ok(variant_plan_object(&variants))
-    }
-
-    fn method_genotype_lookup_variant(
-        &self,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
-        reject_kwargs(kwargs, "GenotypeFile.lookup_variant")?;
-        if args.len() != 2 {
-            return Err(RuntimeError::InvalidArguments(
-                "GenotypeFile.lookup_variant expects self and variant".to_owned(),
-            ));
-        }
-        let handle = dataclass_handle_id(&args[0], "GenotypeFile")?;
-        let spec = dataclass_to_variant_spec(&args[1])?;
-        let guard = self
-            .state
-            .genotype_files
-            .lock()
-            .expect("genotype mutex poisoned");
-        let Some(store) = guard.get(&handle) else {
-            return Err(RuntimeError::InvalidArguments(format!(
-                "unknown genotype handle: {handle}"
-            )));
-        };
-        let observation = store.lookup_variant(&spec)?;
-        self.record_timing(
-            "lookup_variant",
-            started.elapsed(),
-            format!("rsids={}", spec.rsids.join("|")),
-        );
-        Ok(match observation.genotype {
-            Some(value) => MontyObject::String(value),
-            None => MontyObject::None,
-        })
-    }
-
-    fn method_genotype_lookup_variant_details(
-        &self,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
-        reject_kwargs(kwargs, "GenotypeFile.lookup_variant_details")?;
-        if args.len() != 2 {
-            return Err(RuntimeError::InvalidArguments(
-                "GenotypeFile.lookup_variant_details expects self and variant".to_owned(),
-            ));
-        }
-        let handle = dataclass_handle_id(&args[0], "GenotypeFile")?;
-        let spec = dataclass_to_variant_spec(&args[1])?;
-        let guard = self
-            .state
-            .genotype_files
-            .lock()
-            .expect("genotype mutex poisoned");
-        let Some(store) = guard.get(&handle) else {
-            return Err(RuntimeError::InvalidArguments(format!(
-                "unknown genotype handle: {handle}"
-            )));
-        };
-        let observation = store.lookup_variant(&spec)?;
-        self.record_timing(
-            "lookup_variant_details",
-            started.elapsed(),
-            format!("rsids={}", spec.rsids.join("|")),
-        );
-        Ok(variant_observation_object(&observation))
-    }
-
-    fn method_genotype_lookup_variants(
-        &self,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
-        reject_kwargs(kwargs, "GenotypeFile.lookup_variants")?;
-        if args.len() != 2 {
-            return Err(RuntimeError::InvalidArguments(
-                "GenotypeFile.lookup_variants expects self and a variant plan".to_owned(),
-            ));
-        }
-        let handle = dataclass_handle_id(&args[0], "GenotypeFile")?;
-        let specs = variant_specs_from_plan(&args[1])?;
-        let guard = self
-            .state
-            .genotype_files
-            .lock()
-            .expect("genotype mutex poisoned");
-        let Some(store) = guard.get(&handle) else {
-            return Err(RuntimeError::InvalidArguments(format!(
-                "unknown genotype handle: {handle}"
-            )));
-        };
-        let observations = store.lookup_variants(&specs)?;
-        self.record_timing(
-            "lookup_variants",
-            started.elapsed(),
-            format!("count={}", specs.len()),
-        );
-        Ok(MontyObject::List(
-            observations
-                .into_iter()
-                .map(|observation| match observation.genotype {
-                    Some(value) => MontyObject::String(value),
-                    None => MontyObject::None,
-                })
-                .collect(),
-        ))
-    }
-
-    fn method_genotype_lookup_variants_details(
-        &self,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
-        reject_kwargs(kwargs, "GenotypeFile.lookup_variants_details")?;
-        if args.len() != 2 {
-            return Err(RuntimeError::InvalidArguments(
-                "GenotypeFile.lookup_variants_details expects self and a variant plan".to_owned(),
-            ));
-        }
-        let handle = dataclass_handle_id(&args[0], "GenotypeFile")?;
-        let specs = variant_specs_from_plan(&args[1])?;
-        let guard = self
-            .state
-            .genotype_files
-            .lock()
-            .expect("genotype mutex poisoned");
-        let Some(store) = guard.get(&handle) else {
-            return Err(RuntimeError::InvalidArguments(format!(
-                "unknown genotype handle: {handle}"
-            )));
-        };
-        let observations = store.lookup_variants(&specs)?;
-        self.record_timing(
-            "lookup_variants_details",
-            started.elapsed(),
-            format!("count={}", specs.len()),
-        );
-        Ok(MontyObject::List(
-            observations
-                .iter()
-                .map(variant_observation_object)
-                .collect(),
-        ))
-    }
-
-    fn method_write_tsv(
-        &self,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
-        reject_kwargs(kwargs, "bioscript.write_tsv")?;
-        if args.len() != 3 {
-            return Err(RuntimeError::InvalidArguments(
-                "bioscript.write_tsv expects self, path, rows".to_owned(),
-            ));
-        }
-        let path = self.resolve_user_path(&expect_string_arg(args, 1, "bioscript.write_tsv")?)?;
-        let rows = expect_rows(&args[2])?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|err| {
-                RuntimeError::Io(format!(
-                    "failed to create parent dir {}: {err}",
-                    parent.display()
-                ))
-            })?;
-        }
-        let mut output = String::new();
-        if let Some(first) = rows.first() {
-            let headers: Vec<String> = first.keys().cloned().collect();
-            output.push_str(&headers.join("\t"));
-            output.push('\n');
-            for row in &rows {
-                let values: Vec<String> = headers
-                    .iter()
-                    .map(|header| row.get(header).cloned().unwrap_or_default())
-                    .collect();
-                output.push_str(&values.join("\t"));
-                output.push('\n');
-            }
-        }
-        fs::write(&path, output).map_err(|err| {
-            RuntimeError::Io(format!("failed to write {}: {err}", path.display()))
-        })?;
-        self.record_timing(
-            "write_tsv",
-            started.elapsed(),
-            format!("path={} rows={}", path.display(), rows.len()),
-        );
-        Ok(MontyObject::None)
-    }
-
     fn record_timing(&self, stage: &str, duration: Duration, detail: String) {
         self.state
             .timings
@@ -588,32 +264,6 @@ impl BioscriptRuntime {
                 duration_ms: duration.as_millis(),
                 detail,
             });
-    }
-
-    fn method_read_text(
-        &self,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        if args.is_empty() {
-            return Err(RuntimeError::InvalidArguments(
-                "bioscript.read_text expects self and path".to_owned(),
-            ));
-        }
-        host_read_text(self, &args[1..], kwargs)
-    }
-
-    fn method_write_text(
-        &self,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        if args.is_empty() {
-            return Err(RuntimeError::InvalidArguments(
-                "bioscript.write_text expects self, path, text".to_owned(),
-            ));
-        }
-        host_write_text(self, &args[1..], kwargs)
     }
 
     fn resolve_user_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
@@ -634,6 +284,47 @@ impl BioscriptRuntime {
             }
         }
         Ok(self.root.join(path))
+    }
+
+    fn resolve_existing_user_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
+        let path = self.resolve_user_path(raw_path)?;
+        let canonical = path.canonicalize().map_err(|err| {
+            RuntimeError::Io(format!("failed to resolve {}: {err}", path.display()))
+        })?;
+        self.ensure_under_root(&canonical, raw_path)?;
+        Ok(canonical)
+    }
+
+    fn resolve_user_write_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
+        let path = self.resolve_user_path(raw_path)?;
+        if path.exists() {
+            let canonical = path.canonicalize().map_err(|err| {
+                RuntimeError::Io(format!("failed to resolve {}: {err}", path.display()))
+            })?;
+            self.ensure_under_root(&canonical, raw_path)?;
+            return Ok(canonical);
+        }
+
+        let parent = path.parent().unwrap_or(&self.root);
+        let existing_parent = deepest_existing_ancestor(parent);
+        let canonical_parent = existing_parent.canonicalize().map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to resolve parent dir {}: {err}",
+                existing_parent.display()
+            ))
+        })?;
+        self.ensure_under_root(&canonical_parent, raw_path)?;
+        Ok(path)
+    }
+
+    fn ensure_under_root(&self, path: &Path, raw_path: &str) -> Result<(), RuntimeError> {
+        if path.starts_with(&self.root) {
+            Ok(())
+        } else {
+            Err(RuntimeError::InvalidArguments(format!(
+                "path escapes bioscript root: {raw_path}"
+            )))
+        }
     }
 
     fn write_trace_report(
@@ -678,562 +369,6 @@ impl BioscriptRuntime {
     }
 }
 
-fn trace_lookup_metadata(source: &str) -> (Option<String>, Option<String>) {
-    if let Some(rsid) = extract_rsid(source) {
-        let url = format!("https://www.ncbi.nlm.nih.gov/snp/{rsid}");
-        return (Some(rsid), Some(url));
-    }
-
-    if let Some(coord) = extract_coordinate(source) {
-        let lower = source.to_ascii_lowercase();
-        let host = if lower.contains("grch37") || lower.contains("hg19") {
-            "https://grch37.ensembl.org"
-        } else {
-            "https://www.ensembl.org"
-        };
-        let url = format!("{host}/Homo_sapiens/Location/View?r={coord}");
-        return (Some(coord), Some(url));
-    }
-
-    (None, None)
-}
-
-fn statement_context(lines: &[&str], line_no: usize) -> String {
-    let Some(start_idx) = line_no.checked_sub(1) else {
-        return String::new();
-    };
-    let Some(first_line) = lines.get(start_idx) else {
-        return String::new();
-    };
-
-    let mut out = String::from(first_line.trim());
-    let mut depth = update_nesting_depth(0, first_line);
-    let mut current = start_idx + 1;
-
-    while depth > 0 {
-        let Some(line) = lines.get(current) else {
-            break;
-        };
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(line.trim());
-        depth = update_nesting_depth(depth, line);
-        current += 1;
-    }
-
-    out
-}
-
-fn extract_rsid(source: &str) -> Option<String> {
-    let chars: Vec<char> = source.chars().collect();
-    let len = chars.len();
-    let mut idx = 0;
-    while idx + 2 <= len {
-        if chars[idx] == 'r'
-            && chars.get(idx + 1) == Some(&'s')
-            && (idx == 0 || !chars[idx - 1].is_ascii_alphanumeric())
-        {
-            let mut end = idx + 2;
-            while end < len && chars[end].is_ascii_digit() {
-                end += 1;
-            }
-            if end > idx + 2 {
-                return Some(chars[idx..end].iter().collect());
-            }
-        }
-        idx += 1;
-    }
-    None
-}
-
-fn extract_coordinate(source: &str) -> Option<String> {
-    for token in source.split(|ch: char| {
-        ch.is_whitespace() || matches!(ch, '"' | '\'' | ',' | ')' | '(' | '[' | ']' | '{' | '}')
-    }) {
-        let cleaned = token.trim_matches(|ch: char| matches!(ch, ';'));
-        let normalized = cleaned.strip_prefix("chr").unwrap_or(cleaned);
-        if let Some((chrom, rest)) = normalized.split_once(':')
-            && !chrom.is_empty()
-            && chrom.chars().all(|ch| ch.is_ascii_alphanumeric())
-        {
-            if let Some((start, end)) = rest.split_once('-') {
-                if start.chars().all(|ch| ch.is_ascii_digit())
-                    && end.chars().all(|ch| ch.is_ascii_digit())
-                {
-                    return Some(format!("{chrom}:{start}-{end}"));
-                }
-            } else if rest.chars().all(|ch| ch.is_ascii_digit()) {
-                return Some(format!("{chrom}:{rest}-{rest}"));
-            }
-        }
-    }
-    None
-}
-
-fn bioscript_object() -> MontyObject {
-    MontyObject::Dataclass {
-        name: "Bioscript".to_owned(),
-        type_id: 1,
-        field_names: vec![],
-        attrs: vec![].into(),
-        frozen: true,
-    }
-}
-
-fn genotype_file_object(handle_id: u64) -> MontyObject {
-    MontyObject::Dataclass {
-        name: "GenotypeFile".to_owned(),
-        type_id: 2,
-        field_names: vec!["handle_id".to_owned()],
-        attrs: vec![(
-            MontyObject::String("handle_id".to_owned()),
-            MontyObject::Int(handle_id as i64),
-        )]
-        .into(),
-        frozen: true,
-    }
-}
-
-fn variant_object(spec: &VariantSpec) -> MontyObject {
-    let mut attrs = Vec::new();
-    attrs.push((
-        MontyObject::String("rsids".to_owned()),
-        MontyObject::List(
-            spec.rsids
-                .iter()
-                .cloned()
-                .map(MontyObject::String)
-                .collect(),
-        ),
-    ));
-    if let Some(locus) = &spec.grch37 {
-        attrs.push((
-            MontyObject::String("grch37".to_owned()),
-            MontyObject::String(format!("{}:{}-{}", locus.chrom, locus.start, locus.end)),
-        ));
-    }
-    if let Some(locus) = &spec.grch38 {
-        attrs.push((
-            MontyObject::String("grch38".to_owned()),
-            MontyObject::String(format!("{}:{}-{}", locus.chrom, locus.start, locus.end)),
-        ));
-    }
-    if let Some(reference) = &spec.reference {
-        attrs.push((
-            MontyObject::String("reference".to_owned()),
-            MontyObject::String(reference.clone()),
-        ));
-    }
-    if let Some(alternate) = &spec.alternate {
-        attrs.push((
-            MontyObject::String("alternate".to_owned()),
-            MontyObject::String(alternate.clone()),
-        ));
-    }
-    if let Some(kind) = spec.kind {
-        attrs.push((
-            MontyObject::String("kind".to_owned()),
-            MontyObject::String(variant_kind_name(kind).to_owned()),
-        ));
-    }
-    if let Some(length) = spec.deletion_length {
-        attrs.push((
-            MontyObject::String("deletion_length".to_owned()),
-            MontyObject::Int(length as i64),
-        ));
-    }
-    if !spec.motifs.is_empty() {
-        attrs.push((
-            MontyObject::String("motifs".to_owned()),
-            MontyObject::List(
-                spec.motifs
-                    .iter()
-                    .cloned()
-                    .map(MontyObject::String)
-                    .collect(),
-            ),
-        ));
-    }
-
-    MontyObject::Dataclass {
-        name: "Variant".to_owned(),
-        type_id: 3,
-        field_names: vec![
-            "rsids".to_owned(),
-            "grch37".to_owned(),
-            "grch38".to_owned(),
-            "reference".to_owned(),
-            "alternate".to_owned(),
-            "kind".to_owned(),
-            "deletion_length".to_owned(),
-            "motifs".to_owned(),
-        ],
-        attrs: attrs.into(),
-        frozen: true,
-    }
-}
-
-fn variant_plan_object(variants: &[VariantSpec]) -> MontyObject {
-    MontyObject::Dataclass {
-        name: "VariantPlan".to_owned(),
-        type_id: 4,
-        field_names: vec!["variants".to_owned()],
-        attrs: vec![(
-            MontyObject::String("variants".to_owned()),
-            MontyObject::List(variants.iter().map(variant_object).collect()),
-        )]
-        .into(),
-        frozen: true,
-    }
-}
-
-fn variant_observation_object(observation: &bioscript_core::VariantObservation) -> MontyObject {
-    let mut attrs = vec![
-        (
-            MontyObject::String("backend".to_owned()),
-            MontyObject::String(observation.backend.clone()),
-        ),
-        (
-            MontyObject::String("matched_rsid".to_owned()),
-            match &observation.matched_rsid {
-                Some(value) => MontyObject::String(value.clone()),
-                None => MontyObject::None,
-            },
-        ),
-        (
-            MontyObject::String("assembly".to_owned()),
-            match observation.assembly {
-                Some(assembly) => MontyObject::String(match assembly {
-                    bioscript_core::Assembly::Grch37 => "grch37".to_owned(),
-                    bioscript_core::Assembly::Grch38 => "grch38".to_owned(),
-                }),
-                None => MontyObject::None,
-            },
-        ),
-        (
-            MontyObject::String("genotype".to_owned()),
-            match &observation.genotype {
-                Some(value) => MontyObject::String(value.clone()),
-                None => MontyObject::None,
-            },
-        ),
-        (
-            MontyObject::String("ref_count".to_owned()),
-            observation.ref_count.map_or(MontyObject::None, |value| {
-                MontyObject::Int(i64::from(value))
-            }),
-        ),
-        (
-            MontyObject::String("alt_count".to_owned()),
-            observation.alt_count.map_or(MontyObject::None, |value| {
-                MontyObject::Int(i64::from(value))
-            }),
-        ),
-        (
-            MontyObject::String("depth".to_owned()),
-            observation.depth.map_or(MontyObject::None, |value| {
-                MontyObject::Int(i64::from(value))
-            }),
-        ),
-        (
-            MontyObject::String("decision".to_owned()),
-            match &observation.decision {
-                Some(value) => MontyObject::String(value.clone()),
-                None => MontyObject::None,
-            },
-        ),
-        (
-            MontyObject::String("raw_counts".to_owned()),
-            MontyObject::Dict(
-                observation
-                    .raw_counts
-                    .iter()
-                    .map(|(base, count)| {
-                        (
-                            MontyObject::String(base.clone()),
-                            MontyObject::Int(i64::from(*count)),
-                        )
-                    })
-                    .collect(),
-            ),
-        ),
-        (
-            MontyObject::String("evidence".to_owned()),
-            MontyObject::List(
-                observation
-                    .evidence
-                    .iter()
-                    .cloned()
-                    .map(MontyObject::String)
-                    .collect(),
-            ),
-        ),
-    ];
-
-    MontyObject::Dataclass {
-        name: "VariantObservation".to_owned(),
-        type_id: 5,
-        field_names: vec![
-            "backend".to_owned(),
-            "matched_rsid".to_owned(),
-            "assembly".to_owned(),
-            "genotype".to_owned(),
-            "ref_count".to_owned(),
-            "alt_count".to_owned(),
-            "depth".to_owned(),
-            "decision".to_owned(),
-            "raw_counts".to_owned(),
-            "evidence".to_owned(),
-        ],
-        attrs: attrs.drain(..).collect(),
-        frozen: true,
-    }
-}
-
-fn dataclass_handle_id(obj: &MontyObject, expected_name: &str) -> Result<u64, RuntimeError> {
-    match obj {
-        MontyObject::Dataclass { name, attrs, .. } if name == expected_name => {
-            for (key, value) in attrs {
-                if matches!(key, MontyObject::String(text) if text == "handle_id")
-                    && let MontyObject::Int(id) = value
-                {
-                    return Ok(*id as u64);
-                }
-            }
-            Err(RuntimeError::InvalidArguments(format!(
-                "{expected_name} missing handle_id"
-            )))
-        }
-        _ => Err(RuntimeError::InvalidArguments(format!(
-            "expected {expected_name} object"
-        ))),
-    }
-}
-
-fn dataclass_to_variant_spec(obj: &MontyObject) -> Result<VariantSpec, RuntimeError> {
-    let MontyObject::Dataclass { name, attrs, .. } = obj else {
-        return Err(RuntimeError::InvalidArguments(
-            "expected Variant object".to_owned(),
-        ));
-    };
-    if name != "Variant" {
-        return Err(RuntimeError::InvalidArguments(format!(
-            "expected Variant object, got {name}"
-        )));
-    }
-
-    let mut spec = VariantSpec::default();
-    for (key, value) in attrs {
-        let MontyObject::String(key) = key else {
-            continue;
-        };
-        match key.as_str() {
-            "rsids" => spec.rsids = string_list_from_object(value)?,
-            "grch37" => {
-                spec.grch37 = string_from_optional(value)?
-                    .map(|v| parse_locus_string(&v))
-                    .transpose()?
-            }
-            "grch38" => {
-                spec.grch38 = string_from_optional(value)?
-                    .map(|v| parse_locus_string(&v))
-                    .transpose()?
-            }
-            "reference" => spec.reference = string_from_optional(value)?,
-            "alternate" => spec.alternate = string_from_optional(value)?,
-            "kind" => {
-                spec.kind = string_from_optional(value)?
-                    .as_deref()
-                    .map(parse_variant_kind)
-                    .transpose()?
-            }
-            "deletion_length" => {
-                spec.deletion_length = int_from_optional(value)?.map(|v| v as usize)
-            }
-            "motifs" => spec.motifs = string_list_from_object(value)?,
-            _ => {}
-        }
-    }
-    Ok(spec)
-}
-
-fn variant_specs_from_plan(obj: &MontyObject) -> Result<Vec<VariantSpec>, RuntimeError> {
-    match obj {
-        MontyObject::List(items) => items.iter().map(dataclass_to_variant_spec).collect(),
-        MontyObject::Dataclass { name, attrs, .. } if name == "VariantPlan" => {
-            for (key, value) in attrs {
-                if matches!(key, MontyObject::String(text) if text == "variants") {
-                    return variant_specs_from_plan(value);
-                }
-            }
-            Err(RuntimeError::InvalidArguments(
-                "VariantPlan missing variants".to_owned(),
-            ))
-        }
-        _ => Err(RuntimeError::InvalidArguments(
-            "expected a list of Variant objects or a VariantPlan".to_owned(),
-        )),
-    }
-}
-
-fn variant_spec_from_kwargs(
-    kwargs: &[(MontyObject, MontyObject)],
-) -> Result<VariantSpec, RuntimeError> {
-    let mut spec = VariantSpec::default();
-    for (key, value) in kwargs {
-        let MontyObject::String(key) = key else {
-            return Err(RuntimeError::InvalidArguments(
-                "bioscript.variant keyword names must be strings".to_owned(),
-            ));
-        };
-        match key.as_str() {
-            "rsid" | "rsids" => spec.rsids = string_or_list(value)?,
-            "grch37" => {
-                spec.grch37 = string_from_optional(value)?
-                    .map(|v| parse_locus_string(&v))
-                    .transpose()?
-            }
-            "grch38" => {
-                spec.grch38 = string_from_optional(value)?
-                    .map(|v| parse_locus_string(&v))
-                    .transpose()?
-            }
-            "ref" | "reference" => spec.reference = string_from_optional(value)?,
-            "alt" | "alternate" => spec.alternate = string_from_optional(value)?,
-            "kind" => {
-                spec.kind = string_from_optional(value)?
-                    .as_deref()
-                    .map(parse_variant_kind)
-                    .transpose()?
-            }
-            "deletion_length" => {
-                spec.deletion_length = int_from_optional(value)?.map(|v| v as usize)
-            }
-            "motifs" => spec.motifs = string_or_list(value)?,
-            other => {
-                return Err(RuntimeError::InvalidArguments(format!(
-                    "bioscript.variant does not accept keyword '{other}'"
-                )));
-            }
-        }
-    }
-    Ok(spec)
-}
-
-fn parse_locus_string(value: &str) -> Result<GenomicLocus, RuntimeError> {
-    let normalized = value.trim().strip_prefix("chr").unwrap_or(value.trim());
-    let Some((chrom, rest)) = normalized.split_once(':') else {
-        return Err(RuntimeError::InvalidArguments(format!(
-            "invalid locus string: {value}"
-        )));
-    };
-    let (start, end) = if let Some((start, end)) = rest.split_once('-') {
-        (start, end)
-    } else {
-        (rest, rest)
-    };
-    let start = start.parse::<i64>().map_err(|err| {
-        RuntimeError::InvalidArguments(format!("invalid locus start {value}: {err}"))
-    })?;
-    let end = end.parse::<i64>().map_err(|err| {
-        RuntimeError::InvalidArguments(format!("invalid locus end {value}: {err}"))
-    })?;
-    Ok(GenomicLocus {
-        chrom: chrom.to_owned(),
-        start,
-        end,
-    })
-}
-
-fn parse_variant_kind(value: &str) -> Result<VariantKind, RuntimeError> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "snp" => Ok(VariantKind::Snp),
-        "insertion" | "ins" => Ok(VariantKind::Insertion),
-        "deletion" | "del" => Ok(VariantKind::Deletion),
-        "indel" => Ok(VariantKind::Indel),
-        "other" => Ok(VariantKind::Other),
-        other => Err(RuntimeError::InvalidArguments(format!(
-            "invalid variant kind: {other}"
-        ))),
-    }
-}
-
-fn variant_kind_name(kind: VariantKind) -> &'static str {
-    match kind {
-        VariantKind::Snp => "snp",
-        VariantKind::Insertion => "insertion",
-        VariantKind::Deletion => "deletion",
-        VariantKind::Indel => "indel",
-        VariantKind::Other => "other",
-    }
-}
-
-fn string_or_list(value: &MontyObject) -> Result<Vec<String>, RuntimeError> {
-    match value {
-        MontyObject::String(text) => Ok(vec![text.clone()]),
-        MontyObject::List(_) => string_list_from_object(value),
-        MontyObject::None => Ok(Vec::new()),
-        other => Err(RuntimeError::InvalidArguments(format!(
-            "expected string or list of strings, got {other:?}"
-        ))),
-    }
-}
-
-fn string_list_from_object(value: &MontyObject) -> Result<Vec<String>, RuntimeError> {
-    match value {
-        MontyObject::List(items) => {
-            let mut out = Vec::new();
-            for item in items {
-                let MontyObject::String(text) = item else {
-                    return Err(RuntimeError::InvalidArguments(
-                        "expected list of strings".to_owned(),
-                    ));
-                };
-                out.push(text.clone());
-            }
-            Ok(out)
-        }
-        MontyObject::None => Ok(Vec::new()),
-        other => Err(RuntimeError::InvalidArguments(format!(
-            "expected list of strings, got {other:?}"
-        ))),
-    }
-}
-
-fn string_from_optional(value: &MontyObject) -> Result<Option<String>, RuntimeError> {
-    match value {
-        MontyObject::None => Ok(None),
-        MontyObject::String(text) => Ok(Some(text.clone())),
-        other => Err(RuntimeError::InvalidArguments(format!(
-            "expected optional string, got {other:?}"
-        ))),
-    }
-}
-
-fn int_from_optional(value: &MontyObject) -> Result<Option<i64>, RuntimeError> {
-    match value {
-        MontyObject::None => Ok(None),
-        MontyObject::Int(v) => Ok(Some(*v)),
-        other => Err(RuntimeError::InvalidArguments(format!(
-            "expected optional int, got {other:?}"
-        ))),
-    }
-}
-
-fn reject_kwargs(
-    kwargs: &[(MontyObject, MontyObject)],
-    function_name: &str,
-) -> Result<(), RuntimeError> {
-    if kwargs.is_empty() {
-        Ok(())
-    } else {
-        Err(RuntimeError::InvalidArguments(format!(
-            "{function_name} does not accept keyword arguments"
-        )))
-    }
-}
-
 fn resolve_optional_loader_path(
     runtime: &BioscriptRuntime,
     path: Option<PathBuf>,
@@ -1248,206 +383,449 @@ fn resolve_optional_loader_path(
     .transpose()
 }
 
-fn expect_string_arg(
-    args: &[MontyObject],
-    index: usize,
-    function_name: &str,
-) -> Result<String, RuntimeError> {
-    let Some(value) = args.get(index) else {
-        return Err(RuntimeError::InvalidArguments(format!(
-            "{function_name} missing argument at position {index}"
-        )));
-    };
-    match value {
-        MontyObject::String(text) => Ok(text.clone()),
-        other => Err(RuntimeError::InvalidArguments(format!(
-            "{function_name} expected str at position {index}, got {other:?}"
-        ))),
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-fn expect_rows(value: &MontyObject) -> Result<Vec<BTreeMap<String, String>>, RuntimeError> {
-    let MontyObject::List(rows) = value else {
-        return Err(RuntimeError::InvalidArguments(
-            "write_tsv expects a list of dict rows".to_owned(),
+    fn temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "bioscript-runtime-unit-{label}-{}-{nanos}",
+            std::process::id()
         ));
-    };
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
-    let mut out = Vec::new();
-    for row in rows {
-        let MontyObject::Dict(dict) = row else {
-            return Err(RuntimeError::InvalidArguments(
-                "write_tsv row must be a dict".to_owned(),
-            ));
+    fn attr<'a>(obj: &'a MontyObject, name: &str) -> Option<&'a MontyObject> {
+        let MontyObject::Dataclass { attrs, .. } = obj else {
+            return None;
         };
-        let mut mapped = BTreeMap::new();
-        for (key, value) in dict {
-            let MontyObject::String(key) = key else {
-                return Err(RuntimeError::InvalidArguments(
-                    "write_tsv dict keys must be strings".to_owned(),
-                ));
-            };
-            mapped.insert(key.clone(), stringify_value(value));
+        attrs.into_iter().find_map(|(key, value)| {
+            matches!(key, MontyObject::String(text) if text == name).then_some(value)
+        })
+    }
+
+    #[test]
+    fn trace_helpers_cover_coordinates_rsids_and_statement_edges() {
+        assert_eq!(
+            trace_lookup_metadata("bioscript.variant(rsid='rs12345')").0,
+            Some("rs12345".to_owned())
+        );
+        let (key, url) = trace_lookup_metadata("bioscript.variant(grch37='chr1:10-20')");
+        assert_eq!(key.as_deref(), Some("1:10-20"));
+        assert!(url.unwrap().starts_with("https://grch37.ensembl.org"));
+        let (key, _) = trace_lookup_metadata("bioscript.variant(grch38='2:30')");
+        assert_eq!(key.as_deref(), Some("2:30-30"));
+        assert_eq!(trace_lookup_metadata("no lookup here"), (None, None));
+
+        let lines = ["plan = bioscript.query_plan([", "    RS1,", "])"];
+        assert_eq!(
+            statement_context(&lines, 1),
+            "plan = bioscript.query_plan([ RS1, ])"
+        );
+        assert_eq!(statement_context(&lines, 0), "");
+        assert_eq!(statement_context(&lines, 9), "");
+
+        assert_eq!(extract_rsid("x rs42 y"), Some("rs42".to_owned()));
+        assert_eq!(extract_rsid("notrs42"), None);
+        assert_eq!(extract_coordinate("chrX:7;"), Some("X:7-7".to_owned()));
+        assert_eq!(extract_coordinate("chrM:7-8"), Some("M:7-8".to_owned()));
+        assert_eq!(extract_coordinate("chr1:x-y"), None);
+    }
+
+    #[test]
+    fn instrument_source_tracks_continuations_comments_and_strings() {
+        let source = "value = (\n    'not ) counted'\n)\n# skip\nnext_value = 1\\\n    + 2\n";
+        let instrumented = instrument_source(source);
+
+        assert!(instrumented.contains("__bioscript_trace__(1)\nvalue = ("));
+        assert!(!instrumented.contains("__bioscript_trace__(2)"));
+        assert!(!instrumented.contains("__bioscript_trace__(3)"));
+        assert!(!instrumented.contains("__bioscript_trace__(4)"));
+        assert!(instrumented.contains("__bioscript_trace__(5)\nnext_value = 1\\"));
+        assert!(!instrumented.contains("__bioscript_trace__(6)"));
+        assert!(instrumented.ends_with('\n'));
+
+        assert!(ends_with_unescaped_backslash("x = 1\\"));
+        assert!(!ends_with_unescaped_backslash("x = '\\\\'"));
+        assert_eq!(
+            update_nesting_depth(0, "call(') still string', [1]) # ignored"),
+            0
+        );
+        assert_eq!(update_nesting_depth(0, "call(["), 2);
+        assert_eq!(update_nesting_depth(2, "])"), 0);
+    }
+
+    #[test]
+    fn object_helpers_cover_optional_fields_and_conversion_errors() {
+        let observation = bioscript_core::VariantObservation {
+            backend: "vcf".to_owned(),
+            matched_rsid: Some("rs1".to_owned()),
+            assembly: Some(bioscript_core::Assembly::Grch37),
+            genotype: Some("AG".to_owned()),
+            ref_count: Some(3),
+            alt_count: Some(2),
+            depth: Some(5),
+            raw_counts: BTreeMap::from([("A".to_owned(), 3), ("G".to_owned(), 2)]),
+            decision: Some("heterozygous".to_owned()),
+            evidence: vec!["resolved".to_owned()],
+        };
+        let object = variant_observation_object(&observation);
+        assert!(matches!(attr(&object, "assembly"), Some(MontyObject::String(v)) if v == "grch37"));
+        assert!(matches!(
+            attr(&object, "ref_count"),
+            Some(MontyObject::Int(3))
+        ));
+        assert!(matches!(
+            attr(&object, "alt_count"),
+            Some(MontyObject::Int(2))
+        ));
+        assert!(matches!(attr(&object, "depth"), Some(MontyObject::Int(5))));
+
+        let missing = variant_observation_object(&bioscript_core::VariantObservation::default());
+        assert!(matches!(
+            attr(&missing, "assembly"),
+            Some(MontyObject::None)
+        ));
+        assert!(matches!(
+            attr(&missing, "genotype"),
+            Some(MontyObject::None)
+        ));
+
+        assert_eq!(
+            string_or_list(&MontyObject::None).unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            string_list_from_object(&MontyObject::None).unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(string_from_optional(&MontyObject::None).unwrap(), None);
+        assert_eq!(int_from_optional(&MontyObject::None).unwrap(), None);
+        assert!(string_list_from_object(&MontyObject::String("x".to_owned())).is_err());
+
+        let bad_plan = MontyObject::Dataclass {
+            name: "VariantPlan".to_owned(),
+            type_id: 4,
+            field_names: vec![],
+            attrs: vec![].into(),
+            frozen: true,
+        };
+        assert!(
+            variant_specs_from_plan(&bad_plan)
+                .unwrap_err()
+                .to_string()
+                .contains("missing variants")
+        );
+
+        let bad_variant = MontyObject::Dataclass {
+            name: "Other".to_owned(),
+            type_id: 9,
+            field_names: vec![],
+            attrs: vec![].into(),
+            frozen: true,
+        };
+        assert!(
+            dataclass_to_variant_spec(&bad_variant)
+                .unwrap_err()
+                .to_string()
+                .contains("got Other")
+        );
+        assert!(
+            dataclass_to_variant_spec(&MontyObject::None)
+                .unwrap_err()
+                .to_string()
+                .contains("expected Variant object")
+        );
+    }
+
+    #[test]
+    fn runtime_private_methods_cover_dispatch_and_path_errors() {
+        let root = temp_dir("dispatch");
+        fs::write(root.join("input.txt"), "hello").unwrap();
+        let runtime = BioscriptRuntime::new(&root).unwrap();
+        let bioscript = MontyObject::Dataclass {
+            name: "Bioscript".to_owned(),
+            type_id: 1,
+            field_names: vec![],
+            attrs: vec![].into(),
+            frozen: true,
+        };
+
+        let err = runtime
+            .dispatch_method_call("missing", std::slice::from_ref(&bioscript), &[])
+            .unwrap_err();
+        assert!(err.to_string().contains("no attribute"));
+
+        assert!(
+            runtime
+                .method_read_text(&[], &[])
+                .unwrap_err()
+                .to_string()
+                .contains("expects self and path")
+        );
+        assert!(
+            runtime
+                .method_write_text(&[], &[])
+                .unwrap_err()
+                .to_string()
+                .contains("expects self, path, text")
+        );
+        assert!(
+            runtime
+                .resolve_user_path("/absolute")
+                .unwrap_err()
+                .to_string()
+                .contains("absolute paths")
+        );
+        assert!(
+            runtime
+                .resolve_user_path("../escape")
+                .unwrap_err()
+                .to_string()
+                .contains("escapes bioscript root")
+        );
+        assert!(
+            runtime
+                .resolve_existing_user_path("missing.txt")
+                .unwrap_err()
+                .to_string()
+                .contains("failed to resolve")
+        );
+
+        let nested = runtime
+            .resolve_user_write_path("new/deep/file.txt")
+            .unwrap();
+        assert_eq!(
+            nested,
+            root.canonicalize().unwrap().join("new/deep/file.txt")
+        );
+        assert_eq!(
+            deepest_existing_ancestor(&root.join("new/deep/file.txt")),
+            root.as_path()
+        );
+
+        let mut config = RuntimeConfig::default();
+        config.loader.input_index = Some(PathBuf::from("input.txt"));
+        config.loader.reference_file = Some(PathBuf::from("/tmp/reference.fa"));
+        let runtime = BioscriptRuntime::with_config(&root, config).unwrap();
+        let loader = runtime.resolved_loader_options().unwrap();
+        assert_eq!(
+            loader.input_index.as_deref(),
+            Some(root.canonicalize().unwrap().join("input.txt").as_path())
+        );
+        assert_eq!(
+            loader.reference_file.as_deref(),
+            Some(Path::new("/tmp/reference.fa"))
+        );
+    }
+
+    #[test]
+    fn runtime_private_methods_cover_unknown_genotype_handles() {
+        let root = temp_dir("handles");
+        let runtime = BioscriptRuntime::new(&root).unwrap();
+        let genotype = genotype_file_object(99);
+        let variant = variant_object(&VariantSpec {
+            rsids: vec!["rs1".to_owned()],
+            ..VariantSpec::default()
+        });
+        let plan = variant_plan_object(&[VariantSpec {
+            rsids: vec!["rs1".to_owned()],
+            ..VariantSpec::default()
+        }]);
+
+        for (method, args) in [
+            (
+                "get",
+                vec![genotype.clone(), MontyObject::String("rs1".to_owned())],
+            ),
+            ("lookup_variant", vec![genotype.clone(), variant.clone()]),
+            (
+                "lookup_variant_details",
+                vec![genotype.clone(), variant.clone()],
+            ),
+            ("lookup_variants", vec![genotype.clone(), plan.clone()]),
+            ("lookup_variants_details", vec![genotype.clone(), plan]),
+        ] {
+            let err = runtime
+                .dispatch_method_call(method, &args, &[])
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("unknown genotype handle"), "{method}: {err}");
         }
-        out.push(mapped);
+
+        assert!(
+            dataclass_handle_id(&MontyObject::None, "GenotypeFile")
+                .unwrap_err()
+                .to_string()
+                .contains("expected GenotypeFile object")
+        );
+        let missing_handle = MontyObject::Dataclass {
+            name: "GenotypeFile".to_owned(),
+            type_id: 2,
+            field_names: vec![],
+            attrs: vec![].into(),
+            frozen: true,
+        };
+        assert!(
+            dataclass_handle_id(&missing_handle, "GenotypeFile")
+                .unwrap_err()
+                .to_string()
+                .contains("missing handle_id")
+        );
     }
-    Ok(out)
-}
 
-fn stringify_value(value: &MontyObject) -> String {
-    match value {
-        MontyObject::None => String::new(),
-        MontyObject::String(text) => text.clone(),
-        MontyObject::Int(v) => v.to_string(),
-        MontyObject::Bool(v) => v.to_string(),
-        other => format!("{other}"),
+    #[test]
+    fn runtime_private_methods_cover_successful_genotype_paths() {
+        let root = temp_dir("success-paths");
+        fs::write(
+            root.join("genotypes.tsv"),
+            "rsid\tchromosome\tposition\tgenotype\nrs1\t1\t10\tAG\nrs2\t2\t20\tCT\n",
+        )
+        .unwrap();
+        let runtime = BioscriptRuntime::new(&root).unwrap();
+        let bioscript = bioscript_object();
+
+        let genotype = runtime
+            .method_load_genotypes(
+                &[
+                    bioscript.clone(),
+                    MontyObject::String("genotypes.tsv".to_owned()),
+                ],
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(
+            attr(&genotype, "handle_id"),
+            Some(MontyObject::Int(id)) if *id > 0
+        ));
+
+        let value = runtime
+            .method_genotype_get(
+                &[genotype.clone(), MontyObject::String("rs1".to_owned())],
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(value, MontyObject::String(ref text) if text == "AG"));
+        let missing = runtime
+            .method_genotype_get(
+                &[genotype.clone(), MontyObject::String("missing".to_owned())],
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(missing, MontyObject::None));
+
+        let variant = runtime
+            .method_variant(
+                std::slice::from_ref(&bioscript),
+                &[
+                    (
+                        MontyObject::String("rsid".to_owned()),
+                        MontyObject::String("rs2".to_owned()),
+                    ),
+                    (
+                        MontyObject::String("grch38".to_owned()),
+                        MontyObject::String("2:20".to_owned()),
+                    ),
+                    (
+                        MontyObject::String("kind".to_owned()),
+                        MontyObject::String("snp".to_owned()),
+                    ),
+                ],
+            )
+            .unwrap();
+        let lookup = runtime
+            .method_genotype_lookup_variant(&[genotype.clone(), variant.clone()], &[])
+            .unwrap();
+        assert!(matches!(lookup, MontyObject::String(ref text) if text == "CT"));
+        let details = runtime
+            .method_genotype_lookup_variant_details(&[genotype.clone(), variant.clone()], &[])
+            .unwrap();
+        assert!(matches!(
+            attr(&details, "matched_rsid"),
+            Some(MontyObject::String(text)) if text == "rs2"
+        ));
+
+        let plan = runtime
+            .method_query_plan(&[bioscript.clone(), MontyObject::List(vec![variant])], &[])
+            .unwrap();
+        let values = runtime
+            .method_genotype_lookup_variants(&[genotype.clone(), plan.clone()], &[])
+            .unwrap();
+        assert!(matches!(values, MontyObject::List(items) if items.len() == 1));
+        let detail_values = runtime
+            .method_genotype_lookup_variants_details(&[genotype, plan], &[])
+            .unwrap();
+        assert!(matches!(detail_values, MontyObject::List(items) if items.len() == 1));
+        assert!(runtime.timing_snapshot().len() >= 4);
     }
-}
 
-fn host_read_text(
-    runtime: &BioscriptRuntime,
-    args: &[MontyObject],
-    kwargs: &[(MontyObject, MontyObject)],
-) -> Result<MontyObject, RuntimeError> {
-    reject_kwargs(kwargs, "read_text")?;
-    let path = runtime.resolve_user_path(&expect_string_arg(args, 0, "read_text")?)?;
-    let content = fs::read_to_string(&path)
-        .map_err(|err| RuntimeError::Io(format!("failed to read {}: {err}", path.display())))?;
-    Ok(MontyObject::String(content))
-}
-
-fn host_write_text(
-    runtime: &BioscriptRuntime,
-    args: &[MontyObject],
-    kwargs: &[(MontyObject, MontyObject)],
-) -> Result<MontyObject, RuntimeError> {
-    reject_kwargs(kwargs, "write_text")?;
-    let path = runtime.resolve_user_path(&expect_string_arg(args, 0, "write_text")?)?;
-    let content = expect_string_arg(args, 1, "write_text")?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to create parent dir {}: {err}",
-                parent.display()
-            ))
-        })?;
-    }
-    fs::write(&path, content)
-        .map_err(|err| RuntimeError::Io(format!("failed to write {}: {err}", path.display())))?;
-    Ok(MontyObject::None)
-}
-
-fn host_trace(
-    runtime: &BioscriptRuntime,
-    args: &[MontyObject],
-    kwargs: &[(MontyObject, MontyObject)],
-) -> Result<MontyObject, RuntimeError> {
-    reject_kwargs(kwargs, "__bioscript_trace__")?;
-    if let Some(MontyObject::Int(v)) = args.first() {
+    #[test]
+    fn runtime_private_methods_cover_successful_text_tsv_and_trace_paths() {
+        let root = temp_dir("host-output");
+        let runtime = BioscriptRuntime::new(&root).unwrap();
+        let bioscript = bioscript_object();
+        let rows = MontyObject::List(vec![MontyObject::Dict(
+            vec![
+                (
+                    MontyObject::String("rsid".to_owned()),
+                    MontyObject::String("rs1".to_owned()),
+                ),
+                (MontyObject::String("count".to_owned()), MontyObject::Int(2)),
+                (
+                    MontyObject::String("ok".to_owned()),
+                    MontyObject::Bool(true),
+                ),
+                (MontyObject::String("note".to_owned()), MontyObject::None),
+            ]
+            .into(),
+        )]);
         runtime
-            .state
-            .trace_lines
-            .lock()
-            .expect("trace mutex poisoned")
-            .push(*v as usize);
+            .method_write_tsv(
+                &[
+                    bioscript.clone(),
+                    MontyObject::String("out/table.tsv".to_owned()),
+                    rows,
+                ],
+                &[],
+            )
+            .unwrap();
+        let table = fs::read_to_string(root.join("out/table.tsv")).unwrap();
+        assert!(table.contains("rs1"));
+        assert!(table.contains("true"));
+
+        runtime
+            .method_write_text(
+                &[
+                    bioscript.clone(),
+                    MontyObject::String("out/text.txt".to_owned()),
+                    MontyObject::String("hello".to_owned()),
+                ],
+                &[],
+            )
+            .unwrap();
+        let text = runtime
+            .method_read_text(
+                &[bioscript, MontyObject::String("out/text.txt".to_owned())],
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(text, MontyObject::String(ref value) if value == "hello"));
+
+        runtime.state.trace_lines.lock().unwrap().extend([1, 2, 99]);
+        runtime
+            .write_trace_report(
+                &root.join("trace/report.tsv"),
+                "bioscript.variant(rsid='rs1')\nplain = 1\n",
+            )
+            .unwrap();
+        let trace = fs::read_to_string(root.join("trace/report.tsv")).unwrap();
+        assert!(trace.contains("https://www.ncbi.nlm.nih.gov/snp/rs1"));
+        assert_eq!(runtime.timing_snapshot().len(), 1);
     }
-    Ok(MontyObject::None)
-}
-
-fn instrument_source(code: &str) -> String {
-    let mut out = Vec::new();
-    let mut nesting_depth = 0usize;
-    let mut pending_backslash = false;
-    for (idx, line) in code.lines().enumerate() {
-        let line_no = idx + 1;
-        let trimmed = line.trim_start();
-
-        let in_continuation = nesting_depth > 0 || pending_backslash;
-        let should_trace = !in_continuation
-            && !trimmed.is_empty()
-            && !trimmed.starts_with('#')
-            && !trimmed.starts_with('@')
-            && !trimmed.starts_with('"')
-            && !trimmed.starts_with('\'')
-            && !trimmed.starts_with(']')
-            && !trimmed.starts_with(')')
-            && !trimmed.starts_with('}')
-            && !trimmed.starts_with(',')
-            && !trimmed.starts_with('+')
-            && !trimmed.starts_with('-')
-            && !trimmed.starts_with('*')
-            && !trimmed.starts_with('/')
-            && !trimmed.starts_with('%')
-            && !trimmed.starts_with("and ")
-            && !trimmed.starts_with("or ")
-            && !trimmed.starts_with("if ")
-            && !trimmed.starts_with("for ")
-            && !trimmed.starts_with("elif ")
-            && !trimmed.starts_with("else:")
-            && !trimmed.starts_with("except")
-            && !trimmed.starts_with("finally:")
-            && !trimmed.ends_with(':');
-
-        if should_trace {
-            let indent_len = line.len() - trimmed.len();
-            let indent = &line[..indent_len];
-            out.push(format!("{indent}__bioscript_trace__({line_no})"));
-        }
-        out.push(line.to_owned());
-
-        pending_backslash = ends_with_unescaped_backslash(line);
-        nesting_depth = update_nesting_depth(nesting_depth, line);
-    }
-    if code.ends_with('\n') {
-        out.join("\n") + "\n"
-    } else {
-        out.join("\n")
-    }
-}
-
-fn ends_with_unescaped_backslash(line: &str) -> bool {
-    let trimmed = line.trim_end();
-    if !trimmed.ends_with('\\') {
-        return false;
-    }
-
-    let slash_count = trimmed.chars().rev().take_while(|ch| *ch == '\\').count();
-    slash_count % 2 == 1
-}
-
-fn update_nesting_depth(mut depth: usize, line: &str) -> usize {
-    let mut chars = line.chars().peekable();
-    let mut in_single = false;
-    let mut in_double = false;
-
-    while let Some(ch) = chars.next() {
-        if in_single {
-            if ch == '\\' {
-                chars.next();
-            } else if ch == '\'' {
-                in_single = false;
-            }
-            continue;
-        }
-
-        if in_double {
-            if ch == '\\' {
-                chars.next();
-            } else if ch == '"' {
-                in_double = false;
-            }
-            continue;
-        }
-
-        match ch {
-            '#' => break,
-            '\'' => in_single = true,
-            '"' => in_double = true,
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-
-    depth
 }

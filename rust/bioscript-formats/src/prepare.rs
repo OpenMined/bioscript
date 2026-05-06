@@ -83,8 +83,9 @@ fn canonical_dir(path: &Path) -> Result<PathBuf, String> {
 fn resolve_rooted_path(root: &Path, raw: &str) -> Result<PathBuf, String> {
     let raw_path = Path::new(raw);
     let resolved = if raw_path.is_absolute() {
-        ensure_path_within_root(root, raw_path)?;
-        raw_path.to_path_buf()
+        raw_path
+            .canonicalize()
+            .map_err(|err| format!("failed to resolve {}: {err}", raw_path.display()))?
     } else {
         ensure_relative_path_safe(raw_path)?;
         root.join(raw_path)
@@ -92,6 +93,7 @@ fn resolve_rooted_path(root: &Path, raw: &str) -> Result<PathBuf, String> {
     let canonical = resolved
         .canonicalize()
         .map_err(|err| format!("failed to resolve {}: {err}", resolved.display()))?;
+    ensure_path_within_root(root, &canonical)?;
     Ok(canonical)
 }
 

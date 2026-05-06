@@ -44,13 +44,10 @@ impl Read for JsReader {
                 &JsValue::from_f64(want as f64),
             )
             .map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "{} readAt({}, {}) threw: {:?}",
-                        self.label, self.position, want, err
-                    ),
-                )
+                io::Error::other(format!(
+                    "{} readAt({}, {}) threw: {:?}",
+                    self.label, self.position, want, err
+                ))
             })?;
         let array = Uint8Array::from(result);
         let got = array.byte_length() as usize;

@@ -67,6 +67,8 @@ examples/herc2/herc2_*.tsv
 examples/herc2/classify_herc2_*.py
 rust/target/
 bioscripts/output/
+cache/
+.bioscript-cache/
 test-data/
 test-reports/
 local.sh
