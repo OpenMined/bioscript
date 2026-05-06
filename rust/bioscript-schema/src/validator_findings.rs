@@ -123,17 +123,17 @@ fn validate_finding_binding_source(parent: &str, binding: &Mapping, issues: &mut
         .get(Value::String("source".to_owned()))
         .and_then(Value::as_str);
     match source {
-        Some("variant") => {
+        Some("variant")
             if !binding.contains_key(Value::String("variant".to_owned()))
-                && !binding.contains_key(Value::String("path".to_owned()))
-            {
-                issues.push(Issue {
-                    severity: Severity::Error,
-                    path: format!("{parent}.binding.variant"),
-                    message: "variant findings require variant or path".to_owned(),
-                });
-            }
+                && !binding.contains_key(Value::String("path".to_owned())) =>
+        {
+            issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("{parent}.binding.variant"),
+                message: "variant findings require variant or path".to_owned(),
+            });
         }
+        Some("variant") | None => {}
         Some("analysis") => {
             validate_required_mapping_string(binding, "key", &format!("{parent}.binding"), issues);
             validate_required_mapping_string(
@@ -148,7 +148,6 @@ fn validate_finding_binding_source(parent: &str, binding: &Mapping, issues: &mut
             path: format!("{parent}.binding.source"),
             message: format!("unsupported source '{other}'"),
         }),
-        None => {}
     }
 }
 
@@ -243,4 +242,3 @@ fn validate_finding_binding_operator(parent: &str, binding: &Mapping, issues: &m
         }),
     }
 }
-

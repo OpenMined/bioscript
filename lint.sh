@@ -24,23 +24,23 @@ filter_vendored() {
   awk 'BEGIN{RS=""; ORS="\n\n"} !/\/noodles\/|\/vendor\/|`noodles-|`lexical-/'
 }
 
-CLIPPY_STDERR="$(mktemp)"
-FILTERED_STDERR="$(mktemp)"
+CLIPPY_OUTPUT="$(mktemp)"
+FILTERED_OUTPUT="$(mktemp)"
 cleanup() {
-  rm -f "$CLIPPY_STDERR" "$FILTERED_STDERR"
+  rm -f "$CLIPPY_OUTPUT" "$FILTERED_OUTPUT"
 }
 trap cleanup EXIT
 
 set +e
-cargo clippy "${PKG_ARGS[@]}" --all-targets --color=never -- -D warnings 2> "$CLIPPY_STDERR"
+cargo clippy "${PKG_ARGS[@]}" --all-targets --color=never -- -D warnings > "$CLIPPY_OUTPUT" 2>&1
 CLIPPY_STATUS=$?
 set -e
 
-filter_vendored < "$CLIPPY_STDERR" > "$FILTERED_STDERR"
-if [[ -s "$FILTERED_STDERR" ]]; then
-  cat "$FILTERED_STDERR" >&2
-elif [[ "$CLIPPY_STATUS" -ne 0 ]]; then
-  cat "$CLIPPY_STDERR" >&2
+filter_vendored < "$CLIPPY_OUTPUT" > "$FILTERED_OUTPUT"
+if [[ "$CLIPPY_STATUS" -ne 0 ]]; then
+  cat "$CLIPPY_OUTPUT" >&2
+elif [[ -s "$FILTERED_OUTPUT" ]]; then
+  cat "$FILTERED_OUTPUT" >&2
 fi
 
 if [[ "$CLIPPY_STATUS" -ne 0 ]]; then

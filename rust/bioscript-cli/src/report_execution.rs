@@ -191,7 +191,7 @@ fn run_bioscript_analysis_script(
     loader: &GenotypeLoadOptions,
 ) -> Result<(), String> {
     let limits = ResourceLimits::new()
-        .max_duration(Duration::from_millis(1000))
+        .max_duration(Duration::from_secs(1))
         .max_memory(16 * 1024 * 1024)
         .max_allocations(400_000)
         .gc_interval(1000)
@@ -306,4 +306,3 @@ fn participant_id_from_path(path: &Path) -> String {
         .trim_end_matches(".csv")
         .to_owned()
 }
-
