@@ -5,6 +5,11 @@
 Keep first-party production Rust source files at or below 500 lines. This applies
 to files under `rust/bioscript-*/src/**/*.rs`.
 
+When editing BioScript Rust, prefer adding behavior to a small, named module
+whose filename describes the responsibility. If a file is approaching 500 lines,
+split it along a real domain boundary before adding more code. Do not satisfy
+the guard by creating arbitrary numbered chunks or `*_part_*` files.
+
 The 500-line rule does not apply to:
 
 - integration tests and unit-test modules
@@ -16,6 +21,5 @@ production limit measures production code, not test scaffolding. Test files
 should still be split when they mix unrelated behavior or become hard to scan.
 
 When a production file grows past 500 lines, split it before adding more
-behavior. Temporary exceptions must be listed in this file under
-`Current Refactor Backlog`; the source-size guard reads that list and fails when
-it drifts from the code.
+behavior. Keep the include list in the parent file short and logical, and leave
+file names meaningful enough that future agents can find the right place to edit.
