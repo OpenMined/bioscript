@@ -9,6 +9,29 @@ members:
   - kind: "variant"
     path: "variants/rs671.yaml"
     version: "1.0"
+  - kind: "assay"
+    path: "../risk/APOL1/assay.yaml"
+    version: "1.0"
   - kind: "variant"
     path: "variants/rs713598.yaml"
     version: "1.0"
+
+analyses:
+  - id: "taste_status"
+    kind: "bioscript"
+    path: "interpretations/taste.py"
+    output_format: "tsv"
+    label: "Taste status"
+    derived_from:
+      - "variants/rs713598.yaml"
+    emits:
+      - key: "taste_status"
+        label: "Taste status"
+        value_type: "string"
+        format: "badge"
+    logic:
+      source:
+        name: "Example derivation source"
+        url: "https://example.org/panel-analysis-logic"
+      description: >
+        Optional human-readable description of the derivation logic implemented by the analysis script.

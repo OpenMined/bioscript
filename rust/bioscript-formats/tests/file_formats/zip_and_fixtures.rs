@@ -35,14 +35,24 @@ fn batch_lookup_preserves_input_order_after_coordinate_sorting() {
         .unwrap();
 
     assert_eq!(results[0].genotype.as_deref(), Some("CT"));
-    assert_eq!(
-        results[0].evidence,
-        vec!["resolved by locus 1:20".to_owned()]
+    assert_eq!(results[0].evidence[0], "resolved by locus 1:20");
+    assert!(
+        results[0]
+            .evidence
+            .get(1)
+            .is_some_and(|line| line.contains("source line: rs2  1  20  CT")),
+        "{:?}",
+        results[0].evidence
     );
     assert_eq!(results[1].genotype.as_deref(), Some("AG"));
-    assert_eq!(
-        results[1].evidence,
-        vec!["resolved by locus 1:10".to_owned()]
+    assert_eq!(results[1].evidence[0], "resolved by locus 1:10");
+    assert!(
+        results[1]
+            .evidence
+            .get(1)
+            .is_some_and(|line| line.contains("source line: rs1  1  10  AG")),
+        "{:?}",
+        results[1].evidence
     );
 }
 

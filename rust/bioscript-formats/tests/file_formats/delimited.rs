@@ -30,9 +30,14 @@ fn delimited_parser_handles_comments_blank_lines_csv_and_split_alleles() {
         })
         .unwrap();
     assert_eq!(observation.genotype.as_deref(), Some("AG"));
-    assert_eq!(
-        observation.evidence,
-        vec!["resolved by locus chr22:36265860".to_owned()]
+    assert_eq!(observation.evidence[0], "resolved by locus chr22:36265860");
+    assert!(
+        observation
+            .evidence
+            .get(1)
+            .is_some_and(|line| line.contains("source line: rs73885319,chr22,36265860")),
+        "{:?}",
+        observation.evidence
     );
 }
 
@@ -96,8 +101,13 @@ fn delimited_parser_handles_space_delimited_rows_without_headers_and_inline_comm
         })
         .unwrap();
     assert_eq!(observation.genotype.as_deref(), Some("AA"));
-    assert_eq!(
-        observation.evidence,
-        vec!["resolved by locus chr2:201".to_owned()]
+    assert_eq!(observation.evidence[0], "resolved by locus chr2:201");
+    assert!(
+        observation
+            .evidence
+            .get(1)
+            .is_some_and(|line| line.contains("source line: chrOnly chr2 201")),
+        "{:?}",
+        observation.evidence
     );
 }

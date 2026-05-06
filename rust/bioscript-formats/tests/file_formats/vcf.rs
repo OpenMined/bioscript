@@ -31,9 +31,11 @@ fn vcf_coordinate_lookup_normalizes_chr_prefix_and_handles_multiallelic_gt() {
 
     assert_eq!(observation.genotype.as_deref(), Some("GC"));
     assert_eq!(observation.assembly, Some(bioscript_core::Assembly::Grch38));
-    assert_eq!(
-        observation.evidence,
-        vec!["resolved by locus chr1:1000".to_owned()]
+    assert_eq!(observation.evidence[0], "resolved by locus chr1:1000");
+    assert!(
+        observation.evidence[1].contains("source line: chr1  1000"),
+        "{:?}",
+        observation.evidence
     );
 }
 
@@ -69,7 +71,12 @@ fn vcf_locus_lookup_handles_deletion_insertion_and_unresolved_evidence() {
         .unwrap();
     assert_eq!(deletion.genotype.as_deref(), Some("ID"));
     assert_eq!(deletion.assembly, Some(bioscript_core::Assembly::Grch37));
-    assert_eq!(deletion.evidence, vec!["resolved by locus 1:99".to_owned()]);
+    assert_eq!(deletion.evidence[0], "resolved by locus 1:99");
+    assert!(
+        deletion.evidence[1].contains("source line: 1  99"),
+        "{:?}",
+        deletion.evidence
+    );
 
     let insertion = store
         .lookup_variant(&VariantSpec {
@@ -85,9 +92,11 @@ fn vcf_locus_lookup_handles_deletion_insertion_and_unresolved_evidence() {
         })
         .unwrap();
     assert_eq!(insertion.genotype.as_deref(), Some("DI"));
-    assert_eq!(
-        insertion.evidence,
-        vec!["resolved by locus chr1:199".to_owned()]
+    assert_eq!(insertion.evidence[0], "resolved by locus chr1:199");
+    assert!(
+        insertion.evidence[1].contains("source line: chr1  199"),
+        "{:?}",
+        insertion.evidence
     );
 
     let unresolved = store

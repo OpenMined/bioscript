@@ -77,7 +77,10 @@ pub(crate) fn scan_delimited_variants(
                             backend: backend.backend_name().to_owned(),
                             matched_rsid: Some(rsid.clone()),
                             genotype: Some(row.genotype.clone()),
-                            evidence: vec![format!("resolved by rsid {rsid}")],
+                            evidence: vec![
+                                format!("resolved by rsid {rsid}"),
+                                format!("source line: {}", row.raw_line),
+                            ],
                             ..VariantObservation::default()
                         };
                         unresolved = unresolved.saturating_sub(1);
@@ -101,7 +104,10 @@ pub(crate) fn scan_delimited_variants(
                                 backend: backend.backend_name().to_owned(),
                                 matched_rsid: row.rsid.clone(),
                                 genotype: Some(row.genotype.clone()),
-                                evidence: vec![format!("resolved by locus {}:{}", chrom, position)],
+                                evidence: vec![
+                                    format!("resolved by locus {}:{}", chrom, position),
+                                    format!("source line: {}", row.raw_line),
+                                ],
                                 ..VariantObservation::default()
                             };
                             unresolved = unresolved.saturating_sub(1);

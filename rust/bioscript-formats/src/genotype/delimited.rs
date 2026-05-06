@@ -40,6 +40,7 @@ pub(crate) struct ParsedDelimitedRow {
     pub(crate) chrom: Option<String>,
     pub(crate) position: Option<i64>,
     pub(crate) genotype: String,
+    pub(crate) raw_line: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -183,6 +184,7 @@ impl RowParser {
             chrom,
             position,
             genotype: normalize_genotype(&genotype),
+            raw_line: sanitize_evidence_line(line),
         }))
     }
 
@@ -247,6 +249,17 @@ pub(crate) fn strip_inline_comment(value: &str) -> String {
         }
     }
     value.trim().to_owned()
+}
+
+pub(crate) fn sanitize_evidence_line(line: &str) -> String {
+    line.trim_end_matches(['\n', '\r'])
+        .chars()
+        .map(|ch| match ch {
+            '\t' => "  ".to_owned(),
+            ch if ch.is_control() => " ".to_owned(),
+            ch => ch.to_string(),
+        })
+        .collect::<String>()
 }
 
 pub(crate) fn split_csv_line(line: &str) -> Vec<String> {
@@ -366,6 +379,7 @@ pub(crate) fn parse_streaming_row(
         chrom,
         position,
         genotype: normalize_genotype(&genotype),
+        raw_line: sanitize_evidence_line(line),
     }))
 }
 

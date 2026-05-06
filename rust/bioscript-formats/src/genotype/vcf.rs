@@ -30,6 +30,7 @@ pub(crate) struct ParsedVcfRow {
     pub(crate) reference: String,
     pub(crate) alternates: Vec<String>,
     pub(crate) genotype: String,
+    pub(crate) raw_line: String,
 }
 
 pub(crate) fn scan_vcf_variants(
@@ -272,7 +273,10 @@ fn resolve_vcf_row(
                     matched_rsid: Some(rsid.clone()),
                     assembly: targets.detected_assembly,
                     genotype: Some(row.genotype.clone()),
-                    evidence: vec![format!("resolved by rsid {rsid}")],
+                    evidence: vec![
+                        format!("resolved by rsid {rsid}"),
+                        format!("source line: {}", row.raw_line),
+                    ],
                     ..VariantObservation::default()
                 };
                 *unresolved = (*unresolved).saturating_sub(1);
@@ -299,7 +303,10 @@ fn resolve_vcf_row(
                     matched_rsid: row.rsid.clone(),
                     assembly: targets.detected_assembly,
                     genotype: Some(row.genotype.clone()),
-                    evidence: vec![format!("resolved by locus {}:{}", row.chrom, row.position)],
+                    evidence: vec![
+                        format!("resolved by locus {}:{}", row.chrom, row.position),
+                        format!("source line: {}", row.raw_line),
+                    ],
                     ..VariantObservation::default()
                 };
                 *unresolved = (*unresolved).saturating_sub(1);
@@ -355,7 +362,19 @@ pub(crate) fn parse_vcf_record(line: &str) -> Result<Option<ParsedVcfRow>, Runti
         reference: reference.to_owned(),
         alternates,
         genotype,
+        raw_line: sanitize_evidence_line(line),
     }))
+}
+
+fn sanitize_evidence_line(line: &str) -> String {
+    line.trim_end_matches(['\n', '\r'])
+        .chars()
+        .map(|ch| match ch {
+            '\t' => "  ".to_owned(),
+            ch if ch.is_control() => " ".to_owned(),
+            ch => ch.to_string(),
+        })
+        .collect::<String>()
 }
 
 pub(crate) fn extract_vcf_sample_genotype(
