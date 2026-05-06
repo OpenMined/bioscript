@@ -24,6 +24,27 @@ filter_vendored() {
   awk 'BEGIN{RS=""; ORS="\n\n"} !/\/noodles\/|\/vendor\/|`noodles-|`lexical-/'
 }
 
-cargo clippy "${PKG_ARGS[@]}" --all-targets --color=never -- -D warnings 2> >(filter_vendored >&2)
+CLIPPY_STDERR="$(mktemp)"
+FILTERED_STDERR="$(mktemp)"
+cleanup() {
+  rm -f "$CLIPPY_STDERR" "$FILTERED_STDERR"
+}
+trap cleanup EXIT
+
+set +e
+cargo clippy "${PKG_ARGS[@]}" --all-targets --color=never -- -D warnings 2> "$CLIPPY_STDERR"
+CLIPPY_STATUS=$?
+set -e
+
+filter_vendored < "$CLIPPY_STDERR" > "$FILTERED_STDERR"
+if [[ -s "$FILTERED_STDERR" ]]; then
+  cat "$FILTERED_STDERR" >&2
+elif [[ "$CLIPPY_STATUS" -ne 0 ]]; then
+  cat "$CLIPPY_STDERR" >&2
+fi
+
+if [[ "$CLIPPY_STATUS" -ne 0 ]]; then
+  exit "$CLIPPY_STATUS"
+fi
 
 cargo test -p bioscript-core --test source_size -- --nocapture
