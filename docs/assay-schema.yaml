@@ -1,0 +1,66 @@
+schema: "bioscript:assay:1.0"
+version: "1.0"
+name: "APOL1"
+label: "APOL1 Risk Assay"
+summary: "APOL1 assay that observes G1 and G2 sites and emits the derived APOL1 risk genotype."
+tags:
+  - "type:risk"
+  - "gene:APOL1"
+
+members:
+  - kind: "variant"
+    path: "g1-site-1.yaml"
+    version: "1.0"
+  - kind: "variant"
+    path: "g1-site-2.yaml"
+    version: "1.0"
+  - kind: "variant"
+    path: "g2-site.yaml"
+    version: "1.0"
+
+analyses:
+  - id: "apol1_status"
+    kind: "bioscript"
+    path: "apol1.py"
+    output_format: "tsv"
+    label: "APOL1 risk genotype"
+    derived_from:
+      - "g1-site-1.yaml"
+      - "g1-site-2.yaml"
+      - "g2-site.yaml"
+    emits:
+      - key: "apol1_status"
+        label: "APOL1 status"
+        value_type: "string"
+        format: "badge"
+    logic:
+      source:
+        name: "Example derivation source"
+        url: "https://example.org/assay-logic"
+      description: >
+        Optional human-readable description of the derivation logic implemented by the analysis script.
+
+findings:
+  - schema: "bioscript:pgx-label:1.0"
+    id: "example_analysis_bound_pgx_finding"
+    label: "Example analysis-bound PGx finding"
+    authority_type: "regulatory_label"
+    binding:
+      source: "analysis"
+      analysis_id: "apol1_status"
+      key: "apol1_status"
+      operator: "equals"
+      value: "G2/G2"
+    drugs:
+      - name: "example drug"
+        aliases:
+          - "example brand"
+    regulatory_sources:
+      - "FDA"
+    pgx_action_level: "Actionable PGx"
+    evidence:
+      source: "ClinPGx"
+      kind: "label_annotation"
+      id: "PA..."
+      url: "https://www.clinpgx.org/labelAnnotation/PA..."
+    notes: "Findings can bind to emitted analysis keys using equals or in."

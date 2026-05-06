@@ -113,6 +113,16 @@ pub struct PanelManifest {
     pub permissions: Permissions,
     pub downloads: Vec<Download>,
     pub members: Vec<PanelMember>,
+    pub interpretations: Vec<PanelInterpretation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssayManifest {
+    pub path: PathBuf,
+    pub name: String,
+    pub tags: Vec<String>,
+    pub members: Vec<PanelMember>,
+    pub interpretations: Vec<PanelInterpretation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -138,6 +148,37 @@ pub struct PanelMember {
     pub version: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelInterpretation {
+    pub id: String,
+    pub kind: String,
+    pub path: String,
+    pub output_format: Option<String>,
+    pub derived_from: Vec<String>,
+    pub emits: Vec<PanelInterpretationEmit>,
+    pub logic: Option<PanelInterpretationLogic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelInterpretationLogic {
+    pub source: Option<PanelInterpretationLogicSource>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelInterpretationLogicSource {
+    pub name: Option<String>,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelInterpretationEmit {
+    pub key: String,
+    pub label: Option<String>,
+    pub value_type: Option<String>,
+    pub format: Option<String>,
+}
+
 /// Validate a variant file or directory of variant files.
 ///
 /// # Errors
@@ -156,6 +197,16 @@ pub fn validate_variants_path(path: &Path) -> Result<ValidationReport, String> {
 /// as YAML.
 pub fn validate_panels_path(path: &Path) -> Result<ValidationReport, String> {
     validate_manifest_path(path, ManifestSelector::Panel)
+}
+
+/// Validate an assay file or directory of assay files.
+///
+/// # Errors
+///
+/// Returns an error when the input path cannot be read, traversed, or parsed
+/// as YAML.
+pub fn validate_assays_path(path: &Path) -> Result<ValidationReport, String> {
+    validate_manifest_path(path, ManifestSelector::Assay)
 }
 
 /// Load a single variant manifest from YAML.
@@ -254,6 +305,7 @@ pub fn load_panel_manifest(path: &Path) -> Result<PanelManifest, String> {
     };
     let downloads = parse_downloads(&value)?;
     let members = parse_panel_members(&value)?;
+    let interpretations = parse_panel_interpretations(&value)?;
 
     Ok(PanelManifest {
         path: path.to_path_buf(),
@@ -262,11 +314,36 @@ pub fn load_panel_manifest(path: &Path) -> Result<PanelManifest, String> {
         permissions,
         downloads,
         members,
+        interpretations,
+    })
+}
+
+/// Load a single assay manifest from YAML.
+///
+/// # Errors
+///
+/// Returns an error when the file does not parse or is not a valid assay
+/// manifest.
+pub fn load_assay_manifest(path: &Path) -> Result<AssayManifest, String> {
+    let value = load_yaml(path)?;
+    let mut issues = Vec::new();
+    validate_assay_root(&value, &mut issues);
+    if issues.iter().any(|issue| issue.severity == Severity::Error) {
+        return Err(render_single_manifest_errors(path, &issues));
+    }
+
+    Ok(AssayManifest {
+        path: path.to_path_buf(),
+        name: required_non_empty_string(&value, &["name"])?,
+        tags: seq_of_strings(&value, &["tags"]).unwrap_or_default(),
+        members: parse_panel_members(&value)?,
+        interpretations: parse_panel_interpretations(&value)?,
     })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ManifestSelector {
+    Assay,
     Variant,
     Panel,
 }
@@ -279,6 +356,7 @@ fn validate_manifest_path(
     let mut reports = Vec::new();
     for file in &files {
         let report = match selector {
+            ManifestSelector::Assay => validate_assay_file(file)?,
             ManifestSelector::Variant => validate_variant_file(file)?,
             ManifestSelector::Panel => validate_panel_file(file)?,
         };
@@ -324,6 +402,33 @@ fn collect_yaml_files_recursive(path: &Path, files: &mut Vec<PathBuf>) -> Result
     Ok(())
 }
 
+fn validate_assay_file(path: &Path) -> Result<FileReport, String> {
+    let value = load_yaml(path)?;
+    let Some(schema) = scalar_at(&value, &["schema"]) else {
+        return Ok(FileReport {
+            file: path.to_path_buf(),
+            issues: vec![Issue {
+                severity: Severity::Error,
+                path: "schema".to_owned(),
+                message: "missing schema".to_owned(),
+            }],
+        });
+    };
+    if !schema.contains("assay") {
+        return Ok(FileReport {
+            file: path.to_path_buf(),
+            issues: Vec::new(),
+        });
+    }
+
+    let mut issues = Vec::new();
+    validate_assay_root(&value, &mut issues);
+    Ok(FileReport {
+        file: path.to_path_buf(),
+        issues,
+    })
+}
+
 fn validate_variant_file(path: &Path) -> Result<FileReport, String> {
     let value = load_yaml(path)?;
     let Some(schema) = scalar_at(&value, &["schema"]) else {
@@ -337,6 +442,14 @@ fn validate_variant_file(path: &Path) -> Result<FileReport, String> {
         });
     };
     if !schema.contains("variant") {
+        if schema == "bioscript:pgx-findings:1.0" {
+            let mut issues = Vec::new();
+            validate_pgx_findings_root(&value, &mut issues);
+            return Ok(FileReport {
+                file: path.to_path_buf(),
+                issues,
+            });
+        }
         return Ok(FileReport {
             file: path.to_path_buf(),
             issues: Vec::new(),
@@ -414,7 +527,45 @@ fn validate_panel_root(root: &Value, issues: &mut Vec<Issue>) {
     validate_tags(root, issues);
     validate_permissions(root, issues);
     validate_downloads(root, issues);
-    validate_panel_members(root, issues);
+    validate_panel_members(root, &["variant", "assay"], issues);
+    validate_panel_interpretations(root, issues);
+    validate_findings(root, issues);
+}
+
+fn validate_assay_root(root: &Value, issues: &mut Vec<Issue>) {
+    validate_schema_and_identity(root, "bioscript:assay:1.0", None, issues);
+    validate_optional_strings(root, &["name", "label", "summary"], issues);
+    validate_tags(root, issues);
+    validate_panel_members(root, &["variant"], issues);
+    validate_panel_interpretations(root, issues);
+    validate_findings(root, issues);
+}
+
+fn validate_pgx_findings_root(root: &Value, issues: &mut Vec<Issue>) {
+    require_const(root, &["schema"], "bioscript:pgx-findings:1.0", issues);
+    require_const(root, &["version"], "1.0", issues);
+    validate_optional_strings(root, &["variant", "gene", "rsid", "variant_pa_id"], issues);
+    if value_at(root, &["variant"]).is_none() && value_at(root, &["rsid"]).is_none() {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: "variant/rsid".to_owned(),
+            message: "expected at least one variant identifier".to_owned(),
+        });
+    }
+    match value_at(root, &["findings"]) {
+        Some(Value::Sequence(_)) => {}
+        Some(_) => issues.push(Issue {
+            severity: Severity::Error,
+            path: "findings".to_owned(),
+            message: "expected a sequence of findings".to_owned(),
+        }),
+        None => issues.push(Issue {
+            severity: Severity::Error,
+            path: "findings".to_owned(),
+            message: "missing required field".to_owned(),
+        }),
+    }
+    validate_findings(root, issues);
 }
 
 fn validate_schema_and_identity(
@@ -750,8 +901,30 @@ fn validate_alleles(root: &Value, issues: &mut Vec<Issue>) {
         }
         alts.push(alt.to_owned());
     }
-    validate_symbolic_alleles(&reference, &alts, issues);
-    validate_snv_alleles(&kind, &reference, &alts, issues);
+    let observed_alts = match seq_of_strings(root, &["alleles", "observed_alts"]) {
+        Some(items) => {
+            if items.is_empty() {
+                issues.push(Issue {
+                    severity: Severity::Error,
+                    path: "alleles.observed_alts".to_owned(),
+                    message: "expected a non-empty sequence of strings when present".to_owned(),
+                });
+            }
+            for alt in &alts {
+                if !items.iter().any(|item| item == alt) {
+                    issues.push(Issue {
+                        severity: Severity::Error,
+                        path: "alleles.observed_alts".to_owned(),
+                        message: format!("significant alt '{alt}' is not present in observed_alts"),
+                    });
+                }
+            }
+            items
+        }
+        None => alts.clone(),
+    };
+    validate_symbolic_alleles(&reference, &observed_alts, issues);
+    validate_snv_alleles(&kind, &reference, &observed_alts, issues);
 }
 
 fn validate_symbolic_alleles(reference: &str, alts: &[String], issues: &mut Vec<Issue>) {
@@ -832,9 +1005,17 @@ fn validate_findings(root: &Value, issues: &mut Vec<Issue>) {
                 message: "empty string".to_owned(),
             });
         }
+        if schema == "bioscript:pgx:1.0" {
+            issues.push(Issue {
+                severity: Severity::Warning,
+                path: format!("findings[{idx}].schema"),
+                message: "legacy PGx finding schema; prefer bioscript:pgx-summary:1.0 or bioscript:pgx-label:1.0".to_owned(),
+            });
+        }
         if let Some(alt) = mapping
             .get(Value::String("alt".to_owned()))
             .and_then(Value::as_str)
+            && !alts.is_empty()
             && alt != "*"
             && !alts.iter().any(|item| item == alt)
         {
@@ -859,6 +1040,173 @@ fn validate_findings(root: &Value, issues: &mut Vec<Issue>) {
                 message: "finding has neither summary nor notes".to_owned(),
             });
         }
+        validate_finding_binding(&format!("findings[{idx}]"), mapping, issues);
+        validate_finding_effects(idx, mapping, issues);
+    }
+}
+
+fn validate_finding_effects(idx: usize, mapping: &Mapping, issues: &mut Vec<Issue>) {
+    let Some(effects) = mapping.get(Value::String("effects".to_owned())) else {
+        return;
+    };
+    let Some(effects) = effects.as_sequence() else {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("findings[{idx}].effects"),
+            message: "expected a sequence of mappings".to_owned(),
+        });
+        return;
+    };
+    for (effect_idx, effect) in effects.iter().enumerate() {
+        let Some(effect) = effect.as_mapping() else {
+            issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("findings[{idx}].effects[{effect_idx}]"),
+                message: "expected mapping".to_owned(),
+            });
+            continue;
+        };
+        validate_finding_binding(
+            &format!("findings[{idx}].effects[{effect_idx}]"),
+            effect,
+            issues,
+        );
+    }
+}
+
+fn validate_finding_binding(parent: &str, mapping: &Mapping, issues: &mut Vec<Issue>) {
+    let Some(binding) = mapping.get(Value::String("binding".to_owned())) else {
+        return;
+    };
+    let Some(binding) = binding.as_mapping() else {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{parent}.binding"),
+            message: "expected mapping".to_owned(),
+        });
+        return;
+    };
+    validate_required_mapping_string(binding, "source", &format!("{parent}.binding"), issues);
+    let source = binding
+        .get(Value::String("source".to_owned()))
+        .and_then(Value::as_str);
+    match source {
+        Some("variant") => {
+            if !binding.contains_key(Value::String("variant".to_owned()))
+                && !binding.contains_key(Value::String("path".to_owned()))
+            {
+                issues.push(Issue {
+                    severity: Severity::Error,
+                    path: format!("{parent}.binding.variant"),
+                    message: "variant findings require variant or path".to_owned(),
+                });
+            }
+        }
+        Some("analysis") => {
+            validate_required_mapping_string(binding, "key", &format!("{parent}.binding"), issues);
+            validate_required_mapping_string(
+                binding,
+                "analysis_id",
+                &format!("{parent}.binding"),
+                issues,
+            );
+        }
+        Some(other) => issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{parent}.binding.source"),
+            message: format!("unsupported source '{other}'"),
+        }),
+        None => {}
+    }
+
+    let operator = binding
+        .get(Value::String("operator".to_owned()))
+        .and_then(Value::as_str)
+        .unwrap_or("equals");
+    match operator {
+        "equals" => {
+            validate_required_mapping_string(binding, "key", &format!("{parent}.binding"), issues);
+            if !binding.contains_key(Value::String("value".to_owned())) {
+                issues.push(Issue {
+                    severity: Severity::Error,
+                    path: format!("{parent}.binding.value"),
+                    message: "equals requires value".to_owned(),
+                });
+            }
+        }
+        "in" => {
+            validate_required_mapping_string(binding, "key", &format!("{parent}.binding"), issues);
+            let values = binding
+                .get(Value::String("values".to_owned()))
+                .and_then(Value::as_sequence);
+            if values.is_none_or(Vec::is_empty) {
+                issues.push(Issue {
+                    severity: Severity::Error,
+                    path: format!("{parent}.binding.values"),
+                    message: "in requires non-empty values".to_owned(),
+                });
+            }
+        }
+        "dosage_equals" => {
+            if binding
+                .get(Value::String("allele".to_owned()))
+                .and_then(Value::as_str)
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                issues.push(Issue {
+                    severity: Severity::Error,
+                    path: format!("{parent}.binding.allele"),
+                    message: "dosage_equals requires allele".to_owned(),
+                });
+            }
+            if binding
+                .get(Value::String("value".to_owned()))
+                .and_then(Value::as_i64)
+                .is_none_or(|value| !(0..=2).contains(&value))
+            {
+                issues.push(Issue {
+                    severity: Severity::Error,
+                    path: format!("{parent}.binding.value"),
+                    message: "dosage_equals requires integer value 0, 1, or 2".to_owned(),
+                });
+            }
+        }
+        "dosage_in" => {
+            if binding
+                .get(Value::String("allele".to_owned()))
+                .and_then(Value::as_str)
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                issues.push(Issue {
+                    severity: Severity::Error,
+                    path: format!("{parent}.binding.allele"),
+                    message: "dosage_in requires allele".to_owned(),
+                });
+            }
+            let values = binding
+                .get(Value::String("values".to_owned()))
+                .and_then(Value::as_sequence);
+            let invalid_values = match values {
+                Some(items) if !items.is_empty() => items
+                    .iter()
+                    .any(|value| value.as_i64().is_none_or(|n| !(0..=2).contains(&n))),
+                _ => true,
+            };
+            if invalid_values {
+                issues.push(Issue {
+                    severity: Severity::Error,
+                    path: format!("{parent}.binding.values"),
+                    message: "dosage_in requires integer values from 0 to 2".to_owned(),
+                });
+            }
+        }
+        other => issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{parent}.binding.operator"),
+            message: format!(
+                "unsupported operator '{other}'; expected 'equals', 'in', 'dosage_equals', or 'dosage_in'"
+            ),
+        }),
     }
 }
 
@@ -1035,7 +1383,7 @@ fn validate_downloads(root: &Value, issues: &mut Vec<Issue>) {
     }
 }
 
-fn validate_panel_members(root: &Value, issues: &mut Vec<Issue>) {
+fn validate_panel_members(root: &Value, allowed_kinds: &[&str], issues: &mut Vec<Issue>) {
     let Some(members) = value_at(root, &["members"]).and_then(Value::as_sequence) else {
         issues.push(Issue {
             severity: Severity::Error,
@@ -1064,7 +1412,7 @@ fn validate_panel_members(root: &Value, issues: &mut Vec<Issue>) {
             });
             continue;
         };
-        validate_panel_member(idx, mapping, &download_ids, issues);
+        validate_panel_member(idx, mapping, allowed_kinds, &download_ids, issues);
     }
 }
 
@@ -1085,6 +1433,7 @@ fn panel_download_ids(root: &Value) -> BTreeSet<String> {
 fn validate_panel_member(
     idx: usize,
     mapping: &Mapping,
+    allowed_kinds: &[&str],
     download_ids: &BTreeSet<String>,
     issues: &mut Vec<Issue>,
 ) {
@@ -1092,13 +1441,11 @@ fn validate_panel_member(
         .get(Value::String("kind".to_owned()))
         .and_then(Value::as_str);
     match kind {
-        Some("variant") => {}
+        Some(kind) if allowed_kinds.contains(&kind) => {}
         Some(other) => issues.push(Issue {
             severity: Severity::Error,
             path: format!("members[{idx}].kind"),
-            message: format!(
-                "unsupported member kind '{other}'; panel support is currently variant-only"
-            ),
+            message: format!("unsupported member kind '{other}'"),
         }),
         None => issues.push(Issue {
             severity: Severity::Error,
@@ -1186,13 +1533,258 @@ fn validate_panel_member_metadata(idx: usize, mapping: &Mapping, issues: &mut Ve
     }
 }
 
+fn validate_panel_interpretations(root: &Value, issues: &mut Vec<Issue>) {
+    if value_at(root, &["analyses"]).is_some() && value_at(root, &["interpretations"]).is_some() {
+        issues.push(Issue {
+            severity: Severity::Warning,
+            path: "interpretations".to_owned(),
+            message: "use analyses instead of interpretations; do not define both".to_owned(),
+        });
+    }
+    let key = if value_at(root, &["analyses"]).is_some() {
+        "analyses"
+    } else {
+        "interpretations"
+    };
+    let Some(items) = value_at(root, &[key]) else {
+        return;
+    };
+    let Some(items) = items.as_sequence() else {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: key.to_owned(),
+            message: "expected a sequence of mappings".to_owned(),
+        });
+        return;
+    };
+    for (idx, item) in items.iter().enumerate() {
+        let Some(mapping) = item.as_mapping() else {
+            issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("{key}[{idx}]"),
+                message: "expected mapping".to_owned(),
+            });
+            continue;
+        };
+        validate_panel_interpretation(key, idx, mapping, issues);
+    }
+}
+
+fn validate_panel_interpretation(
+    key: &str,
+    idx: usize,
+    mapping: &Mapping,
+    issues: &mut Vec<Issue>,
+) {
+    for field in ["id", "kind", "path"] {
+        validate_required_mapping_string(mapping, field, &format!("{key}[{idx}]"), issues);
+    }
+    if let Some(kind) = mapping
+        .get(Value::String("kind".to_owned()))
+        .and_then(Value::as_str)
+        && kind != "bioscript"
+    {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{key}[{idx}].kind"),
+            message: "expected 'bioscript'".to_owned(),
+        });
+    }
+    if let Some(output_format) = mapping
+        .get(Value::String("output_format".to_owned()))
+        .and_then(Value::as_str)
+        && !matches!(output_format, "tsv" | "json" | "jsonl")
+    {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{key}[{idx}].output_format"),
+            message: "expected 'tsv', 'json', or 'jsonl'".to_owned(),
+        });
+    }
+    let Some(derived_from) = mapping
+        .get(Value::String("derived_from".to_owned()))
+        .and_then(Value::as_sequence)
+    else {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{key}[{idx}].derived_from"),
+            message: "expected a non-empty sequence of strings".to_owned(),
+        });
+        return;
+    };
+    if derived_from.is_empty() {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{key}[{idx}].derived_from"),
+            message: "expected at least one source variant".to_owned(),
+        });
+    }
+    for (source_idx, source) in derived_from.iter().enumerate() {
+        match source.as_str() {
+            Some(value) if !value.trim().is_empty() => {}
+            Some(_) => issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("{key}[{idx}].derived_from[{source_idx}]"),
+                message: "empty string".to_owned(),
+            }),
+            None => issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("{key}[{idx}].derived_from[{source_idx}]"),
+                message: "expected string".to_owned(),
+            }),
+        }
+    }
+    validate_panel_interpretation_logic(key, idx, mapping, issues);
+    validate_panel_interpretation_emits(key, idx, mapping, issues);
+}
+
+fn validate_panel_interpretation_logic(
+    key: &str,
+    idx: usize,
+    mapping: &Mapping,
+    issues: &mut Vec<Issue>,
+) {
+    let Some(logic) = mapping.get(Value::String("logic".to_owned())) else {
+        return;
+    };
+    let Some(logic) = logic.as_mapping() else {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{key}[{idx}].logic"),
+            message: "expected mapping".to_owned(),
+        });
+        return;
+    };
+    validate_optional_mapping_string(logic, "description", &format!("{key}[{idx}].logic"), issues);
+    let Some(source) = logic.get(Value::String("source".to_owned())) else {
+        return;
+    };
+    let Some(source) = source.as_mapping() else {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{key}[{idx}].logic.source"),
+            message: "expected mapping".to_owned(),
+        });
+        return;
+    };
+    validate_optional_mapping_string(
+        source,
+        "name",
+        &format!("{key}[{idx}].logic.source"),
+        issues,
+    );
+    validate_optional_mapping_string(source, "url", &format!("{key}[{idx}].logic.source"), issues);
+    if let Some(url) = source
+        .get(Value::String("url".to_owned()))
+        .and_then(Value::as_str)
+    {
+        validate_url_string(
+            url,
+            &format!("{key}[{idx}].logic.source.url"),
+            false,
+            issues,
+        );
+    }
+}
+
+fn validate_panel_interpretation_emits(
+    key: &str,
+    idx: usize,
+    mapping: &Mapping,
+    issues: &mut Vec<Issue>,
+) {
+    let Some(emits) = mapping.get(Value::String("emits".to_owned())) else {
+        return;
+    };
+    let Some(emits) = emits.as_sequence() else {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{key}[{idx}].emits"),
+            message: "expected a sequence of mappings".to_owned(),
+        });
+        return;
+    };
+    for (emit_idx, item) in emits.iter().enumerate() {
+        let Some(mapping) = item.as_mapping() else {
+            issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("{key}[{idx}].emits[{emit_idx}]"),
+                message: "expected mapping".to_owned(),
+            });
+            continue;
+        };
+        validate_required_mapping_string(
+            mapping,
+            "key",
+            &format!("{key}[{idx}].emits[{emit_idx}]"),
+            issues,
+        );
+        for field in ["label", "value_type", "format"] {
+            validate_optional_mapping_string(
+                mapping,
+                field,
+                &format!("{key}[{idx}].emits[{emit_idx}]"),
+                issues,
+            );
+        }
+    }
+}
+
+fn validate_required_mapping_string(
+    mapping: &Mapping,
+    field: &str,
+    parent: &str,
+    issues: &mut Vec<Issue>,
+) {
+    match mapping
+        .get(Value::String(field.to_owned()))
+        .and_then(Value::as_str)
+    {
+        Some(value) if !value.trim().is_empty() => {}
+        Some(_) => issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{parent}.{field}"),
+            message: "empty string".to_owned(),
+        }),
+        None => issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("{parent}.{field}"),
+            message: "missing required field".to_owned(),
+        }),
+    }
+}
+
+fn validate_optional_mapping_string(
+    mapping: &Mapping,
+    field: &str,
+    parent: &str,
+    issues: &mut Vec<Issue>,
+) {
+    if let Some(value) = mapping.get(Value::String(field.to_owned())) {
+        match value.as_str() {
+            Some(text) if !text.trim().is_empty() => {}
+            Some(_) => issues.push(Issue {
+                severity: Severity::Warning,
+                path: format!("{parent}.{field}"),
+                message: "empty string".to_owned(),
+            }),
+            None => issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("{parent}.{field}"),
+                message: "expected string".to_owned(),
+            }),
+        }
+    }
+}
+
 fn variant_spec_from_root(root: &Value) -> Result<VariantSpec, String> {
     let rsids = seq_of_strings(root, &["identifiers", "rsids"]).unwrap_or_default();
     let grch37 = locus_from_root(root, "grch37")?;
     let grch38 = locus_from_root(root, "grch38")?;
     let reference = scalar_at(root, &["alleles", "ref"]);
-    let alternate =
-        seq_of_strings(root, &["alleles", "alts"]).and_then(|alts| alts.first().cloned());
+    let alternate = seq_of_strings(root, &["alleles", "observed_alts"])
+        .or_else(|| seq_of_strings(root, &["alleles", "alts"]))
+        .and_then(|alts| alts.first().cloned());
     let deletion_length = value_at(root, &["alleles", "deletion_length"])
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok());
@@ -1296,6 +1888,136 @@ fn parse_panel_members(root: &Value) -> Result<Vec<PanelMember>, String> {
         });
     }
     Ok(members)
+}
+
+fn parse_panel_interpretations(root: &Value) -> Result<Vec<PanelInterpretation>, String> {
+    let mut interpretations = Vec::new();
+    let key = if value_at(root, &["analyses"]).is_some() {
+        "analyses"
+    } else {
+        "interpretations"
+    };
+    let Some(items) = value_at(root, &[key]).and_then(Value::as_sequence) else {
+        return Ok(interpretations);
+    };
+    for (idx, item) in items.iter().enumerate() {
+        let Some(mapping) = item.as_mapping() else {
+            return Err(format!("{key}[{idx}] must be a mapping"));
+        };
+        interpretations.push(PanelInterpretation {
+            id: mapping_required_string(mapping, "id", idx, key)?,
+            kind: mapping_required_string(mapping, "kind", idx, key)?,
+            path: mapping_required_string(mapping, "path", idx, key)?,
+            output_format: mapping
+                .get(Value::String("output_format".to_owned()))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            derived_from: mapping_sequence_of_strings(mapping, "derived_from", idx, key)?,
+            emits: parse_panel_interpretation_emits(mapping, idx)?,
+            logic: parse_panel_interpretation_logic(mapping)?,
+        });
+    }
+    Ok(interpretations)
+}
+
+fn parse_panel_interpretation_logic(
+    mapping: &Mapping,
+) -> Result<Option<PanelInterpretationLogic>, String> {
+    let Some(logic) = mapping.get(Value::String("logic".to_owned())) else {
+        return Ok(None);
+    };
+    let Some(logic_mapping) = logic.as_mapping() else {
+        return Err("analysis logic must be a mapping".to_owned());
+    };
+    let source = match logic_mapping.get(Value::String("source".to_owned())) {
+        Some(source) => {
+            let Some(source_mapping) = source.as_mapping() else {
+                return Err("analysis logic.source must be a mapping".to_owned());
+            };
+            Some(PanelInterpretationLogicSource {
+                name: source_mapping
+                    .get(Value::String("name".to_owned()))
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+                url: source_mapping
+                    .get(Value::String("url".to_owned()))
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+            })
+        }
+        None => None,
+    };
+    Ok(Some(PanelInterpretationLogic {
+        source,
+        description: logic_mapping
+            .get(Value::String("description".to_owned()))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+    }))
+}
+
+fn parse_panel_interpretation_emits(
+    mapping: &Mapping,
+    interpretation_idx: usize,
+) -> Result<Vec<PanelInterpretationEmit>, String> {
+    let Some(items) = mapping
+        .get(Value::String("emits".to_owned()))
+        .and_then(Value::as_sequence)
+    else {
+        return Ok(Vec::new());
+    };
+    let mut emits = Vec::new();
+    for (idx, item) in items.iter().enumerate() {
+        let Some(mapping) = item.as_mapping() else {
+            return Err(format!(
+                "interpretations[{interpretation_idx}].emits[{idx}] must be a mapping"
+            ));
+        };
+        emits.push(PanelInterpretationEmit {
+            key: mapping_required_string(
+                mapping,
+                "key",
+                idx,
+                &format!("interpretations[{interpretation_idx}].emits"),
+            )?,
+            label: mapping
+                .get(Value::String("label".to_owned()))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            value_type: mapping
+                .get(Value::String("value_type".to_owned()))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+            format: mapping
+                .get(Value::String("format".to_owned()))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+        });
+    }
+    Ok(emits)
+}
+
+fn mapping_sequence_of_strings(
+    mapping: &Mapping,
+    field: &str,
+    idx: usize,
+    parent: &str,
+) -> Result<Vec<String>, String> {
+    let value = mapping
+        .get(Value::String(field.to_owned()))
+        .ok_or_else(|| format!("{parent}[{idx}].{field} is required"))?;
+    let items = value
+        .as_sequence()
+        .ok_or_else(|| format!("{parent}[{idx}].{field} must be a sequence"))?;
+    items
+        .iter()
+        .enumerate()
+        .map(|(item_idx, item)| {
+            item.as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| format!("{parent}[{idx}].{field}[{item_idx}] must be a string"))
+        })
+        .collect()
 }
 
 fn mapping_required_string(

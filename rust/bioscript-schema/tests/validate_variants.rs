@@ -6,7 +6,8 @@ use std::{
 
 use bioscript_schema::{
     RemoteResourceKind, load_variant_manifest_text, load_variant_manifest_text_for_lookup,
-    resolve_remote_resource_text, validate_panels_path, validate_variants_path,
+    resolve_remote_resource_text, validate_assays_path, validate_panels_path,
+    validate_variants_path,
 };
 
 fn temp_dir(label: &str) -> PathBuf {
@@ -88,7 +89,7 @@ findings:
   - schema: "bioscript:trait:1.0"
     alt: "A"
     summary: "Example finding"
-  - schema: "bioscript:pgx:1.0"
+  - schema: "bioscript:pgx-summary:1.0"
     alt: "*"
     summary: "Example multiallelic finding"
 provenance:
@@ -213,11 +214,62 @@ members:
   - kind: "variant"
     path: "variants/rs671.yaml"
     version: "1.0"
+  - kind: "assay"
+    path: "../risk/APOL1/assay.yaml"
+    version: "1.0"
+interpretations:
+  - id: "taste_status"
+    kind: "bioscript"
+    path: "interpretations/taste.py"
+    label: "Taste status"
+    derived_from:
+      - "variants/rs671.yaml"
+    emits:
+      - key: "taste_status"
+        label: "Taste status"
+        value_type: "string"
+        format: "badge"
 "#,
     )
     .unwrap();
 
     let report = validate_panels_path(&fixture).unwrap();
+    assert_eq!(report.total_errors(), 0);
+    assert_eq!(report.total_warnings(), 0);
+}
+
+#[test]
+fn validate_assays_accepts_variant_members_and_interpretations() {
+    let dir = temp_dir("validate-assay-ok");
+    let fixture = dir.join("assay.yaml");
+    fs::write(
+        &fixture,
+        r#"
+schema: "bioscript:assay:1.0"
+version: "1.0"
+name: "APOL1"
+tags:
+  - "type:risk"
+members:
+  - kind: "variant"
+    path: "g1-site-1.yaml"
+    version: "1.0"
+interpretations:
+  - id: "apol1_status"
+    kind: "bioscript"
+    path: "apol1.py"
+    derived_from:
+      - "g1-site-1.yaml"
+    emits:
+      - key: "apol1_status"
+        label: "APOL1 status"
+        value_type: "string"
+        format: "badge"
+"#,
+    )
+    .unwrap();
+
+    let report = validate_assays_path(&fixture).unwrap();
     assert_eq!(report.total_errors(), 0);
     assert_eq!(report.total_warnings(), 0);
 }

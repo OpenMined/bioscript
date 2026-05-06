@@ -109,6 +109,7 @@ dependencies = [
  "bioscript-runtime",
  "bioscript-schema",
  "monty",
+ "serde_json",
  "serde_yaml",
  "zip",
 ]

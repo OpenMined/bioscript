@@ -375,6 +375,7 @@ struct ParsedDelimitedRow {
     chrom: Option<String>,
     position: Option<i64>,
     genotype: String,
+    raw_line: String,
 }
 
 impl DelimitedBackend {
@@ -1454,6 +1455,7 @@ impl RowParser {
             chrom,
             position,
             genotype: normalize_genotype(&genotype),
+            raw_line: sanitize_evidence_line(line),
         }))
     }
 
@@ -1526,6 +1528,17 @@ fn strip_inline_comment(value: &str) -> String {
     value.trim().to_owned()
 }
 
+fn sanitize_evidence_line(line: &str) -> String {
+    line.trim_end_matches(['\n', '\r'])
+        .chars()
+        .map(|ch| match ch {
+            '\t' => "  ".to_owned(),
+            ch if ch.is_control() => " ".to_owned(),
+            ch => ch.to_string(),
+        })
+        .collect::<String>()
+}
+
 fn normalize_genotype(value: &str) -> String {
     let cleaned = value.trim().replace(' ', "").to_ascii_uppercase();
     if cleaned.is_empty() || matches!(cleaned.as_str(), "NA" | "N/A" | "#N/A" | "NONE") {
@@ -1569,6 +1582,7 @@ struct ParsedVcfRow {
     reference: String,
     alternates: Vec<String>,
     genotype: String,
+    raw_line: String,
 }
 
 fn scan_vcf_variants(
@@ -1718,7 +1732,10 @@ fn resolve_vcf_row(
                     matched_rsid: Some(rsid.clone()),
                     assembly: targets.detected_assembly,
                     genotype: Some(row.genotype.clone()),
-                    evidence: vec![format!("resolved by rsid {rsid}")],
+                    evidence: vec![
+                        format!("resolved by rsid {rsid}"),
+                        format!("source line: {}", row.raw_line),
+                    ],
                     ..VariantObservation::default()
                 };
                 *unresolved = (*unresolved).saturating_sub(1);
@@ -1745,7 +1762,10 @@ fn resolve_vcf_row(
                     matched_rsid: row.rsid.clone(),
                     assembly: targets.detected_assembly,
                     genotype: Some(row.genotype.clone()),
-                    evidence: vec![format!("resolved by locus {}:{}", row.chrom, row.position)],
+                    evidence: vec![
+                        format!("resolved by locus {}:{}", row.chrom, row.position),
+                        format!("source line: {}", row.raw_line),
+                    ],
                     ..VariantObservation::default()
                 };
                 *unresolved = (*unresolved).saturating_sub(1);
@@ -1801,6 +1821,7 @@ fn parse_vcf_record(line: &str) -> Result<Option<ParsedVcfRow>, RuntimeError> {
         reference: reference.to_owned(),
         alternates,
         genotype,
+        raw_line: sanitize_evidence_line(line),
     }))
 }
 
@@ -2033,7 +2054,10 @@ fn scan_delimited_variants(
                             backend: backend.backend_name().to_owned(),
                             matched_rsid: Some(rsid.clone()),
                             genotype: Some(row.genotype.clone()),
-                            evidence: vec![format!("resolved by rsid {rsid}")],
+                            evidence: vec![
+                                format!("resolved by rsid {rsid}"),
+                                format!("source line: {}", row.raw_line),
+                            ],
                             ..VariantObservation::default()
                         };
                         unresolved = unresolved.saturating_sub(1);
@@ -2057,7 +2081,10 @@ fn scan_delimited_variants(
                                 backend: backend.backend_name().to_owned(),
                                 matched_rsid: row.rsid.clone(),
                                 genotype: Some(row.genotype.clone()),
-                                evidence: vec![format!("resolved by locus {}:{}", chrom, position)],
+                                evidence: vec![
+                                    format!("resolved by locus {}:{}", chrom, position),
+                                    format!("source line: {}", row.raw_line),
+                                ],
                                 ..VariantObservation::default()
                             };
                             unresolved = unresolved.saturating_sub(1);
@@ -2251,6 +2278,7 @@ fn parse_streaming_row(
         chrom,
         position,
         genotype: normalize_genotype(&genotype),
+        raw_line: sanitize_evidence_line(line),
     }))
 }
 

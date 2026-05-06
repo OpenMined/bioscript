@@ -28,6 +28,9 @@ alleles:
   ref: "A"
   alts:
     - "G"
+  observed_alts:
+    - "G"
+    - "T"
   deletion_length: 1
   insertion_sequence: "AT"
   motifs:
@@ -46,9 +49,28 @@ findings:
     label: "string"
     summary: "string"
     notes: "string"
-  - schema: "bioscript:pgx:1.0"
-    alt: "*"
-    notes: "Finding applies to any alternate allele at this multiallelic locus."
+  - schema: "bioscript:pgx-summary:1.0"
+    id: "example_pgx_summary"
+    label: "Example summary annotation"
+    authority_type: "evidence_summary"
+    binding:
+      source: "variant"
+      variant: "rs123.yaml"
+      allele: "G"
+      operator: "dosage_in"
+      values:
+        - 1
+        - 2
+      description: "Applies when the participant carries at least one G allele."
+    drugs:
+      - name: "example drug"
+    evidence_level: "3"
+    evidence:
+      source: "ClinPGx"
+      kind: "summary_annotation"
+      id: "144..."
+      url: "https://www.clinpgx.org/variant/PA.../summaryAnnotation"
+    notes: "Summary annotations capture variant-drug evidence and can be stored directly or through a pgx-findings sidecar."
 
 provenance:
   sources:

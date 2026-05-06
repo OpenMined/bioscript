@@ -310,3 +310,72 @@ members:
     assert!(stdout.contains("example-rs73885319"));
     assert!(!stdout.contains("example-rs60910145"));
 }
+
+#[test]
+fn assay_manifest_runs_directly_via_cli() {
+    let root = repo_root();
+    let dir = temp_dir("assay-manifest");
+    fs::write(
+        dir.join("rs73885319.yaml"),
+        r#"
+schema: "bioscript:variant:1.0"
+version: "1.0"
+name: "example-rs73885319"
+identifiers:
+  rsids:
+    - "rs73885319"
+coordinates:
+  grch38:
+    chrom: "22"
+    pos: 36265860
+alleles:
+  kind: "snv"
+  ref: "A"
+  alts:
+    - "G"
+"#,
+    )
+    .unwrap();
+    let assay = dir.join("assay.yaml");
+    fs::write(
+        &assay,
+        r#"
+schema: "bioscript:assay:1.0"
+version: "1.0"
+name: "example-assay"
+members:
+  - kind: "variant"
+    path: "rs73885319.yaml"
+    version: "1.0"
+interpretations:
+  - id: "example_status"
+    kind: "bioscript"
+    path: "example.py"
+    derived_from:
+      - "rs73885319.yaml"
+    emits:
+      - key: "example_status"
+        label: "Example status"
+        value_type: "string"
+        format: "badge"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("old/examples/apol1/test_snps.txt")
+        .arg(&assay)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("example-rs73885319"));
+    assert!(stdout.contains("AG"));
+}
