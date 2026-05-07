@@ -369,6 +369,7 @@ fn run_cli_script(
         RuntimeConfig {
             limits: options.limits,
             loader: options.loader,
+            ..RuntimeConfig::default()
         },
     )
     .map_err(|err| err.to_string())?;

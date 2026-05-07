@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{
         Mutex,
         atomic::{AtomicU64, Ordering},
@@ -16,6 +16,8 @@ use bioscript_core::RuntimeError;
 pub struct RuntimeConfig {
     pub limits: ResourceLimits,
     pub loader: GenotypeLoadOptions,
+    pub virtual_binary_files: BTreeMap<String, Vec<u8>>,
+    pub virtual_text_files: BTreeMap<String, String>,
 }
 
 impl Default for RuntimeConfig {
@@ -29,6 +31,8 @@ impl Default for RuntimeConfig {
         Self {
             limits,
             loader: GenotypeLoadOptions::default(),
+            virtual_binary_files: BTreeMap::new(),
+            virtual_text_files: BTreeMap::new(),
         }
     }
 }
@@ -49,6 +53,7 @@ pub(crate) struct RuntimeState {
     pub(crate) genotype_files: Mutex<HashMap<u64, GenotypeStore>>,
     pub(crate) trace_lines: Mutex<Vec<usize>>,
     pub(crate) timings: Mutex<Vec<StageTiming>>,
+    pub(crate) virtual_written_text_files: Mutex<BTreeMap<String, String>>,
 }
 
 impl RuntimeState {
@@ -58,6 +63,7 @@ impl RuntimeState {
             genotype_files: Mutex::new(HashMap::new()),
             trace_lines: Mutex::new(Vec::new()),
             timings: Mutex::new(Vec::new()),
+            virtual_written_text_files: Mutex::new(BTreeMap::new()),
         }
     }
 

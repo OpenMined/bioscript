@@ -5,7 +5,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use bioscript_formats::GenotypeLoadOptions;
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig};
 use monty::ResourceLimits;
 
@@ -34,7 +33,7 @@ fn run_script(code: &str, limits: ResourceLimits) -> Result<(), String> {
         &dir,
         RuntimeConfig {
             limits,
-            loader: GenotypeLoadOptions::default(),
+            ..RuntimeConfig::default()
         },
     )
     .unwrap();

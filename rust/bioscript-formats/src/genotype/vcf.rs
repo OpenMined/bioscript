@@ -17,16 +17,14 @@ use super::{
     describe_query, genotype_from_vcf_gt, is_bgzf_path, types::VcfBackend, variant_sort_key,
 };
 
-mod indexed;
 mod matching;
 mod reader;
 
-use indexed::observe_indexed_vcf_variant;
+use matching::imputed_reference_observation;
 pub(crate) use matching::{
     choose_variant_locus_for_assembly, normalize_chromosome_name, vcf_row_matches_variant,
 };
-use matching::{first_single_base_allele, imputed_reference_observation};
-pub use reader::observe_vcf_snp_with_reader;
+pub use reader::{observe_vcf_snp_with_reader, observe_vcf_variant_with_reader};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedVcfRow {
@@ -208,12 +206,6 @@ pub(crate) fn lookup_indexed_vcf_variants(
         let Some(locus) = choose_variant_locus_for_assembly(variant, detected_assembly) else {
             return Ok(None);
         };
-        if matches!(variant.kind, None | Some(VariantKind::Snp))
-            && (first_single_base_allele(variant.reference.as_deref()).is_none()
-                || first_single_base_allele(variant.alternate.as_deref()).is_none())
-        {
-            return Ok(None);
-        }
         indexed_variants.push((idx, variant, locus));
     }
 
@@ -234,25 +226,15 @@ pub(crate) fn lookup_indexed_vcf_variants(
     );
 
     let mut results = vec![VariantObservation::default(); variants.len()];
-    let label = backend.path.display().to_string();
     for (idx, variant, locus) in indexed_variants {
-        let observation = if let (Some(reference), Some(alternate), true) = (
-            first_single_base_allele(variant.reference.as_deref()),
-            first_single_base_allele(variant.alternate.as_deref()),
-            matches!(variant.kind, None | Some(VariantKind::Snp)),
-        ) {
-            observe_vcf_snp_with_reader(
-                &mut indexed,
-                &label,
-                &locus,
-                reference,
-                alternate,
-                variant.rsids.first().cloned(),
-                detected_assembly,
-            )?
-        } else {
-            observe_indexed_vcf_variant(&mut indexed, &label, variant, &locus, detected_assembly)?
-        };
+        let observation = observe_vcf_variant_with_reader(
+            &mut indexed,
+            &backend.path.display().to_string(),
+            &locus,
+            variant,
+            variant.rsids.first().cloned(),
+            detected_assembly,
+        )?;
         results[idx] = if backend.options.impute_vcf_missing_as_reference
             && observation.genotype.is_none()
             && observation
