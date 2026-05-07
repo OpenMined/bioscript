@@ -35,8 +35,15 @@ pub fn run_file_request(request: RunFileRequest) -> Result<RunFileResult, String
         run_auto_index(&request, &runtime_root, &mut loader, &mut ffi_timings)?;
     }
 
-    let runtime = BioscriptRuntime::with_config(runtime_root, RuntimeConfig { limits, loader })
-        .map_err(|err| err.to_string())?;
+    let runtime = BioscriptRuntime::with_config(
+        runtime_root,
+        RuntimeConfig {
+            limits,
+            loader,
+            ..RuntimeConfig::default()
+        },
+    )
+    .map_err(|err| err.to_string())?;
     let inputs = runtime_inputs(&request);
 
     runtime

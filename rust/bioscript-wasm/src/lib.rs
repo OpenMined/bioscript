@@ -17,6 +17,8 @@
 mod inspect_api;
 mod js_reader;
 mod lookup_api;
+mod package_api;
+mod report_api;
 mod variant_yaml;
 
 pub use inspect_api::{inspect_bytes, resolve_remote_resource_text};
@@ -24,6 +26,10 @@ pub use lookup_api::{
     lookup_cram_variants, lookup_genotype_bytes_rsids, lookup_genotype_bytes_variants,
     lookup_vcf_variants,
 };
+pub use package_api::{
+    resolve_package_release_text, resolve_package_zip_bytes, verify_package_artifact_sha256,
+};
+pub use report_api::run_package_report_bytes;
 pub use variant_yaml::compile_variant_yaml_text;
 
 #[wasm_bindgen::prelude::wasm_bindgen(start)]

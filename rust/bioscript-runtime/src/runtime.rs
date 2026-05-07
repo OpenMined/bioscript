@@ -3,7 +3,7 @@ use std::{
     fs,
     path::{Component, Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use bioscript_core::RuntimeError;
@@ -14,6 +14,7 @@ mod host_io;
 mod methods;
 mod objects;
 mod state;
+mod timing;
 mod trace;
 mod variants;
 
@@ -27,6 +28,7 @@ use objects::{
 };
 pub use state::{RuntimeConfig, StageTiming};
 use state::{RuntimeState, monty_error};
+use timing::RuntimeInstant;
 #[cfg(test)]
 use trace::{
     ends_with_unescaped_backslash, extract_coordinate, extract_rsid, update_nesting_depth,
@@ -61,12 +63,18 @@ impl BioscriptRuntime {
         config: RuntimeConfig,
     ) -> Result<Self, RuntimeError> {
         let root = root.into();
-        let canonical_root = root.canonicalize().map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to canonicalize bioscript root {}: {err}",
-                root.display()
-            ))
-        })?;
+        let has_virtual_files =
+            !config.virtual_text_files.is_empty() || !config.virtual_binary_files.is_empty();
+        let canonical_root = if has_virtual_files {
+            root
+        } else {
+            root.canonicalize().map_err(|err| {
+                RuntimeError::Io(format!(
+                    "failed to canonicalize bioscript root {}: {err}",
+                    root.display()
+                ))
+            })?
+        };
 
         let mut functions = BTreeMap::new();
         functions.insert("read_text", host_read_text as HostFunction);
@@ -97,14 +105,18 @@ impl BioscriptRuntime {
         trace_report_path: Option<&Path>,
         mut extra_inputs: Vec<(&str, MontyObject)>,
     ) -> Result<MontyObject, RuntimeError> {
-        let run_started = Instant::now();
+        let run_started = RuntimeInstant::now();
         let script_path = script_path.as_ref();
-        let code = fs::read_to_string(script_path).map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to read script {}: {err}",
-                script_path.display()
-            ))
-        })?;
+        let code = if let Some(content) = self.read_virtual_text_file(script_path) {
+            content
+        } else {
+            fs::read_to_string(script_path).map_err(|err| {
+                RuntimeError::Io(format!(
+                    "failed to read script {}: {err}",
+                    script_path.display()
+                ))
+            })?
+        };
         let instrumented = instrument_source(&code);
         self.state
             .trace_lines
@@ -288,6 +300,9 @@ impl BioscriptRuntime {
 
     fn resolve_existing_user_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
         let path = self.resolve_user_path(raw_path)?;
+        if self.virtual_file_exists(raw_path) {
+            return Ok(path);
+        }
         let canonical = path.canonicalize().map_err(|err| {
             RuntimeError::Io(format!("failed to resolve {}: {err}", path.display()))
         })?;
@@ -297,6 +312,9 @@ impl BioscriptRuntime {
 
     fn resolve_user_write_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
         let path = self.resolve_user_path(raw_path)?;
+        if self.uses_virtual_files() {
+            return Ok(path);
+        }
         if path.exists() {
             let canonical = path.canonicalize().map_err(|err| {
                 RuntimeError::Io(format!("failed to resolve {}: {err}", path.display()))
@@ -315,6 +333,72 @@ impl BioscriptRuntime {
         })?;
         self.ensure_under_root(&canonical_parent, raw_path)?;
         Ok(path)
+    }
+
+    #[must_use]
+    pub fn virtual_written_text_files(&self) -> BTreeMap<String, String> {
+        self.state
+            .virtual_written_text_files
+            .lock()
+            .expect("virtual file mutex poisoned")
+            .clone()
+    }
+
+    pub(crate) fn read_virtual_text_file(&self, path: &Path) -> Option<String> {
+        let key = self.virtual_key(path);
+        self.config
+            .virtual_text_files
+            .get(&key)
+            .cloned()
+            .or_else(|| {
+                self.state
+                    .virtual_written_text_files
+                    .lock()
+                    .expect("virtual file mutex poisoned")
+                    .get(&key)
+                    .cloned()
+            })
+    }
+
+    pub(crate) fn write_virtual_text_file(&self, path: &Path, contents: String) -> bool {
+        if !self.uses_virtual_files() {
+            return false;
+        }
+        let key = self.virtual_key(path);
+        self.state
+            .virtual_written_text_files
+            .lock()
+            .expect("virtual file mutex poisoned")
+            .insert(key, contents);
+        true
+    }
+
+    pub(crate) fn read_virtual_binary_file(&self, path: &Path) -> Option<Vec<u8>> {
+        let key = self.virtual_key(path);
+        self.config.virtual_binary_files.get(&key).cloned()
+    }
+
+    fn uses_virtual_files(&self) -> bool {
+        !self.config.virtual_text_files.is_empty() || !self.config.virtual_binary_files.is_empty()
+    }
+
+    fn virtual_file_exists(&self, raw_path: &str) -> bool {
+        self.config.virtual_text_files.contains_key(raw_path)
+            || self.config.virtual_binary_files.contains_key(raw_path)
+            || self
+                .state
+                .virtual_written_text_files
+                .lock()
+                .expect("virtual file mutex poisoned")
+                .contains_key(raw_path)
+    }
+
+    fn virtual_key(&self, path: &Path) -> String {
+        path.strip_prefix(&self.root)
+            .unwrap_or(path)
+            .display()
+            .to_string()
+            .replace('\\', "/")
     }
 
     fn ensure_under_root(&self, path: &Path, raw_path: &str) -> Result<(), RuntimeError> {

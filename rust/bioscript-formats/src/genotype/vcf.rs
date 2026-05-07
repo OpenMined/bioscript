@@ -20,11 +20,11 @@ use super::{
 mod matching;
 mod reader;
 
+use matching::imputed_reference_observation;
 pub(crate) use matching::{
     choose_variant_locus_for_assembly, normalize_chromosome_name, vcf_row_matches_variant,
 };
-use matching::{first_single_base_allele, imputed_reference_observation};
-pub use reader::observe_vcf_snp_with_reader;
+pub use reader::{observe_vcf_snp_with_reader, observe_vcf_variant_with_reader};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedVcfRow {
@@ -206,16 +206,7 @@ pub(crate) fn lookup_indexed_vcf_variants(
         let Some(locus) = choose_variant_locus_for_assembly(variant, detected_assembly) else {
             return Ok(None);
         };
-        let Some(reference) = first_single_base_allele(variant.reference.as_deref()) else {
-            return Ok(None);
-        };
-        let Some(alternate) = first_single_base_allele(variant.alternate.as_deref()) else {
-            return Ok(None);
-        };
-        if !matches!(variant.kind, None | Some(VariantKind::Snp)) {
-            return Ok(None);
-        }
-        indexed_variants.push((idx, variant, locus, reference, alternate));
+        indexed_variants.push((idx, variant, locus));
     }
 
     let tabix_index = alignment::parse_tbi_bytes(&std::fs::read(input_index).map_err(|err| {
@@ -235,13 +226,12 @@ pub(crate) fn lookup_indexed_vcf_variants(
     );
 
     let mut results = vec![VariantObservation::default(); variants.len()];
-    for (idx, variant, locus, reference, alternate) in indexed_variants {
-        let observation = observe_vcf_snp_with_reader(
+    for (idx, variant, locus) in indexed_variants {
+        let observation = observe_vcf_variant_with_reader(
             &mut indexed,
             &backend.path.display().to_string(),
             &locus,
-            reference,
-            alternate,
+            variant,
             variant.rsids.first().cloned(),
             detected_assembly,
         )?;

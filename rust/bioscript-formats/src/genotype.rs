@@ -1219,35 +1219,11 @@ mod tests {
                 ..GenotypeLoadOptions::default()
             },
         };
-        for variant in [
-            VariantSpec::default(),
-            VariantSpec {
-                grch38: Some(locus("1", 10, 10)),
-                alternate: Some("G".to_owned()),
-                kind: Some(VariantKind::Snp),
-                ..VariantSpec::default()
-            },
-            VariantSpec {
-                grch38: Some(locus("1", 10, 10)),
-                reference: Some("AT".to_owned()),
-                alternate: Some("G".to_owned()),
-                kind: Some(VariantKind::Snp),
-                ..VariantSpec::default()
-            },
-            VariantSpec {
-                grch38: Some(locus("1", 10, 10)),
-                reference: Some("A".to_owned()),
-                alternate: Some("G".to_owned()),
-                kind: Some(VariantKind::Deletion),
-                ..VariantSpec::default()
-            },
-        ] {
-            assert!(
-                lookup_indexed_vcf_variants(&indexed, &[variant])
-                    .unwrap()
-                    .is_none()
-            );
-        }
+        assert!(
+            lookup_indexed_vcf_variants(&indexed, &[VariantSpec::default()])
+                .unwrap()
+                .is_none()
+        );
         let err = lookup_indexed_vcf_variants(
             &indexed,
             &[VariantSpec {

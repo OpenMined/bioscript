@@ -149,6 +149,7 @@ version = "0.1.0"
 dependencies = [
  "bioscript-core",
  "bioscript-formats",
+ "getrandom 0.3.4",
  "monty",
 ]
 
@@ -169,13 +170,19 @@ version = "0.1.0"
 dependencies = [
  "bioscript-core",
  "bioscript-formats",
+ "bioscript-runtime",
  "bioscript-schema",
  "console_error_panic_hook",
+ "getrandom 0.3.4",
  "js-sys",
+ "monty",
  "noodles",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "sha2",
  "wasm-bindgen",
+ "zip",
 ]
 
 [[package]]
@@ -648,9 +655,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
