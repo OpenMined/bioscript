@@ -89,7 +89,7 @@ fn delimited_parser_handles_space_delimited_rows_without_headers_and_inline_comm
 
     let store = GenotypeStore::from_file(&path).unwrap();
 
-    assert_eq!(store.get("rsSpace").unwrap().as_deref(), Some("TC"));
+    assert_eq!(store.get("rsSpace").unwrap().as_deref(), Some("CT"));
     let observation = store
         .lookup_variant(&VariantSpec {
             grch38: Some(bioscript_core::GenomicLocus {

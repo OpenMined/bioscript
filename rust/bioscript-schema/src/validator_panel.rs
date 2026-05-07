@@ -397,9 +397,7 @@ fn variant_spec_from_root(root: &Value) -> Result<VariantSpec, String> {
     let grch37 = locus_from_root(root, "grch37")?;
     let grch38 = locus_from_root(root, "grch38")?;
     let reference = scalar_at(root, &["alleles", "ref"]);
-    let alternate = seq_of_strings(root, &["alleles", "observed_alts"])
-        .or_else(|| seq_of_strings(root, &["alleles", "alts"]))
-        .and_then(|alts| alts.first().cloned());
+    let alternate = seq_of_strings(root, &["alleles", "alts"]).and_then(|alts| alts.first().cloned());
     let deletion_length = value_at(root, &["alleles", "deletion_length"])
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok());
@@ -447,4 +445,3 @@ fn locus_from_root(root: &Value, assembly: &str) -> Result<Option<GenomicLocus>,
         end,
     }))
 }
-

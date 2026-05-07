@@ -67,6 +67,7 @@ fn app_variant_binding_match_observation<'a>(
         return observations
             .iter()
             .filter(|observation| !app_variant_ref_mismatch(binding, observation))
+            .filter(|observation| app_binding_chromosome_count_matches(binding, observation))
             .find(|observation| {
                 let dosage = app_observation_allele_dosage(observation, allele);
                 app_binding_matches_dosage(dosage, binding)
@@ -80,9 +81,26 @@ fn app_variant_binding_match_observation<'a>(
     if key.is_empty() {
         return None;
     }
+    if key == "alt" {
+        let expected_alleles = app_binding_expected_values(binding);
+        return observations
+            .iter()
+            .filter(|observation| !app_variant_ref_mismatch(binding, observation))
+            .filter(|observation| app_binding_chromosome_count_matches(binding, observation))
+            .find(|observation| {
+                app_binding_matches_value(observation.get(key), binding)
+                    && expected_alleles
+                        .iter()
+                        .any(|expected| {
+                            app_observation_allele_dosage(observation, expected)
+                                .is_some_and(|dosage| dosage > 0)
+                        })
+            });
+    }
     observations
         .iter()
         .filter(|observation| !app_variant_ref_mismatch(binding, observation))
+        .filter(|observation| app_binding_chromosome_count_matches(binding, observation))
         .find(|observation| app_binding_matches_value(observation.get(key), binding))
 }
 
@@ -90,6 +108,7 @@ fn app_finding_observation_context(observation: &serde_json::Value) -> serde_jso
     serde_json::json!({
         "participant_id": observation.get("participant_id").cloned().unwrap_or(serde_json::Value::Null),
         "rsid": observation.get("rsid").cloned().unwrap_or(serde_json::Value::Null),
+        "gene": observation.get("gene").cloned().unwrap_or(serde_json::Value::Null),
         "ref": observation.get("ref").cloned().unwrap_or(serde_json::Value::Null),
         "alt": observation.get("alt").cloned().unwrap_or(serde_json::Value::Null),
         "genotype_display": observation.get("genotype_display").cloned().unwrap_or(serde_json::Value::Null),
@@ -147,15 +166,15 @@ fn app_observation_allele_dosage(observation: &serde_json::Value, allele: &str) 
     if allele == ref_allele {
         return match zygosity {
             "hom_ref" => Some(2),
-            "het" => Some(1),
-            "hom_alt" => Some(0),
+            "hem_ref" | "het" => Some(1),
+            "hom_alt" | "hem_alt" => Some(0),
             _ => None,
         };
     }
     if allele == alt_allele {
         return match zygosity {
-            "hom_ref" => Some(0),
-            "het" => Some(1),
+            "hom_ref" | "hem_ref" => Some(0),
+            "het" | "hem_alt" => Some(1),
             "hom_alt" => Some(2),
             _ => None,
         };
@@ -174,6 +193,31 @@ fn app_observation_allele_dosage(observation: &serde_json::Value, allele: &str) 
             .ok();
     }
     None
+}
+
+fn app_binding_chromosome_count_matches(
+    binding: &serde_json::Value,
+    observation: &serde_json::Value,
+) -> bool {
+    let Some(expected) = binding
+        .get("chromosome_count")
+        .and_then(serde_json::Value::as_i64)
+    else {
+        return true;
+    };
+    app_observation_chromosome_count(observation).is_some_and(|actual| actual == expected)
+}
+
+fn app_observation_chromosome_count(observation: &serde_json::Value) -> Option<i64> {
+    match observation
+        .get("zygosity")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+    {
+        "hem_ref" | "hem_alt" => Some(1),
+        "hom_ref" | "het" | "hom_alt" => Some(2),
+        _ => None,
+    }
 }
 
 fn app_binding_matches_value(
@@ -201,6 +245,17 @@ fn app_binding_matches_value(
             }),
         _ => false,
     }
+}
+
+fn app_binding_expected_values(binding: &serde_json::Value) -> Vec<String> {
+    let mut values = Vec::new();
+    if let Some(value) = binding.get("value").and_then(value_as_string) {
+        values.push(value.clone());
+    }
+    if let Some(array) = binding.get("values").and_then(serde_json::Value::as_array) {
+        values.extend(array.iter().filter_map(value_as_string));
+    }
+    values
 }
 
 fn app_binding_matches_dosage(dosage: Option<i64>, binding: &serde_json::Value) -> bool {
@@ -290,3 +345,122 @@ fn app_finding_dedupe_key(finding: &serde_json::Value) -> String {
     )
 }
 
+#[cfg(test)]
+mod report_matching_tests {
+    use super::*;
+
+    #[test]
+    fn alt_binding_requires_observed_allele_dosage() {
+        let binding = serde_json::json!({
+            "source": "variant",
+            "key": "alt",
+            "value": "G"
+        });
+        let observations = vec![
+            serde_json::json!({
+                "variant_path": "rs1.yaml",
+                "ref": "A",
+                "alt": "G",
+                "genotype_display": "AA",
+                "zygosity": "hom_ref"
+            }),
+            serde_json::json!({
+                "variant_path": "rs2.yaml",
+                "ref": "A",
+                "alt": "G",
+                "genotype_display": "AG",
+                "zygosity": "het"
+            }),
+        ];
+
+        let matched = app_variant_binding_match_observation(&binding, &observations)
+            .expect("het alt observation should match");
+        assert_eq!(
+            matched
+                .get("genotype_display")
+                .and_then(serde_json::Value::as_str),
+            Some("AG")
+        );
+    }
+
+    #[test]
+    fn alt_in_binding_requires_observed_allele_dosage() {
+        let binding = serde_json::json!({
+            "source": "variant",
+            "key": "alt",
+            "operator": "in",
+            "values": ["G", "T"]
+        });
+        let observations = vec![serde_json::json!({
+            "variant_path": "rs1.yaml",
+            "ref": "A",
+            "alt": "T",
+            "genotype_display": "AT",
+            "zygosity": "het"
+        })];
+
+        assert!(app_variant_binding_match_observation(&binding, &observations).is_some());
+    }
+
+    #[test]
+    fn hemizygous_observations_count_as_single_allele_dosage() {
+        let observations = vec![serde_json::json!({
+            "variant_path": "rs3813929.yaml",
+            "ref": "C",
+            "alt": "T",
+            "genotype": "1",
+            "genotype_display": "T",
+            "zygosity": "hem_alt"
+        })];
+
+        let include_binding = serde_json::json!({
+            "source": "variant",
+            "variant": "rs3813929.yaml",
+            "key": "alt",
+            "value": "T"
+        });
+        assert!(app_variant_binding_match_observation(&include_binding, &observations).is_some());
+
+        let effect_binding = serde_json::json!({
+            "source": "variant",
+            "variant": "rs3813929.yaml",
+            "allele": "T",
+            "operator": "dosage_equals",
+            "value": 1,
+            "chromosome_count": 1
+        });
+        assert!(app_variant_binding_match_observation(&effect_binding, &observations).is_some());
+    }
+
+    #[test]
+    fn chromosome_count_binding_separates_one_x_and_two_x_rows() {
+        let observations = vec![serde_json::json!({
+            "variant_path": "rs3813929.yaml",
+            "ref": "C",
+            "alt": "T",
+            "genotype": "0/1",
+            "genotype_display": "CT",
+            "zygosity": "het"
+        })];
+
+        let one_x_binding = serde_json::json!({
+            "source": "variant",
+            "variant": "rs3813929.yaml",
+            "allele": "T",
+            "operator": "dosage_equals",
+            "value": 1,
+            "chromosome_count": 1
+        });
+        assert!(app_variant_binding_match_observation(&one_x_binding, &observations).is_none());
+
+        let two_x_binding = serde_json::json!({
+            "source": "variant",
+            "variant": "rs3813929.yaml",
+            "allele": "T",
+            "operator": "dosage_equals",
+            "value": 1,
+            "chromosome_count": 2
+        });
+        assert!(app_variant_binding_match_observation(&two_x_binding, &observations).is_some());
+    }
+}

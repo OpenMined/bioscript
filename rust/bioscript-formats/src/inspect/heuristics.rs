@@ -181,10 +181,14 @@ pub(crate) fn detect_source(
         vendor = Some("MyHeritage".to_owned());
         confidence = DetectionConfidence::StrongHeuristic;
         evidence.push("MyHeritage header/export name".to_owned());
-    } else if normalized.contains("sequencing com") && kind == DetectedKind::Vcf {
+    } else if normalized.contains("sequencing com") {
         vendor = Some("Sequencing.com".to_owned());
-        confidence = DetectionConfidence::WeakHeuristic;
-        evidence.push("sequencing.com header text".to_owned());
+        confidence = if kind == DetectedKind::Vcf {
+            DetectionConfidence::WeakHeuristic
+        } else {
+            DetectionConfidence::StrongHeuristic
+        };
+        evidence.push("sequencing.com path/header text".to_owned());
     } else if normalized.contains("carigenetics") || normalized.contains("cari genetics") {
         vendor = Some("CariGenetics".to_owned());
         confidence = DetectionConfidence::StrongHeuristic;
@@ -235,6 +239,8 @@ pub(crate) fn detect_assembly(lower_name: &str, sample_lines: &[String]) -> Opti
     let header = sample_lines.join("\n").to_ascii_lowercase();
     let combined = format!("{lower_name}\n{header}");
     let looks_like_grch38 = combined.contains("build 38")
+        || combined.contains("assembly38")
+        || combined.contains("assembly 38")
         || combined.contains("grch38")
         || combined.contains("hg38")
         || combined.contains("gca_000001405.15")

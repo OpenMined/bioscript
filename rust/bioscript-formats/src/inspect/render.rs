@@ -1,6 +1,9 @@
 use bioscript_core::Assembly;
 
-use super::{DetectedKind, DetectionConfidence, FileContainer, FileInspection};
+use super::{
+    DetectedKind, DetectionConfidence, FileContainer, FileInspection, InferredSex,
+    SexDetectionConfidence,
+};
 
 impl FileInspection {
     #[must_use]
@@ -31,6 +34,23 @@ impl FileInspection {
             "reference_matches\t{}",
             render_bool(self.reference_matches)
         ));
+        if let Some(inferred) = &self.inferred_sex {
+            lines.push(format!(
+                "inferred_sex\t{}",
+                render_inferred_sex(inferred.sex)
+            ));
+            lines.push(format!(
+                "sex_confidence\t{}",
+                render_sex_confidence(inferred.confidence)
+            ));
+            lines.push(format!("sex_method\t{}", inferred.method));
+            lines.push(format!("sex_evidence\t{}", inferred.evidence.join(" | ")));
+        } else {
+            lines.push("inferred_sex\t".to_owned());
+            lines.push("sex_confidence\t".to_owned());
+            lines.push("sex_method\t".to_owned());
+            lines.push("sex_evidence\t".to_owned());
+        }
         if let Some(source) = &self.source {
             lines.push(format!(
                 "vendor\t{}",
@@ -98,5 +118,21 @@ pub(crate) fn render_bool(value: Option<bool>) -> &'static str {
         Some(true) => "true",
         Some(false) => "false",
         None => "",
+    }
+}
+
+pub(crate) fn render_inferred_sex(value: InferredSex) -> &'static str {
+    match value {
+        InferredSex::Male => "male",
+        InferredSex::Female => "female",
+        InferredSex::Unknown => "unknown",
+    }
+}
+
+pub(crate) fn render_sex_confidence(value: SexDetectionConfidence) -> &'static str {
+    match value {
+        SexDetectionConfidence::High => "high",
+        SexDetectionConfidence::Medium => "medium",
+        SexDetectionConfidence::Low => "low",
     }
 }

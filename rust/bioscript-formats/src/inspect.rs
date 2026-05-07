@@ -34,11 +34,13 @@ use bioscript_core::{Assembly, RuntimeError};
 mod heuristics;
 mod io;
 mod render;
+mod sex;
 
 pub(crate) use heuristics::*;
 pub(crate) use io::*;
 #[cfg(test)]
 pub(crate) use render::*;
+pub use sex::{InferredSex, SexDetectionConfidence, SexInference};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileContainer {
@@ -77,6 +79,7 @@ pub struct InspectOptions {
     pub input_index: Option<PathBuf>,
     pub reference_file: Option<PathBuf>,
     pub reference_index: Option<PathBuf>,
+    pub detect_sex: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +95,7 @@ pub struct FileInspection {
     pub has_index: Option<bool>,
     pub index_path: Option<PathBuf>,
     pub reference_matches: Option<bool>,
+    pub inferred_sex: Option<SexInference>,
     pub evidence: Vec<String>,
     pub warnings: Vec<String>,
     pub duration_ms: u128,
@@ -125,6 +129,13 @@ pub fn inspect_bytes(
             &sample_lines,
             options,
         );
+        if options.detect_sex {
+            inspection.inferred_sex = Some(sex::infer_sex_from_zip_bytes(
+                bytes,
+                &selected_entry,
+                inspection.detected_kind,
+            )?);
+        }
         inspection.duration_ms = started.elapsed().as_millis();
         return Ok(inspection);
     }
@@ -163,8 +174,9 @@ pub fn inspect_bytes(
         }
         _ => read_plain_sample_lines_from_bytes(&lower, bytes)?,
     };
-    let source = detect_source(&lower, &sample_lines, detected_kind);
-    let assembly = detect_assembly(&lower, &sample_lines);
+    let inspection_context = inspect_context_name(&lower, options);
+    let source = detect_source(&inspection_context, &sample_lines, detected_kind);
+    let assembly = detect_assembly(&inspection_context, &sample_lines);
     let phased = (detected_kind == DetectedKind::Vcf)
         .then(|| detect_vcf_phasing(&sample_lines))
         .flatten();
@@ -181,6 +193,10 @@ pub fn inspect_bytes(
         .clone()
         .or_else(|| options.reference_index.clone());
     let confidence = classify_confidence(detected_kind, &sample_lines, source.as_ref());
+    let inferred_sex = options
+        .detect_sex
+        .then(|| sex::infer_sex_from_bytes(name, bytes, detected_kind))
+        .transpose()?;
 
     Ok(FileInspection {
         path: path.to_path_buf(),
@@ -194,6 +210,7 @@ pub fn inspect_bytes(
         has_index,
         index_path,
         reference_matches: None,
+        inferred_sex,
         evidence,
         warnings,
         duration_ms: started.elapsed().as_millis(),
@@ -216,6 +233,10 @@ pub fn inspect_file(path: &Path, options: &InspectOptions) -> Result<FileInspect
             &sample_lines,
             options,
         );
+        if options.detect_sex {
+            inspection.inferred_sex =
+                Some(sex::infer_sex_from_path(path, inspection.detected_kind)?);
+        }
         inspection.duration_ms = started.elapsed().as_millis();
         return Ok(inspection);
     }
@@ -254,13 +275,18 @@ pub fn inspect_file(path: &Path, options: &InspectOptions) -> Result<FileInspect
         }
         _ => read_plain_sample_lines(path)?,
     };
-    let source = detect_source(&lower, &sample_lines, detected_kind);
-    let assembly = detect_assembly(&lower, &sample_lines);
+    let inspection_context = inspect_context_name(&lower, options);
+    let source = detect_source(&inspection_context, &sample_lines, detected_kind);
+    let assembly = detect_assembly(&inspection_context, &sample_lines);
     let phased = (detected_kind == DetectedKind::Vcf)
         .then(|| detect_vcf_phasing(&sample_lines))
         .flatten();
     let (has_index, index_path) = detect_index(path, detected_kind, options);
     let confidence = classify_confidence(detected_kind, &sample_lines, source.as_ref());
+    let inferred_sex = options
+        .detect_sex
+        .then(|| sex::infer_sex_from_path(path, detected_kind))
+        .transpose()?;
 
     Ok(FileInspection {
         path: path.to_path_buf(),
@@ -274,6 +300,7 @@ pub fn inspect_file(path: &Path, options: &InspectOptions) -> Result<FileInspect
         has_index,
         index_path,
         reference_matches: None,
+        inferred_sex,
         evidence,
         warnings,
         duration_ms: started.elapsed().as_millis(),
@@ -313,6 +340,11 @@ fn inspect_from_textual_sample(
         evidence.push("genotype-like sampled rows".to_owned());
     }
     let (has_index, index_path) = detect_index(path, detected_kind, options);
+    let inferred_sex = if options.detect_sex {
+        sex::infer_sex_from_text_lines(sample_lines, detected_kind).ok()
+    } else {
+        None
+    };
 
     FileInspection {
         path: path.to_path_buf(),
@@ -326,10 +358,27 @@ fn inspect_from_textual_sample(
         has_index,
         index_path,
         reference_matches: None,
+        inferred_sex,
         evidence,
         warnings: Vec::new(),
         duration_ms: 0,
     }
+}
+
+fn inspect_context_name(lower_name: &str, options: &InspectOptions) -> String {
+    let mut context = lower_name.to_owned();
+    for path in [
+        options.input_index.as_ref(),
+        options.reference_file.as_ref(),
+        options.reference_index.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        context.push('\n');
+        context.push_str(&path.display().to_string().to_ascii_lowercase());
+    }
+    context
 }
 
 #[cfg(test)]

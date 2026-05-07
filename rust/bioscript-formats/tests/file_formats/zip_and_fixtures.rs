@@ -75,7 +75,7 @@ fn zip_genotype_file_is_auto_detected_and_readable() {
 
     let store = GenotypeStore::from_file(&zip_path).unwrap();
     assert_eq!(store.get("rs73885319").unwrap().as_deref(), Some("AG"));
-    assert_eq!(store.get("rs60910145").unwrap().as_deref(), Some("TG"));
+    assert_eq!(store.get("rs60910145").unwrap().as_deref(), Some("GT"));
     assert_eq!(store.get("rs71785313").unwrap().as_deref(), Some("II"));
 }
 
@@ -154,7 +154,7 @@ fn zip_vcf_gz_entry_is_selected_and_read_as_vcf() {
 
     let store = GenotypeStore::from_file(&zip_path).unwrap();
     assert_eq!(store.backend_name(), "vcf");
-    assert_eq!(store.get("rsZipVcfGz").unwrap().as_deref(), Some("GA"));
+    assert_eq!(store.get("rsZipVcfGz").unwrap().as_deref(), Some("AG"));
 }
 
 #[test]

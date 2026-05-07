@@ -9,8 +9,9 @@ use std::{
 };
 
 use bioscript_formats::{
-    GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, InspectOptions, PrepareRequest,
-    inspect_file, prepare_indexes, shell_flags,
+    GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, InferredSex, InspectOptions,
+    PrepareRequest, SexDetectionConfidence, SexInference, inspect_file, prepare_indexes,
+    shell_flags,
 };
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig, StageTiming};
 use bioscript_schema::{
@@ -46,6 +47,8 @@ fn run_cli() -> Result<(), String> {
     normalize_loader_paths(&runtime_root, &mut options.loader);
     let mut cli_timings = prepare_cli_indexes(&runtime_root, &mut options)?;
 
+    let script_path = prepare_package_entrypoint_from_arg(&runtime_root, &script_path)?;
+
     if is_yaml_manifest(&script_path) {
         run_cli_manifest(&runtime_root, &script_path, &options, &mut cli_timings)?;
     } else {
@@ -54,7 +57,7 @@ fn run_cli() -> Result<(), String> {
     Ok(())
 }
 
-const USAGE: &str = "usage: bioscript <script.py|manifest.yaml> [--root <dir>] [--input-file <path>] [--output-file <path>] [--participant-id <id>] [--trace-report <path>] [--timing-report <path>] [--filter key=value] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript report <manifest.yaml> --input-file <path> [--input-file <path>...] --output-dir <dir> [--html] [--root <dir>] [--input-format auto|text|zip|vcf|cram]\n       bioscript validate-variants <path> [--report <file>]\n       bioscript validate-panels <path> [--report <file>]\n       bioscript validate-assays <path> [--report <file>]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|cram] [--cache-dir <path>]\n       bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>]";
+const USAGE: &str = "usage: bioscript <script.py|manifest.yaml|package.zip|https://.../package.zip> [--root <dir>] [--input-file <path>] [--output-file <path>] [--participant-id <id>] [--trace-report <path>] [--timing-report <path>] [--filter key=value] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript report <manifest.yaml|package.zip|https://.../package.zip> --input-file <path> [--input-file <path>...] --output-dir <dir> [--html] [--open] [--root <dir>] [--input-format auto|text|zip|vcf|cram] [--detect-sex] [--sample-sex male|female|unknown] [--analysis-max-duration-ms N]\n       bioscript review <manifest.yaml|package.zip> --cases <cases.yaml> --output-dir <dir> [--html] [--root <dir>] [--filter key=value]\n       bioscript import-package <package.zip|https://.../package.zip> [--root <dir>] [--output-dir <dir>]\n       bioscript validate-variants <path> [--report <file>]\n       bioscript validate-panels <path> [--report <file>]\n       bioscript validate-assays <path> [--report <file>]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|cram] [--cache-dir <path>]\n       bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--detect-sex]";
 
 struct CliOptions {
     script_path: Option<PathBuf>,
@@ -78,6 +81,8 @@ fn dispatch_subcommand(args: &[String]) -> Result<bool, String> {
     let rest = rest.to_vec();
     match first.as_str() {
         "report" => run_app_report(rest).map(|()| true),
+        "review" => run_review_report(rest).map(|()| true),
+        "import-package" => run_import_package(rest).map(|()| true),
         "validate-variants" => run_validate_variants(rest).map(|()| true),
         "validate-panels" => run_validate_panels(rest).map(|()| true),
         "validate-assays" => run_validate_assays(rest).map(|()| true),
@@ -411,4 +416,3 @@ fn write_timing_report(path: &PathBuf, timings: &[StageTiming]) -> Result<(), St
     fs::write(path, output)
         .map_err(|err| format!("failed to write timing report {}: {err}", path.display()))
 }
-

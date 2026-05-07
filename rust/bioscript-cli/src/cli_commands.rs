@@ -88,6 +88,9 @@ fn run_inspect(args: Vec<String>) -> Result<(), String> {
                     iter.next().ok_or("--reference-index requires a path")?,
                 ));
             }
+            "--detect-sex" => {
+                options.detect_sex = true;
+            }
             other if path.is_none() => {
                 path = Some(PathBuf::from(other));
             }
@@ -99,7 +102,7 @@ fn run_inspect(args: Vec<String>) -> Result<(), String> {
 
     let Some(path) = path else {
         return Err(
-            "usage: bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>]"
+            "usage: bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--detect-sex]"
                 .to_owned(),
         );
     };

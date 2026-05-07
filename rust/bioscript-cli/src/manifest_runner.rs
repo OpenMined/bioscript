@@ -79,6 +79,15 @@ fn run_variant_manifest(
     let input_file = input_file.ok_or("manifest execution requires --input-file")?;
     let store = GenotypeStore::from_file_with_options(Path::new(input_file), loader)
         .map_err(|err| err.to_string())?;
+    run_variant_manifest_with_store(runtime_root, manifest, &store, participant_id)
+}
+
+fn run_variant_manifest_with_store(
+    runtime_root: &Path,
+    manifest: &VariantManifest,
+    store: &GenotypeStore,
+    participant_id: Option<&str>,
+) -> Result<BTreeMap<String, String>, String> {
     let observation = store
         .lookup_variant(&manifest.spec)
         .map_err(|err| err.to_string())?;
@@ -103,6 +112,16 @@ fn run_panel_manifest(
     let input_file = input_file.ok_or("manifest execution requires --input-file")?;
     let store = GenotypeStore::from_file_with_options(Path::new(input_file), loader)
         .map_err(|err| err.to_string())?;
+    run_panel_manifest_with_store(runtime_root, panel, &store, participant_id, filters)
+}
+
+fn run_panel_manifest_with_store(
+    runtime_root: &Path,
+    panel: &PanelManifest,
+    store: &GenotypeStore,
+    participant_id: Option<&str>,
+    filters: &[String],
+) -> Result<Vec<BTreeMap<String, String>>, String> {
     let mut rows = Vec::new();
 
     for member in &panel.members {
@@ -115,23 +134,18 @@ fn run_panel_manifest(
             if !matches_filters(&manifest, &resolved, filters) {
                 continue;
             }
-            let observation = store
-                .lookup_variant(&manifest.spec)
-                .map_err(|err| err.to_string())?;
-            rows.push(variant_row(
+            rows.push(run_variant_manifest_with_store(
                 runtime_root,
-                &resolved,
-                &manifest.name,
-                &manifest.tags,
-                &observation,
+                &manifest,
+                store,
                 participant_id,
-            ));
+            )?);
         } else if member.kind == "assay" {
             let assay = load_assay_manifest(&resolved)?;
             rows.extend(run_assay_manifest_with_store(
                 runtime_root,
                 &assay,
-                &store,
+                store,
                 participant_id,
                 filters,
             )?);
@@ -259,6 +273,10 @@ fn variant_row(
         observation
             .depth
             .map_or_else(String::new, |value| value.to_string()),
+    );
+    row.insert(
+        "raw_counts".to_owned(),
+        serde_json::to_string(&observation.raw_counts).unwrap_or_default(),
     );
     row.insert("evidence".to_owned(), observation.evidence.join(" | "));
     row

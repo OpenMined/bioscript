@@ -71,6 +71,10 @@ fn parse_panel_interpretations(root: &Value) -> Result<Vec<PanelInterpretation>,
         };
         interpretations.push(PanelInterpretation {
             id: mapping_required_string(mapping, "id", idx, key)?,
+            label: mapping
+                .get(Value::String("label".to_owned()))
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
             kind: mapping_required_string(mapping, "kind", idx, key)?,
             path: mapping_required_string(mapping, "path", idx, key)?,
             output_format: mapping
@@ -198,4 +202,3 @@ fn mapping_required_string(
         .map(ToOwned::to_owned)
         .ok_or_else(|| format!("{parent}[{idx}].{field} missing or empty"))
 }
-

@@ -29,7 +29,7 @@ fn vcf_coordinate_lookup_normalizes_chr_prefix_and_handles_multiallelic_gt() {
         })
         .unwrap();
 
-    assert_eq!(observation.genotype.as_deref(), Some("GC"));
+    assert_eq!(observation.genotype.as_deref(), Some("CG"));
     assert_eq!(observation.assembly, Some(bioscript_core::Assembly::Grch38));
     assert_eq!(observation.evidence[0], "resolved by locus chr1:1000");
     assert!(
@@ -69,7 +69,7 @@ fn vcf_locus_lookup_handles_deletion_insertion_and_unresolved_evidence() {
             ..VariantSpec::default()
         })
         .unwrap();
-    assert_eq!(deletion.genotype.as_deref(), Some("ID"));
+    assert_eq!(deletion.genotype.as_deref(), Some("DI"));
     assert_eq!(deletion.assembly, Some(bioscript_core::Assembly::Grch37));
     assert_eq!(deletion.evidence[0], "resolved by locus 1:99");
     assert!(

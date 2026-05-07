@@ -116,7 +116,7 @@ fn batch_lookup_query_plan_runs_and_preserves_requested_result_order() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("AG"));
-    assert!(stdout.contains("TC"));
+    assert!(stdout.contains("CT"));
     assert!(stdout.contains("II"));
 }
 
