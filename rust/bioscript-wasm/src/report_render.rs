@@ -129,7 +129,7 @@ pub(super) fn render_app_html_document(
     out.push_str("</section><section id=\"observations\"><h2>Observations</h2>");
     render_observation_table(&mut out, observations, participants.len() > 1);
     out.push_str("</section><section id=\"analysis\"><h2>Analysis</h2>");
-    render_analysis_tables(&mut out, &analysis_outputs, participants.len() > 1);
+    render_analysis_tables(&mut out, &analysis_outputs, observations, participants.len() > 1);
     out.push_str("</section><section id=\"pgx\"><h2>PGx</h2>");
     render_pgx_table(&mut out, &label_findings, &summary_findings);
     out.push_str("</section><section id=\"provenance\"><h2>Provenance</h2>");

@@ -58,7 +58,7 @@ pub(super) fn render_jsonl(rows: &[serde_json::Value]) -> Result<String, JsError
     Ok(out)
 }
 
-fn json_field_as_tsv(value: Option<&serde_json::Value>) -> String {
+pub(super) fn json_field_as_tsv(value: Option<&serde_json::Value>) -> String {
     match value {
         Some(serde_json::Value::Null) | None => String::new(),
         Some(serde_json::Value::String(value)) => value.replace(['\t', '\n'], " "),
