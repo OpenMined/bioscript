@@ -19,6 +19,12 @@ use monty::{MontyObject, ResourceLimits};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+mod report_render;
+mod report_workspace;
+
+use report_render::{app_report_json, match_app_findings, render_app_html_document, AppReportJsonInput};
+use report_workspace::PackageWorkspace;
+
 include!("../../bioscript-cli/src/report_matching.rs");
 include!("../../bioscript-cli/src/report_html_sections.rs");
 include!("../../bioscript-cli/src/report_html_analysis.rs");
