@@ -41,6 +41,7 @@ fn render_observation_table(
     let show_facets = observations
         .iter()
         .any(|observation| !json_field_as_tsv(observation.get("facets")).is_empty());
+    let show_imputed_reference_note = observations.iter().any(observation_is_imputed_vcf_reference);
     let headers = all_headers
         .iter()
         .copied()
@@ -66,6 +67,9 @@ fn render_observation_table(
         out.push_str("</tr>");
     }
     out.push_str("</tbody></table></div>");
+    if show_imputed_reference_note {
+        out.push_str("<p class=\"muted observation-note\">* In variant-only VCF inputs, absent queried variant rows are shown as imputed reference genotypes. This is usually appropriate for variant-only VCFs, but it may be wrong if the VCF omits loci for another reason.</p>");
+    }
 }
 
 fn observation_filter_group(observation: &serde_json::Value) -> &'static str {
@@ -125,6 +129,14 @@ fn observation_row_class(observation: &serde_json::Value) -> &'static str {
 
 fn render_observation_cell(out: &mut String, observation: &serde_json::Value, header: &str) {
     let cell_class = table_column_class(header);
+    if header == "outcome" {
+        let mut value = json_field_as_tsv(observation.get(header));
+        if value == "reference" && observation_is_imputed_vcf_reference(observation) {
+            value.push('*');
+        }
+        let _ = write!(out, "<td class=\"{}\">{}</td>", cell_class, html_escape(&value));
+        return;
+    }
     if header == "ref_alt" {
         class_cell(out, &observation_ref_alt(observation), "mono");
         return;
@@ -182,6 +194,15 @@ fn render_observation_cell(out: &mut String, observation: &serde_json::Value, he
         cell_class,
         html_escape(&json_field_as_tsv(observation.get(header)))
     );
+}
+
+fn observation_is_imputed_vcf_reference(observation: &serde_json::Value) -> bool {
+    observation
+        .get("evidence_raw")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|evidence| {
+            evidence.contains("imputed reference genotype from absent variant-only VCF record")
+        })
 }
 
 fn observation_ref_alt(observation: &serde_json::Value) -> String {

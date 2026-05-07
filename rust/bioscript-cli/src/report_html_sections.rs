@@ -168,6 +168,7 @@ fn render_input_debug(out: &mut String, reports: &[serde_json::Value], show_part
         "Source",
         "Assembly",
         "Inferred Sex",
+        "VCF Ref Imputation",
         "Evidence",
     ]);
     for (idx, header) in headers.iter().enumerate() {
@@ -217,6 +218,7 @@ fn render_input_debug(out: &mut String, reports: &[serde_json::Value], show_part
                 value_str(sex, "method"),
             ]),
         );
+        table_cell(out, input_debug_vcf_imputation(debug));
         table_cell(out, &input_debug_evidence(debug));
         out.push_str("</tr>");
     }
@@ -256,6 +258,7 @@ fn render_input_debug_key_values(out: &mut String, report: &serde_json::Value) {
             value_str(sex, "method"),
         ]),
     );
+    input_debug_kv(out, "VCF ref imputation", input_debug_vcf_imputation(debug));
     input_debug_kv(out, "Evidence", &input_debug_evidence(debug));
     out.push_str("</dl>");
 }
@@ -276,6 +279,18 @@ fn compact_join(values: &[&str]) -> String {
         .copied()
         .collect::<Vec<_>>()
         .join(" / ")
+}
+
+fn input_debug_vcf_imputation(debug: &serde_json::Value) -> &'static str {
+    if debug
+        .get("vcf_missing_reference_imputation")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+    {
+        "used"
+    } else {
+        ""
+    }
 }
 
 fn input_debug_evidence(debug: &serde_json::Value) -> String {
@@ -300,4 +315,3 @@ fn collect_string_array(value: Option<&serde_json::Value>, out: &mut Vec<String>
         }
     }
 }
-

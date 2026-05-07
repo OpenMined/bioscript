@@ -129,6 +129,9 @@ pub(crate) fn detect_source_format(
     if lower.ends_with(".cram") {
         return Ok(GenotypeSourceFormat::Cram);
     }
+    if lower.ends_with(".bam") {
+        return Ok(GenotypeSourceFormat::Bam);
+    }
     if lower.ends_with(".vcf") || lower.ends_with(".vcf.gz") {
         return Ok(GenotypeSourceFormat::Vcf);
     }

@@ -19,6 +19,20 @@ fn app_report_json(input: AppReportJsonInput<'_>) -> serde_json::Value {
             item.get("call_status").and_then(serde_json::Value::as_str) == Some("called")
         })
         .count();
+    let input_debug = input
+        .input_inspection
+        .map(|inspection| {
+            let mut value = input_inspection_json(inspection);
+            if observations_have_imputed_vcf_references(input.observations)
+                && let Some(object) = value.as_object_mut()
+            {
+                object.insert(
+                    "vcf_missing_reference_imputation".to_owned(),
+                    serde_json::Value::Bool(true),
+                );
+            }
+            value
+        });
     serde_json::json!({
         "schema": "bioscript:report:1.0",
         "version": "1.0",
@@ -29,7 +43,7 @@ fn app_report_json(input: AppReportJsonInput<'_>) -> serde_json::Value {
         "input": {
             "file_name": input.input_file.file_name().and_then(|value| value.to_str()).unwrap_or_default(),
             "file_path": input.input_file.display().to_string(),
-            "debug": input.input_inspection.map(input_inspection_json),
+            "debug": input_debug,
         },
         "report_status": if called == input.observations.len() { "complete" } else { "partial" },
         "derived_from": input.observations.iter().filter_map(|item| item.get("variant_key").cloned()).collect::<Vec<_>>(),
@@ -43,6 +57,17 @@ fn app_report_json(input: AppReportJsonInput<'_>) -> serde_json::Value {
             "n_analyses": input.analyses.len(),
             "n_findings_matched": input.findings.len(),
         }
+    })
+}
+
+fn observations_have_imputed_vcf_references(observations: &[serde_json::Value]) -> bool {
+    observations.iter().any(|observation| {
+        observation
+            .get("evidence_raw")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|evidence| {
+                evidence.contains("imputed reference genotype from absent variant-only VCF record")
+            })
     })
 }
 

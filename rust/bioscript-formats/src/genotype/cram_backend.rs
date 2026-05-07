@@ -18,6 +18,7 @@ use crate::alignment;
 use super::GenotypeLoadOptions;
 
 mod indel;
+mod observation;
 mod reader;
 mod store;
 
