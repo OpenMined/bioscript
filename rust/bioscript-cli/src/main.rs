@@ -8,6 +8,7 @@ include!("package.rs");
 include!("report_review.rs");
 include!("report_execution.rs");
 include!("report_observations.rs");
+include!("report_observation_json.rs");
 include!("report_findings.rs");
 include!("report_matching.rs");
 include!("report_output.rs");
