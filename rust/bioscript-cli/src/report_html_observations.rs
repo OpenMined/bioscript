@@ -25,6 +25,8 @@ fn render_observation_table(
         "allele_balance",
         "evidence_type",
         "evidence_raw",
+        "match_quality",
+        "match_notes",
         "facets",
         "assay_id",
         "assay_version",
@@ -41,7 +43,12 @@ fn render_observation_table(
     let show_facets = observations
         .iter()
         .any(|observation| !json_field_as_tsv(observation.get("facets")).is_empty());
+    let show_match_quality = observations.iter().any(|observation| {
+        !json_field_as_tsv(observation.get("match_quality")).is_empty()
+            || !json_field_as_tsv(observation.get("match_notes")).is_empty()
+    });
     let show_imputed_reference_note = observations.iter().any(observation_is_imputed_vcf_reference);
+    let show_weak_indel_note = observations.iter().any(observation_is_weak_indel_match);
     let headers = all_headers
         .iter()
         .copied()
@@ -50,6 +57,9 @@ fn render_observation_table(
             show_counts || !matches!(*header, "ref_count" | "alt_count" | "depth" | "allele_balance")
         })
         .filter(|header| show_genotype_quality || *header != "genotype_quality")
+        .filter(|header| {
+            show_match_quality || !matches!(*header, "match_quality" | "match_notes")
+        })
         .filter(|header| show_facets || *header != "facets")
         .collect::<Vec<_>>();
     render_table_start(out, "observations-table", &headers);
@@ -69,6 +79,9 @@ fn render_observation_table(
     out.push_str("</tbody></table></div>");
     if show_imputed_reference_note {
         out.push_str("<p class=\"muted observation-note\">* In variant-only VCF inputs, absent queried variant rows are shown as imputed reference genotypes. This is usually appropriate for variant-only VCFs, but it may be wrong if the VCF omits loci for another reason.</p>");
+    }
+    if show_weak_indel_note {
+        out.push_str("<p class=\"muted observation-note\">* Indel calls from consumer genotype files are weak matches: the file reports an insertion/deletion token at the marker, but does not provide sequence-resolved evidence for the exact deletion allele.</p>");
     }
 }
 
@@ -131,7 +144,9 @@ fn render_observation_cell(out: &mut String, observation: &serde_json::Value, he
     let cell_class = table_column_class(header);
     if header == "outcome" {
         let mut value = json_field_as_tsv(observation.get(header));
-        if value == "reference" && observation_is_imputed_vcf_reference(observation) {
+        if (value == "reference" && observation_is_imputed_vcf_reference(observation))
+            || (value == "variant" && observation_is_weak_indel_match(observation))
+        {
             value.push('*');
         }
         let _ = write!(out, "<td class=\"{}\">{}</td>", cell_class, html_escape(&value));
@@ -203,6 +218,13 @@ fn observation_is_imputed_vcf_reference(observation: &serde_json::Value) -> bool
         .is_some_and(|evidence| {
             evidence.contains("imputed reference genotype from absent variant-only VCF record")
         })
+}
+
+fn observation_is_weak_indel_match(observation: &serde_json::Value) -> bool {
+    observation
+        .get("match_quality")
+        .and_then(serde_json::Value::as_str)
+        == Some("weak")
 }
 
 fn observation_ref_alt(observation: &serde_json::Value) -> String {

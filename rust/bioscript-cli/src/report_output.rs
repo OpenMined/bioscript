@@ -301,6 +301,7 @@ fn write_app_html(
     );
     let label_findings = collect_report_findings(reports, "bioscript:pgx-label:1.0");
     let summary_findings = collect_report_findings(reports, "bioscript:pgx-summary:1.0");
+    let has_pgx_findings = !label_findings.is_empty() || !summary_findings.is_empty();
     let analysis_outputs = collect_report_analyses(reports);
     let participants = collect_report_participants(reports);
     render_report_manifest_header(&mut out, reports);
@@ -313,7 +314,11 @@ fn write_app_html(
         summary_findings.len()
     );
     render_participant_filter(&mut out, &participants);
-    out.push_str("<nav class=\"nav\"><a href=\"#input-info\">Input</a><a href=\"#observations\">Observations</a><a href=\"#analysis\">Analysis</a><a href=\"#pgx\">PGx</a><a href=\"#provenance\">Provenance</a><a href=\"#source\">Source</a><a href=\"#json\">Raw JSON</a></nav>");
+    out.push_str("<nav class=\"nav\"><a href=\"#input-info\">Input</a><a href=\"#observations\">Observations</a><a href=\"#analysis\">Analysis</a>");
+    if has_pgx_findings {
+        out.push_str("<a href=\"#pgx\">PGx</a>");
+    }
+    out.push_str("<a href=\"#provenance\">Provenance</a><a href=\"#source\">Source</a><a href=\"#json\">Raw JSON</a></nav>");
     out.push_str("<section id=\"input-info\"><h2>Input</h2>");
     render_input_debug(&mut out, reports, participants.len() > 1);
     out.push_str("</section>");
@@ -321,11 +326,18 @@ fn write_app_html(
     render_observation_table(&mut out, observations, participants.len() > 1);
     out.push_str("</section>");
     out.push_str("<section id=\"analysis\"><h2>Analysis</h2>");
-    render_analysis_tables(&mut out, &analysis_outputs, participants.len() > 1);
+    render_analysis_tables(
+        &mut out,
+        &analysis_outputs,
+        observations,
+        participants.len() > 1,
+    );
     out.push_str("</section>");
-    out.push_str("<section id=\"pgx\"><h2>PGx</h2>");
-    render_pgx_table(&mut out, &label_findings, &summary_findings);
-    out.push_str("</section>");
+    if has_pgx_findings {
+        out.push_str("<section id=\"pgx\"><h2>PGx</h2>");
+        render_pgx_table(&mut out, &label_findings, &summary_findings);
+        out.push_str("</section>");
+    }
     out.push_str("<section id=\"provenance\"><h2>Provenance</h2>");
     render_provenance_links(&mut out, reports);
     out.push_str("</section>");

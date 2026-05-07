@@ -31,12 +31,22 @@ pub(super) fn imputed_reference_observation(
     inferred_sex: Option<InferredSex>,
     missing_evidence: &str,
 ) -> Option<VariantObservation> {
-    if !matches!(variant.kind, None | Some(VariantKind::Snp)) {
-        return None;
-    }
-    let reference = first_single_base_allele(variant.reference.as_deref())?;
-    first_single_base_allele(variant.alternate.as_deref())?;
-    let genotype = reference_genotype_for_locus(reference, locus, inferred_sex);
+    let genotype = match variant.kind {
+        None | Some(VariantKind::Snp) => {
+            let reference = first_single_base_allele(variant.reference.as_deref())?;
+            first_single_base_allele(variant.alternate.as_deref())?;
+            reference_genotype_for_locus(reference, locus, inferred_sex)
+        }
+        Some(VariantKind::Deletion) => "II".to_owned(),
+        Some(VariantKind::Insertion | VariantKind::Indel) => {
+            let reference = variant.reference.as_deref()?;
+            let alternate = variant.alternate.as_deref()?;
+            let alternates = [alternate];
+            let token = super::super::vcf_tokens::vcf_reference_token(reference, &alternates);
+            format!("{token}{token}")
+        }
+        _ => return None,
+    };
     let evidence_prefix = if missing_evidence.contains(label) {
         missing_evidence.to_owned()
     } else {

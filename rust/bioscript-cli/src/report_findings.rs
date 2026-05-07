@@ -274,21 +274,69 @@ mod report_observations_tests {
     }
 
     #[test]
+    fn deletion_copy_number_calls_are_normalized_from_insertion_deletion_tokens() {
+        assert_eq!(
+            normalize_app_genotype(
+                "DI",
+                "TTATAA",
+                "<DEL:6>",
+                Some(bioscript_core::VariantKind::Deletion),
+                "22",
+                None
+            ),
+            ("0/1".to_owned(), "het".to_owned())
+        );
+    }
+
+    #[test]
+    fn cram_long_deletion_copy_number_calls_are_displayed_as_insertion_deletion_tokens() {
+        let mut row = BTreeMap::new();
+        row.insert("backend".to_owned(), "cram".to_owned());
+        let manifest = bioscript_schema::VariantManifest {
+            path: std::path::PathBuf::new(),
+            name: "apol1_g2".to_owned(),
+            tags: Vec::new(),
+            spec: bioscript_core::VariantSpec {
+                reference: Some("TTATAA".to_owned()),
+                alternate: Some("<DEL:6>".to_owned()),
+                kind: Some(bioscript_core::VariantKind::Deletion),
+                ..bioscript_core::VariantSpec::default()
+            },
+        };
+
+        assert_eq!(
+            deletion_copy_number_display(&row, &manifest, Some(53), Some(0)).as_deref(),
+            Some("II")
+        );
+        assert_eq!(
+            normalize_app_genotype(
+                "II",
+                "TTATAA",
+                "<DEL:6>",
+                Some(bioscript_core::VariantKind::Deletion),
+                "22",
+                None
+            ),
+            ("0/0".to_owned(), "hom_ref".to_owned())
+        );
+    }
+
+    #[test]
     fn single_allele_sex_chromosome_calls_are_treated_as_hemizygous() {
         assert_eq!(
-            normalize_app_genotype("G", "C", "G", "X", None),
+            normalize_app_genotype("G", "C", "G", None, "X", None),
             ("1".to_owned(), "hem_alt".to_owned())
         );
         assert_eq!(
-            normalize_app_genotype("C", "C", "G", "chrX", None),
+            normalize_app_genotype("C", "C", "G", None, "chrX", None),
             ("0".to_owned(), "hem_ref".to_owned())
         );
         assert_eq!(
-            normalize_app_genotype("G", "C", "G", "1", None),
+            normalize_app_genotype("G", "C", "G", None, "1", None),
             ("G".to_owned(), "unknown".to_owned())
         );
         assert_eq!(
-            normalize_app_genotype("GG", "C", "G", "X", None),
+            normalize_app_genotype("GG", "C", "G", None, "X", None),
             ("1/1".to_owned(), "hom_alt".to_owned())
         );
     }
@@ -302,11 +350,11 @@ mod report_observations_tests {
             evidence: vec!["called_y_snps=1200".to_owned()],
         };
         assert_eq!(
-            normalize_app_genotype("GG", "C", "G", "X", Some(&inferred_sex)),
+            normalize_app_genotype("GG", "C", "G", None, "X", Some(&inferred_sex)),
             ("1".to_owned(), "hem_alt".to_owned())
         );
         assert_eq!(
-            normalize_app_genotype("CC", "C", "G", "chrX", Some(&inferred_sex)),
+            normalize_app_genotype("CC", "C", "G", None, "chrX", Some(&inferred_sex)),
             ("0".to_owned(), "hem_ref".to_owned())
         );
     }

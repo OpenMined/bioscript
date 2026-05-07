@@ -32,6 +32,8 @@ fn is_debug_column(header: &str) -> bool {
             | "genotype_quality"
             | "evidence_type"
             | "evidence_raw"
+            | "match_quality"
+            | "match_notes"
             | "assay_id"
             | "assay_version"
             | "variant_key"
@@ -69,6 +71,8 @@ fn table_header_label(header: &str) -> String {
         "evidence_type" => "Evidence Type".to_owned(),
         "source" => "Source".to_owned(),
         "evidence_raw" => "Evidence Raw".to_owned(),
+        "match_quality" => "Match Quality".to_owned(),
+        "match_notes" => "Match Notes".to_owned(),
         "facets" => "Facets".to_owned(),
         "assay_id" => "Assay ID".to_owned(),
         "assay_version" => "Assay Version".to_owned(),
