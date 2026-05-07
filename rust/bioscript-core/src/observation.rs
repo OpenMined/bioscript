@@ -89,10 +89,12 @@ pub struct ObservationRecord {
     pub outcome: ObservationOutcome,
     pub evidence_type: Option<EvidenceType>,
     pub evidence_raw: Option<String>,
+    pub match_quality: Option<String>,
+    pub match_notes: Option<String>,
     pub facets: Option<String>,
 }
 
-pub const OBSERVATION_TSV_HEADERS: [&str; 27] = [
+pub const OBSERVATION_TSV_HEADERS: [&str; 29] = [
     "participant_id",
     "assay_id",
     "assay_version",
@@ -119,5 +121,7 @@ pub const OBSERVATION_TSV_HEADERS: [&str; 27] = [
     "outcome",
     "evidence_type",
     "evidence_raw",
+    "match_quality",
+    "match_notes",
     "facets",
 ];

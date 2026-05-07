@@ -1,6 +1,7 @@
 fn render_analysis_tables(
     out: &mut String,
     analyses: &[serde_json::Value],
+    observations: &[serde_json::Value],
     show_participant_id: bool,
 ) {
     if analyses.is_empty() {
@@ -10,6 +11,7 @@ fn render_analysis_tables(
     for (index, analysis) in analyses.iter().enumerate() {
         let table_id = format!("analysis-table-{index}");
         let title = analysis_title(analysis);
+        let weak_indel_dependency = analysis_depends_on_weak_observation(analysis, observations);
         let row_count = analysis
             .get("rows")
             .and_then(serde_json::Value::as_array)
@@ -37,6 +39,7 @@ fn render_analysis_tables(
             out.push_str("<h4>Results</h4>");
             render_analysis_key_values(out, analysis, &rows[0], &headers);
             render_analysis_notes(out, &notes);
+            render_weak_indel_analysis_note(out, weak_indel_dependency);
             out.push_str("</div></details>");
             continue;
         }
@@ -57,6 +60,7 @@ fn render_analysis_tables(
         }
         render_table_end(out);
         render_analysis_notes(out, &notes);
+        render_weak_indel_analysis_note(out, weak_indel_dependency);
         out.push_str("</div></details>");
     }
 }
@@ -182,7 +186,7 @@ fn render_analysis_value(key: &str, value: &str) -> String {
             html_escape(value)
         );
     }
-    if key.ends_with("_status") || key.ends_with("_outcome") {
+    if is_analysis_badge_key(key) {
         format!(
             "<span class=\"analysis-badge {}\">{}</span>",
             analysis_badge_class(value),
@@ -191,6 +195,10 @@ fn render_analysis_value(key: &str, value: &str) -> String {
     } else {
         html_escape(value)
     }
+}
+
+fn is_analysis_badge_key(key: &str) -> bool {
+    key.ends_with("_status") || key.ends_with("_outcome")
 }
 
 fn analysis_badge_class(value: &str) -> &'static str {
@@ -212,6 +220,49 @@ fn render_analysis_notes(out: &mut String, notes: &[String]) {
         let _ = write!(out, "<p>{}</p>", html_escape(note));
     }
     out.push_str("</div>");
+}
+
+fn render_weak_indel_analysis_note(out: &mut String, weak_indel_dependency: bool) {
+    if !weak_indel_dependency {
+        return;
+    }
+    out.push_str("<div class=\"analysis-notes\"><h4>Notes</h4><p>* Result depends on a weak indel match from a consumer genotype file.</p></div>");
+}
+
+fn analysis_depends_on_weak_observation(
+    analysis: &serde_json::Value,
+    observations: &[serde_json::Value],
+) -> bool {
+    let weak_paths = observations
+        .iter()
+        .filter(|observation| analysis_observation_is_weak_indel_match(observation))
+        .filter_map(|observation| {
+            observation
+                .get("variant_path")
+                .and_then(serde_json::Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    if weak_paths.is_empty() {
+        return false;
+    }
+    analysis
+        .get("derived_from")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .any(|derived| {
+            weak_paths
+                .iter()
+                .any(|path| path.ends_with(derived) || derived.ends_with(path))
+        })
+}
+
+fn analysis_observation_is_weak_indel_match(observation: &serde_json::Value) -> bool {
+    observation
+        .get("match_quality")
+        .and_then(serde_json::Value::as_str)
+        == Some("weak")
 }
 
 fn render_analysis_logic(out: &mut String, analysis: &serde_json::Value) {
@@ -249,4 +300,3 @@ fn render_analysis_logic(out: &mut String, analysis: &serde_json::Value) {
     }
     out.push_str("</div>");
 }
-

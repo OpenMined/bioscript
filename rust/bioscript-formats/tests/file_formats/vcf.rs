@@ -152,15 +152,50 @@ fn vcf_missing_locus_defaults_to_imputed_reference_with_sex_aware_ploidy() {
                 kind: Some(VariantKind::Snp),
                 ..VariantSpec::default()
             },
+            VariantSpec {
+                grch38: Some(bioscript_core::GenomicLocus {
+                    chrom: "1".to_owned(),
+                    start: 40,
+                    end: 45,
+                }),
+                reference: Some("TTATAA".to_owned()),
+                alternate: Some("<DEL:6>".to_owned()),
+                kind: Some(VariantKind::Deletion),
+                deletion_length: Some(6),
+                ..VariantSpec::default()
+            },
+            VariantSpec {
+                grch38: Some(bioscript_core::GenomicLocus {
+                    chrom: "1".to_owned(),
+                    start: 50,
+                    end: 50,
+                }),
+                reference: Some("A".to_owned()),
+                alternate: Some("AT".to_owned()),
+                kind: Some(VariantKind::Insertion),
+                ..VariantSpec::default()
+            },
         ])
         .unwrap();
 
     assert_eq!(observations[0].genotype.as_deref(), Some("CC"));
     assert_eq!(observations[1].genotype.as_deref(), Some("G"));
+    assert_eq!(observations[2].genotype.as_deref(), Some("II"));
+    assert_eq!(observations[3].genotype.as_deref(), Some("DD"));
     assert!(
         observations[0].evidence[0].contains("imputed reference genotype"),
         "{:?}",
         observations[0].evidence
+    );
+    assert!(
+        observations[2].evidence[0].contains("imputed reference genotype"),
+        "{:?}",
+        observations[2].evidence
+    );
+    assert!(
+        observations[3].evidence[0].contains("imputed reference genotype"),
+        "{:?}",
+        observations[3].evidence
     );
 }
 

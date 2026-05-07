@@ -16,7 +16,7 @@ fn app_observation_from_manifest_row(
     let ref_allele = manifest.spec.reference.clone().unwrap_or_default();
     let reportable_alt = manifest.spec.alternate.clone().unwrap_or_default();
     let observed_alt_alleles = variant_observed_alt_alleles(&manifest_path)?;
-    let genotype_display = row
+    let mut genotype_display = row
         .get("genotype")
         .filter(|value| !value.is_empty())
         .cloned()
@@ -25,6 +25,12 @@ fn app_observation_from_manifest_row(
     let depth = parse_optional_u32(row.get("depth"));
     let ref_count = parse_optional_u32(row.get("ref_count"));
     let alt_count = parse_optional_u32(row.get("alt_count"));
+    if let Some(normalized_display) =
+        deletion_copy_number_display(row, &manifest, depth, alt_count)
+    {
+        genotype_display = normalized_display;
+    }
+    let weak_indel_match = is_weak_delimited_indel_match(row, &manifest, &genotype_display);
     let allele_balance = match (alt_count, depth) {
         (Some(alt_count), Some(depth)) if depth > 0 => {
             Some(f64::from(alt_count) / f64::from(depth))
@@ -51,6 +57,7 @@ fn app_observation_from_manifest_row(
         &genotype_display,
         &ref_allele,
         &reportable_alt,
+        manifest.spec.kind,
         &chrom,
         inferred_sex,
     );
@@ -65,87 +72,36 @@ fn app_observation_from_manifest_row(
     );
     let evidence_raw = observation_evidence_raw(row, &chrom, inferred_sex);
     let source = variant_primary_source(&manifest_path)?;
-    Ok(serde_json::json!({
-        "participant_id": row.get("participant_id").cloned().unwrap_or_default(),
-        "assay_id": assay_id,
-        "assay_version": "1.0",
-        "variant_key": manifest.name,
-        "variant_path": row_path,
-        "rsid": row.get("matched_rsid").filter(|value| !value.is_empty()).cloned().or_else(|| manifest.spec.rsids.first().cloned()),
-        "gene": gene,
-        "assembly": if assembly.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(assembly.to_uppercase()) },
-        "chrom": chrom,
-        "pos_start": locus.map_or(serde_json::Value::Null, |locus| serde_json::Value::from(locus.start)),
-        "pos_end": locus.map_or(serde_json::Value::Null, |locus| serde_json::Value::from(locus.end)),
-        "ref": ref_allele,
-        "alt": reportable_alt,
-        "kind": manifest.spec.kind.map_or("unknown".to_owned(), |kind| format!("{kind:?}").to_lowercase()),
-        "match_status": if row.get("matched_rsid").is_some_and(|value| !value.is_empty()) || !genotype_display.is_empty() { "found" } else { "not_found" },
-        "coverage_status": depth.map_or("covered", |depth| if depth > 0 { "covered" } else { "not_covered" }),
-        "call_status": call.status,
-        "genotype": genotype,
-        "genotype_display": call.reported_genotype_display,
-        "zygosity": zygosity,
-        "ref_count": ref_count,
-        "alt_count": alt_count,
-        "depth": depth,
-        "genotype_quality": serde_json::Value::Null,
-        "allele_balance": allele_balance,
-        "outcome": call.outcome,
-        "evidence_type": if row.get("backend").is_some_and(|value| value == "cram") { "mpileup" } else { "genotype_file" },
-        "evidence_raw": evidence_raw,
-        "source": source,
-        "facets": observation_facets(non_reportable_status, &observed_alt_alleles),
+    let kind = manifest
+        .spec
+        .kind
+        .map_or("unknown".to_owned(), |kind| format!("{kind:?}").to_lowercase());
+    Ok(render_app_observation_json(AppObservationJson {
+        allele_balance,
+        alt_count,
+        assay_id: assay_id.to_owned(),
+        assembly,
+        call,
+        chrom,
+        depth,
+        evidence_raw,
+        gene,
+        genotype,
+        genotype_display,
+        kind,
+        locus: locus.cloned(),
+        manifest,
+        non_reportable_status,
+        observed_alt_alleles,
+        ref_allele,
+        ref_count,
+        reportable_alt,
+        row: row.clone(),
+        row_path,
+        source,
+        weak_indel_match,
+        zygosity,
     }))
-}
-
-struct ObservationCallValues {
-    outcome: &'static str,
-    status: &'static str,
-    reported_genotype_display: String,
-}
-
-fn observation_call_values(
-    depth: Option<u32>,
-    non_reportable_status: Option<&'static str>,
-    genotype: &str,
-    zygosity: &str,
-    genotype_display: &str,
-) -> ObservationCallValues {
-    let outcome = if depth == Some(0) {
-        "not_covered"
-    } else if non_reportable_status == Some("observed_alt") {
-        "observed_alt"
-    } else if non_reportable_status == Some("unknown_alt") {
-        "unknown_alt"
-    } else if genotype == "./." {
-        "no_call"
-    } else if zygosity == "hom_ref" || zygosity == "hem_ref" {
-        "reference"
-    } else if zygosity == "het" || zygosity == "hom_alt" || zygosity == "hem_alt" {
-        "variant"
-    } else {
-        "unknown"
-    };
-    let status = if matches!(outcome, "observed_alt" | "unknown_alt") {
-        outcome
-    } else if genotype == "./." {
-        "no_call"
-    } else {
-        "called"
-    };
-    let reported_genotype_display = if matches!(zygosity, "hem_ref" | "hem_alt") {
-        hemizygous_display_genotype(genotype_display)
-    } else if genotype_display.is_empty() && matches!(outcome, "no_call" | "not_covered") {
-        "??".to_owned()
-    } else {
-        genotype_display.to_owned()
-    };
-    ObservationCallValues {
-        outcome,
-        status,
-        reported_genotype_display,
-    }
 }
 
 fn assembly_row_value(assembly: bioscript_core::Assembly) -> String {
@@ -160,6 +116,35 @@ fn hemizygous_display_genotype(display: &str) -> String {
         .chars()
         .find(char::is_ascii_alphabetic)
         .map_or_else(|| display.to_owned(), |allele| allele.to_string())
+}
+
+fn deletion_copy_number_display(
+    row: &BTreeMap<String, String>,
+    manifest: &bioscript_schema::VariantManifest,
+    depth: Option<u32>,
+    alt_count: Option<u32>,
+) -> Option<String> {
+    if !matches!(manifest.spec.kind, Some(bioscript_core::VariantKind::Deletion)) {
+        return None;
+    }
+    if row.get("backend").map(String::as_str) != Some("cram") {
+        return None;
+    }
+    if manifest.spec.reference.as_deref().unwrap_or_default().len() <= 1 {
+        return None;
+    }
+    let depth = depth?;
+    if depth == 0 {
+        return None;
+    }
+    let alt_fraction = f64::from(alt_count.unwrap_or(0)) / f64::from(depth);
+    if alt_fraction >= 0.8 {
+        Some("DD".to_owned())
+    } else if alt_fraction <= 0.2 {
+        Some("II".to_owned())
+    } else {
+        Some("DI".to_owned())
+    }
 }
 
 fn variant_primary_source(path: &Path) -> Result<serde_json::Value, String> {
@@ -236,11 +221,21 @@ fn normalize_app_genotype(
     display: &str,
     ref_allele: &str,
     alt_allele: &str,
+    kind: Option<bioscript_core::VariantKind>,
     chrom: &str,
     inferred_sex: Option<&SexInference>,
 ) -> (String, String) {
     if display.is_empty() {
         return ("./.".to_owned(), "unknown".to_owned());
+    }
+    if matches!(kind, Some(bioscript_core::VariantKind::Deletion))
+        && ref_allele.len() != 1
+        && display
+            .chars()
+            .filter(char::is_ascii_alphabetic)
+            .all(|allele| matches!(allele.to_ascii_uppercase(), 'I' | 'D'))
+    {
+        return normalize_app_genotype(display, "I", "D", None, chrom, inferred_sex);
     }
     let alleles: Vec<char> = display.chars().filter(char::is_ascii_alphabetic).collect();
     if ref_allele.len() != 1 || alt_allele.len() != 1 {
@@ -415,21 +410,44 @@ fn classify_non_reportable_alleles(
     }
 }
 
+fn is_weak_delimited_indel_match(
+    row: &BTreeMap<String, String>,
+    manifest: &bioscript_schema::VariantManifest,
+    genotype_display: &str,
+) -> bool {
+    if !matches!(manifest.spec.kind, Some(bioscript_core::VariantKind::Deletion)) {
+        return false;
+    }
+    if !matches!(row.get("backend").map(String::as_str), Some("text" | "zip")) {
+        return false;
+    }
+    if manifest.spec.reference.as_deref().unwrap_or_default().len() <= 1 {
+        return false;
+    }
+    genotype_display
+        .chars()
+        .filter(char::is_ascii_alphabetic)
+        .all(|allele| matches!(allele.to_ascii_uppercase(), 'I' | 'D'))
+}
+
 fn observation_facets(
     non_reportable_status: Option<&str>,
     observed_alts: &[String],
 ) -> serde_json::Value {
-    let Some(status) = non_reportable_status else {
-        return serde_json::Value::Null;
-    };
-    let mut facets = vec![status.to_owned()];
-    if status == "observed_alt" && !observed_alts.is_empty() {
-        facets.push(format!("known_observed_alts={}", observed_alts.join(",")));
+    let mut facets = Vec::new();
+    if let Some(status) = non_reportable_status {
+        facets.push(status.to_owned());
+        if status == "observed_alt" && !observed_alts.is_empty() {
+            facets.push(format!("known_observed_alts={}", observed_alts.join(",")));
+        }
     }
-    serde_json::Value::String(facets.join(";"))
+    if facets.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(facets.join(";"))
+    }
 }
 
 fn parse_optional_u32(value: Option<&String>) -> Option<u32> {
     value.and_then(|value| value.parse::<u32>().ok())
 }
-

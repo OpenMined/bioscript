@@ -1234,13 +1234,6 @@ mod tests {
                 kind: Some(VariantKind::Snp),
                 ..VariantSpec::default()
             },
-            VariantSpec {
-                grch38: Some(locus("1", 10, 10)),
-                reference: Some("A".to_owned()),
-                alternate: Some("G".to_owned()),
-                kind: Some(VariantKind::Deletion),
-                ..VariantSpec::default()
-            },
         ] {
             assert!(
                 lookup_indexed_vcf_variants(&indexed, &[variant])
