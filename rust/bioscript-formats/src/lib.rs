@@ -18,7 +18,7 @@ pub use genotype::{
     observe_cram_indel_with_reader, observe_cram_snp_with_reader, observe_vcf_snp_with_reader,
 };
 pub use inspect::{
-    DetectedKind, DetectionConfidence, FileContainer, FileInspection, InspectOptions,
-    SourceMetadata, inspect_bytes, inspect_file,
+    DetectedKind, DetectionConfidence, FileContainer, FileInspection, InferredSex, InspectOptions,
+    SexDetectionConfidence, SexInference, SourceMetadata, inspect_bytes, inspect_file,
 };
 pub use prepare::{PrepareRequest, PreparedPaths, prepare_indexes, shell_flags};

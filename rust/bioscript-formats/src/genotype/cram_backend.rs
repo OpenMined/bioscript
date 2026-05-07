@@ -117,7 +117,25 @@ pub(crate) fn infer_snp_genotype(
     } else if alt_fraction <= 0.2 {
         Some(format!("{reference}{reference}"))
     } else {
-        Some(format!("{reference}{alternate}"))
+        Some(unphased_allele_pair(reference, alternate))
+    }
+}
+
+fn unphased_allele_pair(left: char, right: char) -> String {
+    let mut alleles = [left.to_ascii_uppercase(), right.to_ascii_uppercase()];
+    alleles.sort_by_key(|allele| allele_sort_rank(*allele));
+    alleles.iter().collect()
+}
+
+fn allele_sort_rank(allele: char) -> u8 {
+    match allele.to_ascii_uppercase() {
+        'A' => 0,
+        'C' => 1,
+        'G' => 2,
+        'T' => 3,
+        'I' => 4,
+        'D' => 5,
+        _ => 99,
     }
 }
 
@@ -161,8 +179,17 @@ pub(crate) fn infer_copy_number_genotype(
     } else if alt_fraction <= 0.2 {
         Some(format!("{reference}{reference}"))
     } else {
-        Some(format!("{reference}{alternate}"))
+        Some(sorted_unphased_tokens(reference, alternate))
     }
+}
+
+fn sorted_unphased_tokens(reference: &str, alternate: &str) -> String {
+    let mut alleles = [
+        reference.to_ascii_uppercase(),
+        alternate.to_ascii_uppercase(),
+    ];
+    alleles.sort_by_key(|allele| allele.chars().next().map_or(u8::MAX, allele_sort_rank));
+    alleles.concat()
 }
 
 pub(crate) fn describe_copy_number_decision_rule(

@@ -198,6 +198,10 @@ pub(crate) fn variant_row(
             .depth
             .map_or_else(String::new, |value| value.to_string()),
     );
+    row.insert(
+        "raw_counts".to_owned(),
+        serde_json::to_string(&observation.raw_counts).unwrap_or_default(),
+    );
     row.insert("evidence".to_owned(), observation.evidence.join(" | "));
     row
 }

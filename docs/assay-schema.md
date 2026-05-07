@@ -86,6 +86,7 @@ Rules:
 - `derived_from` lists the variant YAML files used by the interpretation
 - `emits` is optional but recommended so report generators know which output columns to display and how to label them
 - `logic` is optional; use `logic.description` and `logic.source.url` to document where the script's derivation rules came from
+- Analysis rows may emit `notes` or `report_notes` as a reporting convention. HTML reports render those notes below the analysis table and omit them from the table columns; this avoids a manifest-level template language while still letting the script build human-readable text from computed values.
 
 ## Findings
 

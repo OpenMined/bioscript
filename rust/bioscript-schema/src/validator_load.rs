@@ -159,6 +159,7 @@ pub fn load_panel_manifest(path: &Path) -> Result<PanelManifest, String> {
     Ok(PanelManifest {
         path: path.to_path_buf(),
         name: required_non_empty_string(&value, &["name"])?,
+        label: scalar_at(&value, &["label"]),
         tags: seq_of_strings(&value, &["tags"]).unwrap_or_default(),
         permissions,
         downloads,

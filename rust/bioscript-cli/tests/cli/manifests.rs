@@ -239,6 +239,7 @@ members:
     assert!(!stdout.contains("example-rs60910145"));
 }
 
+
 #[test]
 fn panel_manifest_filters_by_kind_tag_path_and_rejects_unknown_filter_keys() {
     let root = repo_root();

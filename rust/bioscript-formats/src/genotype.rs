@@ -556,6 +556,10 @@ mod tests {
             infer_snp_genotype('A', 'G', 5, 5, 10).as_deref(),
             Some("AG")
         );
+        assert_eq!(
+            infer_snp_genotype('G', 'A', 5, 5, 10).as_deref(),
+            Some("AG")
+        );
         assert!(describe_snp_decision_rule('A', 'G', 0, 0, 0).contains("no covering reads"));
         assert!(describe_snp_decision_rule('A', 'G', 0, 0, 3).contains("no reads matched"));
         assert!(describe_snp_decision_rule('A', 'G', 2, 8, 10).contains("alt_fraction=0.800"));
@@ -604,6 +608,9 @@ mod tests {
         assert_eq!(strip_inline_comment("AG // note"), "AG");
         assert_eq!(normalize_genotype("n/a"), "--");
         assert_eq!(normalize_genotype("a / g"), "AG");
+        assert_eq!(normalize_genotype("g / a"), "AG");
+        assert_eq!(normalize_genotype("T|C"), "CT");
+        assert_eq!(normalize_genotype("TC"), "CT");
         assert_eq!(normalize_genotype("A/-"), "ID");
         assert_eq!(split_csv_line(r#"rs1,"1,2",AG"#), vec!["rs1", "1,2", "AG"]);
 

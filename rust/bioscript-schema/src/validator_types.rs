@@ -109,6 +109,7 @@ pub struct VariantManifest {
 pub struct PanelManifest {
     pub path: PathBuf,
     pub name: String,
+    pub label: Option<String>,
     pub tags: Vec<String>,
     pub permissions: Permissions,
     pub downloads: Vec<Download>,
@@ -151,6 +152,7 @@ pub struct PanelMember {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PanelInterpretation {
     pub id: String,
+    pub label: Option<String>,
     pub kind: String,
     pub path: String,
     pub output_format: Option<String>,

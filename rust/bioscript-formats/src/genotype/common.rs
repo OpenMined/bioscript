@@ -54,12 +54,21 @@ pub(crate) fn normalize_genotype(value: &str) -> String {
     if cleaned.is_empty() || matches!(cleaned.as_str(), "NA" | "N/A" | "#N/A" | "NONE") {
         return "--".to_owned();
     }
-    if cleaned.contains('/') {
-        let parts: Vec<&str> = cleaned.split('/').collect();
+    if cleaned.contains('/') || cleaned.contains('|') {
+        let parts: Vec<&str> = cleaned.split(['/', '|']).collect();
         if parts.iter().any(|part| part.is_empty() || *part == "-") {
             return "ID".to_owned();
         }
-        return parts.concat();
+        return sorted_genotype_parts(parts);
     }
-    cleaned
+    sorted_genotype_parts(cleaned.chars().map(String::from).collect())
+}
+
+fn sorted_genotype_parts<T>(parts: Vec<T>) -> String
+where
+    T: AsRef<str>,
+{
+    let mut parts = parts;
+    parts.sort_by(|left, right| left.as_ref().cmp(right.as_ref()));
+    parts.iter().map(AsRef::as_ref).collect()
 }
