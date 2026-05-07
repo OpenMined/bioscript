@@ -40,6 +40,131 @@ fn vcf_coordinate_lookup_normalizes_chr_prefix_and_handles_multiallelic_gt() {
 }
 
 #[test]
+fn vcf_lookup_prefers_loader_assembly_over_file_name_or_header() {
+    let dir = temp_dir("vcf-loader-assembly");
+    let path = dir.join("sample.hg19.vcf");
+    fs::write(
+        &path,
+        "##fileformat=VCFv4.2\n\
+         ##reference=hg19\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+         chr7\t87550285\t.\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+    )
+    .unwrap();
+
+    let variant = VariantSpec {
+        grch37: Some(bioscript_core::GenomicLocus {
+            chrom: "7".to_owned(),
+            start: 87_179_601,
+            end: 87_179_601,
+        }),
+        grch38: Some(bioscript_core::GenomicLocus {
+            chrom: "7".to_owned(),
+            start: 87_550_285,
+            end: 87_550_285,
+        }),
+        reference: Some("A".to_owned()),
+        alternate: Some("G".to_owned()),
+        kind: Some(VariantKind::Snp),
+        ..VariantSpec::default()
+    };
+
+    let default_store = GenotypeStore::from_file_with_options(
+        &path,
+        &GenotypeLoadOptions {
+            impute_vcf_missing_as_reference: false,
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
+    let default_observation = default_store.lookup_variant(&variant).unwrap();
+    assert_eq!(default_observation.genotype, None);
+    assert_eq!(
+        default_observation.assembly,
+        Some(bioscript_core::Assembly::Grch37)
+    );
+
+    let inspected_store = GenotypeStore::from_file_with_options(
+        &path,
+        &GenotypeLoadOptions {
+            assembly: Some(bioscript_core::Assembly::Grch38),
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
+    let inspected_observation = inspected_store.lookup_variant(&variant).unwrap();
+    assert_eq!(inspected_observation.genotype.as_deref(), Some("AG"));
+    assert_eq!(
+        inspected_observation.assembly,
+        Some(bioscript_core::Assembly::Grch38)
+    );
+    assert_eq!(
+        inspected_observation.evidence[0],
+        "resolved by locus chr7:87550285"
+    );
+}
+
+#[test]
+fn vcf_missing_locus_defaults_to_imputed_reference_with_sex_aware_ploidy() {
+    let dir = temp_dir("vcf-impute-reference");
+    let path = dir.join("sample.vcf");
+    fs::write(
+        &path,
+        "##fileformat=VCFv4.2\n\
+         ##reference=GRCh38\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+         1\t10\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+    )
+    .unwrap();
+
+    let store = GenotypeStore::from_file_with_options(
+        &path,
+        &GenotypeLoadOptions {
+            inferred_sex: Some(bioscript_formats::InferredSex::Male),
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
+
+    let observations = store
+        .lookup_variants(&[
+            VariantSpec {
+                grch38: Some(bioscript_core::GenomicLocus {
+                    chrom: "1".to_owned(),
+                    start: 20,
+                    end: 20,
+                }),
+                reference: Some("C".to_owned()),
+                alternate: Some("T".to_owned()),
+                kind: Some(VariantKind::Snp),
+                ..VariantSpec::default()
+            },
+            VariantSpec {
+                grch38: Some(bioscript_core::GenomicLocus {
+                    chrom: "X".to_owned(),
+                    start: 30,
+                    end: 30,
+                }),
+                reference: Some("G".to_owned()),
+                alternate: Some("A".to_owned()),
+                kind: Some(VariantKind::Snp),
+                ..VariantSpec::default()
+            },
+        ])
+        .unwrap();
+
+    assert_eq!(observations[0].genotype.as_deref(), Some("CC"));
+    assert_eq!(observations[1].genotype.as_deref(), Some("G"));
+    assert!(
+        observations[0].evidence[0].contains("imputed reference genotype"),
+        "{:?}",
+        observations[0].evidence
+    );
+}
+
+#[test]
 fn vcf_locus_lookup_handles_deletion_insertion_and_unresolved_evidence() {
     let dir = temp_dir("vcf-indel-locus");
     let path = dir.join("sample.hg19.vcf");

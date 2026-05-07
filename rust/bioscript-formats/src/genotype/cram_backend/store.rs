@@ -8,13 +8,15 @@ use bioscript_core::{
     Assembly, GenomicLocus, RuntimeError, VariantKind, VariantObservation, VariantSpec,
 };
 
+use noodles::cram;
+
 use crate::alignment::{self, AlignmentOpKind};
 
 use super::{
     anchor_window, choose_variant_locus, classify_expected_indel,
     describe_copy_number_decision_rule, describe_locus, describe_snp_decision_rule, first_base,
     indel_at_anchor, infer_copy_number_genotype, infer_snp_genotype, observe_snp_pileup,
-    record_overlaps_locus, spans_position,
+    record_overlaps_locus, snp_pileup_with_reader, spans_position,
 };
 use crate::genotype::{describe_query, types::CramBackend};
 
@@ -75,6 +77,87 @@ impl CramBackend {
         Ok(observation)
     }
 
+    pub(crate) fn lookup_variants(
+        &self,
+        variants: &[VariantSpec],
+    ) -> Result<Vec<VariantObservation>, RuntimeError> {
+        let Some(reference_file) = self.options.reference_file.as_ref() else {
+            return Err(RuntimeError::Unsupported(format!(
+                "backend '{}' cannot satisfy CRAM variant queries for {} without --reference-file",
+                self.backend_name(),
+                self.path.display()
+            )));
+        };
+
+        let repository = alignment::build_reference_repository(reference_file)?;
+        let mut reader =
+            alignment::build_cram_indexed_reader_from_path(&self.path, &self.options, repository)?;
+        let label = self.path.display().to_string();
+
+        let mut indexed: Vec<(usize, &VariantSpec)> = variants.iter().enumerate().collect();
+        indexed.sort_by_cached_key(|(_, variant)| crate::genotype::variant_sort_key(variant));
+
+        let mut results = vec![VariantObservation::default(); variants.len()];
+        for (idx, variant) in indexed {
+            let Some((assembly, locus)) = choose_variant_locus(variant, reference_file) else {
+                results[idx] = self.unsupported_locus_observation(variant, reference_file);
+                continue;
+            };
+            results[idx] =
+                self.observe_with_reader(&mut reader, &label, variant, assembly, &locus)?;
+        }
+
+        Ok(results)
+    }
+
+    fn unsupported_locus_observation(
+        &self,
+        variant: &VariantSpec,
+        reference_file: &Path,
+    ) -> VariantObservation {
+        let mut evidence = format!(
+            "backend '{}' cannot satisfy query '{}' for {} using reference {}",
+            self.backend_name(),
+            describe_query(variant),
+            self.path.display(),
+            reference_file.display()
+        );
+        evidence.push_str(". This backend needs GRCh37/GRCh38 coordinates, not only rsIDs");
+        VariantObservation {
+            backend: self.backend_name().to_owned(),
+            matched_rsid: variant.rsids.first().cloned(),
+            evidence: vec![evidence],
+            ..VariantObservation::default()
+        }
+    }
+
+    fn observe_with_reader(
+        &self,
+        reader: &mut cram::io::indexed_reader::IndexedReader<std::fs::File>,
+        label: &str,
+        variant: &VariantSpec,
+        assembly: Assembly,
+        locus: &GenomicLocus,
+    ) -> Result<VariantObservation, RuntimeError> {
+        match variant.kind.unwrap_or(VariantKind::Other) {
+            VariantKind::Snp => {
+                self.observe_snp_with_reader(reader, label, variant, assembly, locus)
+            }
+            VariantKind::Deletion => {
+                self.observe_deletion_with_reader(reader, label, variant, assembly, locus)
+            }
+            VariantKind::Insertion | VariantKind::Indel => {
+                self.observe_indel_with_reader(reader, label, variant, assembly, locus)
+            }
+            VariantKind::Other => Err(RuntimeError::Unsupported(format!(
+                "backend '{}' does not yet support {:?} observation for {}",
+                self.backend_name(),
+                variant.kind.unwrap_or(VariantKind::Other),
+                self.path.display()
+            ))),
+        }
+    }
+
     fn observe_snp(
         &self,
         variant: &VariantSpec,
@@ -128,6 +211,58 @@ impl CramBackend {
         })
     }
 
+    fn observe_snp_with_reader(
+        &self,
+        reader: &mut cram::io::indexed_reader::IndexedReader<std::fs::File>,
+        label: &str,
+        variant: &VariantSpec,
+        assembly: Assembly,
+        locus: &GenomicLocus,
+    ) -> Result<VariantObservation, RuntimeError> {
+        let reference = variant
+            .reference
+            .as_deref()
+            .and_then(first_base)
+            .ok_or_else(|| {
+                RuntimeError::InvalidArguments("SNP variant requires ref/reference".to_owned())
+            })?;
+        let alternate = variant
+            .alternate
+            .as_deref()
+            .and_then(first_base)
+            .ok_or_else(|| {
+                RuntimeError::InvalidArguments("SNP variant requires alt/alternate".to_owned())
+            })?;
+
+        let pileup = snp_pileup_with_reader(
+            reader,
+            label,
+            locus,
+            reference,
+            alternate,
+            self.options.allow_reference_md5_mismatch,
+        )?;
+        let ref_count = pileup.filtered_ref_count;
+        let alt_count = pileup.filtered_alt_count;
+        let depth = pileup.filtered_depth;
+        let evidence = pileup.evidence_lines(&describe_locus(locus), locus.start);
+
+        Ok(VariantObservation {
+            backend: self.backend_name().to_owned(),
+            matched_rsid: variant.rsids.first().cloned(),
+            assembly: Some(assembly),
+            genotype: infer_snp_genotype(reference, alternate, ref_count, alt_count, depth),
+            ref_count: Some(ref_count),
+            alt_count: Some(alt_count),
+            depth: Some(depth),
+            raw_counts: pileup.raw_base_counts,
+            decision: Some(describe_snp_decision_rule(
+                reference, alternate, ref_count, alt_count, depth,
+            )),
+            evidence,
+        })
+    }
+
     fn observe_deletion(
         &self,
         variant: &VariantSpec,
@@ -150,6 +285,65 @@ impl CramBackend {
             &self.path,
             &self.options,
             reference_file,
+            &anchor_window(locus),
+            |record| {
+                if record.is_unmapped || !spans_position(&record, anchor_pos) {
+                    return Ok(true);
+                }
+                depth += 1;
+                match indel_at_anchor(&record, anchor_pos) {
+                    Some((AlignmentOpKind::Deletion, len)) if len == deletion_length => {
+                        alt_count += 1;
+                    }
+                    _ => ref_count += 1,
+                }
+                Ok(true)
+            },
+        )?;
+
+        Ok(VariantObservation {
+            backend: self.backend_name().to_owned(),
+            matched_rsid: variant.rsids.first().cloned(),
+            assembly: Some(assembly),
+            genotype: infer_copy_number_genotype(
+                &reference, &alternate, ref_count, alt_count, depth,
+            ),
+            ref_count: Some(ref_count),
+            alt_count: Some(alt_count),
+            depth: Some(depth),
+            raw_counts: BTreeMap::new(),
+            decision: Some(describe_copy_number_decision_rule(
+                &reference, &alternate, ref_count, alt_count, depth,
+            )),
+            evidence: vec![format!(
+                "observed deletion anchor {}:{} len={} depth={} ref_count={} alt_count={}",
+                locus.chrom, anchor_pos, deletion_length, depth, ref_count, alt_count
+            )],
+        })
+    }
+
+    fn observe_deletion_with_reader(
+        &self,
+        reader: &mut cram::io::indexed_reader::IndexedReader<std::fs::File>,
+        label: &str,
+        variant: &VariantSpec,
+        assembly: Assembly,
+        locus: &GenomicLocus,
+    ) -> Result<VariantObservation, RuntimeError> {
+        let deletion_length = variant.deletion_length.ok_or_else(|| {
+            RuntimeError::InvalidArguments("deletion variant requires deletion_length".to_owned())
+        })?;
+        let reference = variant.reference.clone().unwrap_or_else(|| "I".to_owned());
+        let alternate = variant.alternate.clone().unwrap_or_else(|| "D".to_owned());
+        let anchor_pos = locus.start.saturating_sub(1);
+
+        let mut alt_count = 0u32;
+        let mut ref_count = 0u32;
+        let mut depth = 0u32;
+
+        alignment::for_each_cram_record_with_reader(
+            reader,
+            label,
             &anchor_window(locus),
             |record| {
                 if record.is_unmapped || !spans_position(&record, anchor_pos) {
@@ -262,5 +456,31 @@ impl CramBackend {
                 evidence_label
             )],
         })
+    }
+
+    fn observe_indel_with_reader(
+        &self,
+        reader: &mut cram::io::indexed_reader::IndexedReader<std::fs::File>,
+        label: &str,
+        variant: &VariantSpec,
+        assembly: Assembly,
+        locus: &GenomicLocus,
+    ) -> Result<VariantObservation, RuntimeError> {
+        let reference = variant.reference.clone().ok_or_else(|| {
+            RuntimeError::InvalidArguments("indel variant requires ref/reference".to_owned())
+        })?;
+        let alternate = variant.alternate.clone().ok_or_else(|| {
+            RuntimeError::InvalidArguments("indel variant requires alt/alternate".to_owned())
+        })?;
+
+        super::observe_cram_indel_with_reader(
+            reader,
+            label,
+            locus,
+            &reference,
+            &alternate,
+            variant.rsids.first().cloned(),
+            Some(assembly),
+        )
     }
 }

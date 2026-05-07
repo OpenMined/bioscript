@@ -16,6 +16,7 @@ fn forced_cram_store(dir: &std::path::Path, reference_name: &str) -> GenotypeSto
             reference_index: Some(dir.join(format!("{reference_name}.fai"))),
             input_index: Some(dir.join("missing.cram.crai")),
             allow_reference_md5_mismatch: false,
+            ..GenotypeLoadOptions::default()
         },
     )
     .unwrap()
@@ -257,6 +258,7 @@ fn open_cram_store_with_md5_policy(
             reference_file: Some(fx.reference.clone()),
             reference_index: Some(fx.reference_index.clone()),
             allow_reference_md5_mismatch,
+            ..GenotypeLoadOptions::default()
         },
     )
     .expect("open cram store")

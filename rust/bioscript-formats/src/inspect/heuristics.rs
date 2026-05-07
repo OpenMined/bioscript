@@ -243,19 +243,28 @@ pub(crate) fn detect_assembly(lower_name: &str, sample_lines: &[String]) -> Opti
         || combined.contains("assembly 38")
         || combined.contains("grch38")
         || combined.contains("hg38")
+        || combined.contains("b38")
         || combined.contains("gca_000001405.15")
         || combined.contains("grch38_no_alt_analysis_set")
-        || combined.contains("##contig=<id=chr1,length=248956422>");
+        || combined.contains("##contig=<id=chr1,length=248956422")
+        || combined.contains("##contig=<id=1,length=248956422")
+        || combined.contains("##contig=<id=chrx,length=156040895")
+        || combined.contains("##contig=<id=x,length=156040895");
 
     if looks_like_grch38 {
         Some(Assembly::Grch38)
     } else if combined.contains("build 37")
         || combined.contains("grch37")
         || combined.contains("hg19")
+        || combined.contains("b37")
         || combined.contains("assembly=b37")
         || combined.contains("assembly=\"b37\"")
         || combined.contains("human_g1k_v37")
         || combined.contains("37.1")
+        || combined.contains("##contig=<id=chr1,length=249250621")
+        || combined.contains("##contig=<id=1,length=249250621")
+        || combined.contains("##contig=<id=chrx,length=155270560")
+        || combined.contains("##contig=<id=x,length=155270560")
     {
         Some(Assembly::Grch37)
     } else {

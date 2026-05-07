@@ -11,14 +11,16 @@ pub(crate) fn genotype_from_vcf_gt(
 
     let cleaned = gt.trim().replace('|', "/");
     let parts: Vec<&str> = cleaned.split('/').collect();
-    if parts.len() != 2 || parts.contains(&".") {
+    if !(parts.len() == 1 || parts.len() == 2) || parts.contains(&".") {
         return Some("--".to_owned());
     }
 
     let ref_token = vcf_reference_token(reference, alternates);
     let mut out = String::new();
     for part in parts {
-        let idx = part.parse::<usize>().ok()?;
+        let Ok(idx) = part.parse::<usize>() else {
+            return Some("--".to_owned());
+        };
         if idx == 0 {
             out.push_str(&ref_token);
         } else {

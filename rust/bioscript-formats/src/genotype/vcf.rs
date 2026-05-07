@@ -8,18 +8,22 @@ use std::{
 use noodles::bgzf;
 use noodles::csi;
 
-use bioscript_core::{
-    Assembly, GenomicLocus, RuntimeError, VariantKind, VariantObservation, VariantSpec,
-};
+use bioscript_core::{Assembly, RuntimeError, VariantKind, VariantObservation, VariantSpec};
 
 use crate::alignment;
+use crate::inspect::detect_assembly;
 
 use super::{
     describe_query, genotype_from_vcf_gt, is_bgzf_path, types::VcfBackend, variant_sort_key,
 };
 
+mod matching;
 mod reader;
 
+pub(crate) use matching::{
+    choose_variant_locus_for_assembly, normalize_chromosome_name, vcf_row_matches_variant,
+};
+use matching::{first_single_base_allele, imputed_reference_observation};
 pub use reader::observe_vcf_snp_with_reader;
 
 #[derive(Debug, Clone)]
@@ -40,8 +44,10 @@ pub(crate) fn scan_vcf_variants(
     let mut indexed: Vec<(usize, &VariantSpec)> = variants.iter().enumerate().collect();
     indexed.sort_by_cached_key(|(_, variant)| variant_sort_key(variant));
 
-    let mut probe_lines = Vec::new();
-    let detected_assembly = {
+    let detected_assembly = if let Some(assembly) = backend.options.assembly {
+        Some(assembly)
+    } else {
+        let mut probe_lines = Vec::new();
         let file = File::open(&backend.path).map_err(|err| {
             RuntimeError::Io(format!(
                 "failed to open VCF file {}: {err}",
@@ -81,6 +87,7 @@ pub(crate) fn scan_vcf_variants(
     let mut coord_targets: HashMap<(String, i64), Vec<usize>> = HashMap::new();
     let mut results = vec![VariantObservation::default(); variants.len()];
     let mut unresolved = variants.len();
+    let label = backend.path.display().to_string();
 
     for (idx, variant) in &indexed {
         for rsid in &variant.rsids {
@@ -141,14 +148,41 @@ pub(crate) fn scan_vcf_variants(
 
     for (idx, variant) in indexed {
         if results[idx].genotype.is_none() {
-            results[idx] = VariantObservation {
-                backend: backend.backend_name().to_owned(),
-                assembly: detected_assembly,
-                evidence: vec![format!(
-                    "no matching rsid or locus found for {}",
-                    describe_query(variant)
-                )],
-                ..VariantObservation::default()
+            results[idx] = if backend.options.impute_vcf_missing_as_reference {
+                choose_variant_locus_for_assembly(variant, detected_assembly)
+                    .and_then(|locus| {
+                        imputed_reference_observation(
+                            backend.backend_name(),
+                            &label,
+                            variant,
+                            &locus,
+                            detected_assembly,
+                            backend.options.inferred_sex,
+                            &format!(
+                                "no matching rsid or locus found for {}",
+                                describe_query(variant)
+                            ),
+                        )
+                    })
+                    .unwrap_or_else(|| VariantObservation {
+                        backend: backend.backend_name().to_owned(),
+                        assembly: detected_assembly,
+                        evidence: vec![format!(
+                            "no matching rsid or locus found for {}",
+                            describe_query(variant)
+                        )],
+                        ..VariantObservation::default()
+                    })
+            } else {
+                VariantObservation {
+                    backend: backend.backend_name().to_owned(),
+                    assembly: detected_assembly,
+                    evidence: vec![format!(
+                        "no matching rsid or locus found for {}",
+                        describe_query(variant)
+                    )],
+                    ..VariantObservation::default()
+                }
             };
         }
     }
@@ -163,7 +197,10 @@ pub(crate) fn lookup_indexed_vcf_variants(
     let Some(input_index) = backend.options.input_index.as_ref() else {
         return Ok(None);
     };
-    let detected_assembly = detect_vcf_assembly_from_path(&backend.path)?;
+    let detected_assembly = match backend.options.assembly {
+        Some(assembly) => Some(assembly),
+        None => detect_vcf_assembly_from_path(&backend.path)?,
+    };
     let mut indexed_variants = Vec::with_capacity(variants.len());
     for (idx, variant) in variants.iter().enumerate() {
         let Some(locus) = choose_variant_locus_for_assembly(variant, detected_assembly) else {
@@ -199,7 +236,7 @@ pub(crate) fn lookup_indexed_vcf_variants(
 
     let mut results = vec![VariantObservation::default(); variants.len()];
     for (idx, variant, locus, reference, alternate) in indexed_variants {
-        results[idx] = observe_vcf_snp_with_reader(
+        let observation = observe_vcf_snp_with_reader(
             &mut indexed,
             &backend.path.display().to_string(),
             &locus,
@@ -208,6 +245,26 @@ pub(crate) fn lookup_indexed_vcf_variants(
             variant.rsids.first().cloned(),
             detected_assembly,
         )?;
+        results[idx] = if backend.options.impute_vcf_missing_as_reference
+            && observation.genotype.is_none()
+            && observation
+                .evidence
+                .iter()
+                .any(|line| line.contains("no VCF record at"))
+        {
+            imputed_reference_observation(
+                backend.backend_name(),
+                &backend.path.display().to_string(),
+                variant,
+                &locus,
+                detected_assembly,
+                backend.options.inferred_sex,
+                &observation.evidence.join(" | "),
+            )
+            .unwrap_or(observation)
+        } else {
+            observation
+        };
     }
     Ok(Some(results))
 }
@@ -240,13 +297,6 @@ pub(crate) fn detect_vcf_assembly_from_path(path: &Path) -> Result<Option<Assemb
         }
     }
     Ok(detect_vcf_assembly(path, &probe_lines))
-}
-
-fn first_single_base_allele(value: Option<&str>) -> Option<char> {
-    let value = value?;
-    let mut chars = value.chars();
-    let base = chars.next()?;
-    chars.next().is_none().then_some(base)
 }
 
 struct VcfResolutionTargets<'a> {
@@ -393,87 +443,5 @@ pub(crate) fn extract_vcf_sample_genotype(
 }
 
 pub(crate) fn detect_vcf_assembly(path: &Path, probe_lines: &[String]) -> Option<Assembly> {
-    let combined = probe_lines.join("\n").to_ascii_lowercase();
-    if combined.contains("assembly=b37")
-        || combined.contains("assembly=grch37")
-        || combined.contains("assembly=hg19")
-        || combined.contains("reference=grch37")
-        || combined.contains("reference=hg19")
-    {
-        return Some(Assembly::Grch37);
-    }
-    if combined.contains("assembly=b38")
-        || combined.contains("assembly=grch38")
-        || combined.contains("assembly=hg38")
-        || combined.contains("reference=grch38")
-        || combined.contains("reference=hg38")
-    {
-        return Some(Assembly::Grch38);
-    }
-
-    let lower = path.to_string_lossy().to_ascii_lowercase();
-    if lower.contains("grch37") || lower.contains("hg19") || lower.contains("b37") {
-        Some(Assembly::Grch37)
-    } else if lower.contains("grch38") || lower.contains("hg38") || lower.contains("b38") {
-        Some(Assembly::Grch38)
-    } else {
-        None
-    }
-}
-
-pub(crate) fn choose_variant_locus_for_assembly(
-    variant: &VariantSpec,
-    assembly: Option<Assembly>,
-) -> Option<GenomicLocus> {
-    match assembly {
-        Some(Assembly::Grch37) => variant.grch37.clone().or_else(|| variant.grch38.clone()),
-        Some(Assembly::Grch38) => variant.grch38.clone().or_else(|| variant.grch37.clone()),
-        None => variant.grch37.clone().or_else(|| variant.grch38.clone()),
-    }
-}
-
-pub(crate) fn normalize_chromosome_name(value: &str) -> String {
-    value.trim().trim_start_matches("chr").to_ascii_lowercase()
-}
-
-pub(crate) fn vcf_row_matches_variant(
-    row: &ParsedVcfRow,
-    variant: &VariantSpec,
-    assembly: Option<Assembly>,
-) -> bool {
-    let Some(locus) = choose_variant_locus_for_assembly(variant, assembly) else {
-        return false;
-    };
-
-    if normalize_chromosome_name(&row.chrom) != normalize_chromosome_name(&locus.chrom) {
-        return false;
-    }
-
-    match variant.kind.unwrap_or(VariantKind::Other) {
-        VariantKind::Snp => {
-            row.position == locus.start
-                && variant
-                    .reference
-                    .as_ref()
-                    .is_none_or(|reference| reference.eq_ignore_ascii_case(&row.reference))
-                && variant.alternate.as_ref().is_none_or(|alternate| {
-                    row.alternates
-                        .iter()
-                        .any(|candidate| candidate.eq_ignore_ascii_case(alternate))
-                })
-        }
-        VariantKind::Deletion => {
-            let expected_len = variant.deletion_length.unwrap_or(0);
-            row.position == locus.start.saturating_sub(1)
-                && row.alternates.iter().any(|alternate| {
-                    let actual_len = row.reference.len().saturating_sub(alternate.len());
-                    (expected_len == 0 || actual_len == expected_len)
-                        && alternate.len() < row.reference.len()
-                })
-        }
-        VariantKind::Insertion | VariantKind::Indel => {
-            row.position == locus.start.saturating_sub(1)
-        }
-        VariantKind::Other => row.position == locus.start,
-    }
+    detect_assembly(&path.to_string_lossy().to_ascii_lowercase(), probe_lines)
 }

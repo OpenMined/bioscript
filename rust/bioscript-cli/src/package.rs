@@ -6,19 +6,35 @@ const MAX_PACKAGE_FILES: usize = 1000;
 const MAX_PACKAGE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_PACKAGE_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
+include!("package_release.rs");
+
 fn prepare_package_entrypoint_from_arg(
     runtime_root: &Path,
     source: &Path,
 ) -> Result<PathBuf, String> {
     let source_text = source.to_string_lossy();
-    let package_path = if is_package_url(&source_text) {
-        download_package_url(runtime_root, &source_text)?
+    let source_url = if is_package_url(&source_text) {
+        Some(source_text.to_string())
+    } else {
+        None
+    };
+    let package_path = if let Some(url) = &source_url {
+        download_package_url(runtime_root, url)?
     } else {
         source.to_path_buf()
     };
     if is_package_zip_path(&package_path) {
         let imported = import_package_zip(runtime_root, &package_path, None)?;
         Ok(imported.entrypoint)
+    } else if is_package_release_path(&package_path) {
+        match package_zip_from_release_manifest(runtime_root, &package_path, source_url.as_deref())?
+        {
+            Some(zip_path) => {
+                let imported = import_package_zip(runtime_root, &zip_path, None)?;
+                Ok(imported.entrypoint)
+            }
+            None => Ok(package_path),
+        }
     } else {
         Ok(package_path)
     }
@@ -47,11 +63,19 @@ fn run_import_package(args: Vec<String>) -> Result<(), String> {
         .map_or_else(env::current_dir, Ok)
         .map_err(|err| format!("failed to get current directory: {err}"))?;
     let source_text = source.to_string_lossy();
-    let package_path = if is_package_url(&source_text) {
-        download_package_url(&runtime_root, &source_text)?
+    let source_url = if is_package_url(&source_text) {
+        Some(source_text.to_string())
+    } else {
+        None
+    };
+    let package_path = if let Some(url) = &source_url {
+        download_package_url(&runtime_root, url)?
     } else {
         absolutize(&runtime_root, &source)
     };
+    let package_path =
+        package_zip_from_release_manifest(&runtime_root, &package_path, source_url.as_deref())?
+            .unwrap_or(package_path);
     let imported = import_package_zip(&runtime_root, &package_path, output_dir.as_deref())?;
     println!("root\t{}", imported.root.display());
     println!("entrypoint\t{}", imported.entrypoint.display());
@@ -170,6 +194,23 @@ fn load_package_descriptor(root: &Path) -> Result<PackageDescriptor, String> {
                 .ok_or_else(|| {
                     format!("package descriptor {} is missing schema", path.display())
                 })?;
+            if matches!(
+                schema,
+                "bioscript:panel:1.0"
+                    | "bioscript:assay:1.0"
+                    | "bioscript:variant:1.0"
+                    | "bioscript:variant"
+            ) {
+                let package_name = value
+                    .as_mapping()
+                    .and_then(|mapping| mapping.get(serde_yaml::Value::String("name".to_owned())))
+                    .and_then(serde_yaml::Value::as_str)
+                    .map(ToOwned::to_owned);
+                return Ok(PackageDescriptor {
+                    entrypoint: PathBuf::from(PACKAGE_DESCRIPTOR),
+                    name: package_name,
+                });
+            }
             if schema != "bioscript:package:1.0" {
                 return Err(format!(
                     "package descriptor {} has unsupported schema '{schema}'",
@@ -352,11 +393,13 @@ fn download_package_url(runtime_root: &Path, url: &str) -> Result<PathBuf, Strin
         return Err("package URLs must use https://".to_owned());
     }
     let url_path = url.split('?').next().unwrap_or(url);
-    if !Path::new(url_path)
+    let extension = Path::new(url_path)
         .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
-    {
-        return Err("package URL must point to a .zip file".to_owned());
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "zip" | "yaml" | "yml") {
+        return Err("package URL must point to a .zip, .yaml, or .yml file".to_owned());
     }
     let downloads = runtime_root.join(PACKAGE_DOWNLOAD_DIR);
     fs::create_dir_all(&downloads).map_err(|err| {
@@ -407,4 +450,10 @@ fn is_package_zip_path(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+}
+
+fn is_package_release_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "yaml" | "yml"))
 }
