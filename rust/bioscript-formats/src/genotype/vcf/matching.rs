@@ -37,13 +37,18 @@ pub(super) fn imputed_reference_observation(
     let reference = first_single_base_allele(variant.reference.as_deref())?;
     first_single_base_allele(variant.alternate.as_deref())?;
     let genotype = reference_genotype_for_locus(reference, locus, inferred_sex);
+    let evidence_prefix = if missing_evidence.contains(label) {
+        missing_evidence.to_owned()
+    } else {
+        format!("{label}: {missing_evidence}")
+    };
     Some(VariantObservation {
         backend: backend_name.to_owned(),
         matched_rsid: variant.rsids.first().cloned(),
         assembly,
         genotype: Some(genotype),
         evidence: vec![format!(
-            "{label}: {missing_evidence} | imputed reference genotype from absent variant-only VCF record"
+            "{evidence_prefix} | imputed reference genotype from absent variant-only VCF record"
         )],
         ..VariantObservation::default()
     })

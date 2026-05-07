@@ -84,6 +84,10 @@ impl GenotypeStore {
             GenotypeSourceFormat::Zip => Self::from_zip_file(path),
             GenotypeSourceFormat::Vcf => Ok(Self::from_vcf_file(path, options)),
             GenotypeSourceFormat::Cram => Self::from_cram_file(path, options),
+            GenotypeSourceFormat::Bam => Err(RuntimeError::Unsupported(format!(
+                "BAM alignment lookup is not implemented yet for {}",
+                path.display()
+            ))),
         }
     }
 
@@ -361,6 +365,7 @@ impl RsidMapBackend {
             GenotypeSourceFormat::Zip => "zip",
             GenotypeSourceFormat::Vcf => "vcf",
             GenotypeSourceFormat::Cram => "cram",
+            GenotypeSourceFormat::Bam => "bam",
         }
     }
 
@@ -392,6 +397,7 @@ impl DelimitedBackend {
             GenotypeSourceFormat::Zip => "zip",
             GenotypeSourceFormat::Vcf => "vcf",
             GenotypeSourceFormat::Cram => "cram",
+            GenotypeSourceFormat::Bam => "bam",
         }
     }
 
@@ -939,6 +945,18 @@ mod tests {
             detect_source_format(&text, Some(GenotypeSourceFormat::Cram)).unwrap(),
             GenotypeSourceFormat::Cram
         ));
+        let bam = dir.join("sample.bam");
+        fs::write(&bam, b"BAM").unwrap();
+        assert!(matches!(
+            detect_source_format(&bam, None).unwrap(),
+            GenotypeSourceFormat::Bam
+        ));
+        assert!(
+            GenotypeStore::from_file(&bam)
+                .unwrap_err()
+                .to_string()
+                .contains("BAM alignment lookup is not implemented yet")
+        );
         assert!(!looks_like_vcf_lines(&["rsid\tgenotype".to_owned()]));
 
         let backend = DelimitedBackend {

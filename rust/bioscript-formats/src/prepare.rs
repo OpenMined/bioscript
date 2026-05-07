@@ -49,7 +49,7 @@ pub fn prepare_indexes(request: &PrepareRequest) -> Result<PreparedPaths, String
         .transpose()?;
 
     let input_index = match (&input_file, request.input_format) {
-        (Some(path), Some(GenotypeSourceFormat::Cram)) => {
+        (Some(path), Some(GenotypeSourceFormat::Cram | GenotypeSourceFormat::Bam)) => {
             Some(ensure_alignment_index(path, &cache_dir)?)
         }
         (Some(path), None) if detect_alignment_input(path) => {

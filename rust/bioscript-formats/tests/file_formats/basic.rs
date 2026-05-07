@@ -38,9 +38,13 @@ fn genotype_source_format_parses_supported_values_and_rejects_unknowns() {
         "cram".parse::<GenotypeSourceFormat>().unwrap(),
         GenotypeSourceFormat::Cram
     );
+    assert_eq!(
+        "bam".parse::<GenotypeSourceFormat>().unwrap(),
+        GenotypeSourceFormat::Bam
+    );
 
-    let err = "bam".parse::<GenotypeSourceFormat>().unwrap_err();
-    assert_eq!(err, "unsupported input format: bam");
+    let err = "plink".parse::<GenotypeSourceFormat>().unwrap_err();
+    assert_eq!(err, "unsupported input format: plink");
 }
 
 #[test]

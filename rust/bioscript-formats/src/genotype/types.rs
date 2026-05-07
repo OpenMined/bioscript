@@ -60,6 +60,7 @@ pub enum GenotypeSourceFormat {
     Zip,
     Vcf,
     Cram,
+    Bam,
 }
 
 impl FromStr for GenotypeSourceFormat {
@@ -71,6 +72,7 @@ impl FromStr for GenotypeSourceFormat {
             "zip" => Ok(Self::Zip),
             "vcf" => Ok(Self::Vcf),
             "cram" => Ok(Self::Cram),
+            "bam" => Ok(Self::Bam),
             other => Err(format!("unsupported input format: {other}")),
         }
     }
