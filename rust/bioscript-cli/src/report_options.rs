@@ -255,12 +255,13 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
         if let Some(sample_sex) = options.sample_sex {
             input_inspection.inferred_sex = Some(explicit_sample_sex_inference(sample_sex));
         }
+        let input_loader = loader_with_inspection(&options.loader, &input_inspection);
         let rows = run_manifest_rows_for_report(
             &options.root,
             &options.manifest_path,
             input_file,
             &participant_id,
-            &options.loader,
+            &input_loader,
             &options.filters,
         )?;
         let input_observations = rows
@@ -280,7 +281,7 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
             runtime_root: &options.root,
             input_file,
             participant_id: &participant_id,
-            loader: &options.loader,
+            loader: &input_loader,
             output_dir: &options.output_dir,
             filters: &options.filters,
             max_duration_ms: options.analysis_max_duration_ms,
@@ -315,6 +316,20 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
     open_app_html_report_if_requested(options);
     print_app_report_paths(&options.output_dir, options.html);
     Ok(())
+}
+
+fn loader_with_inspection(
+    base: &GenotypeLoadOptions,
+    inspection: &bioscript_formats::FileInspection,
+) -> GenotypeLoadOptions {
+    let mut loader = base.clone();
+    loader.assembly = inspection.assembly.or(loader.assembly);
+    loader.inferred_sex = inspection
+        .inferred_sex
+        .as_ref()
+        .map(|inference| inference.sex)
+        .or(loader.inferred_sex);
+    loader
 }
 
 fn open_app_html_report_if_requested(options: &AppReportOptions) {

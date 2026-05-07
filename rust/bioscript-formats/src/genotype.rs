@@ -30,12 +30,12 @@ use cram_backend::{
     infer_snp_genotype, len_as_i64, normalize_pileup_base, record_overlaps_locus, spans_position,
 };
 pub use cram_backend::{observe_cram_indel_with_reader, observe_cram_snp_with_reader};
-#[cfg(test)]
-use delimited::{
-    Delimiter, GENOTYPE_ALIASES, parse_streaming_row, split_csv_line, strip_bom,
-    strip_inline_comment,
+pub(crate) use delimited::{
+    DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row,
 };
-use delimited::{RowParser, detect_delimiter, scan_delimited_variants};
+#[cfg(test)]
+use delimited::{GENOTYPE_ALIASES, split_csv_line, strip_bom, strip_inline_comment};
+use delimited::{RowParser, scan_delimited_variants};
 #[cfg(test)]
 use delimited::{
     build_column_indexes, default_column_indexes, find_header_index, looks_like_header_fields,
@@ -338,6 +338,9 @@ impl GenotypeStore {
             return backend.lookup_variants(variants);
         }
         if let QueryBackend::Vcf(backend) = &self.backend {
+            return backend.lookup_variants(variants);
+        }
+        if let QueryBackend::Cram(backend) = &self.backend {
             return backend.lookup_variants(variants);
         }
         let mut indexed: Vec<(usize, &VariantSpec)> = variants.iter().enumerate().collect();
@@ -718,6 +721,7 @@ mod tests {
             genotype_from_vcf_gt("./1", "A", &["G"]).as_deref(),
             Some("--")
         );
+        assert_eq!(genotype_from_vcf_gt("1", "C", &["T"]).as_deref(), Some("T"));
         assert_eq!(
             genotype_from_vcf_gt("bad", "A", &["G"]).as_deref(),
             Some("--")
@@ -739,6 +743,20 @@ mod tests {
         assert_eq!(
             detect_vcf_assembly(Path::new("sample.vcf"), &["##assembly=GRCh38".to_owned()]),
             Some(Assembly::Grch38)
+        );
+        assert_eq!(
+            detect_vcf_assembly(
+                Path::new("sample.vcf"),
+                &["##contig=<ID=chr1,length=248956422>".to_owned()]
+            ),
+            Some(Assembly::Grch38)
+        );
+        assert_eq!(
+            detect_vcf_assembly(
+                Path::new("sample.vcf"),
+                &["##contig=<ID=chr1,length=249250621>".to_owned()]
+            ),
+            Some(Assembly::Grch37)
         );
         assert_eq!(
             detect_vcf_assembly(Path::new("sample.b37.vcf"), &[]),

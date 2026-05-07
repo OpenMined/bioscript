@@ -111,6 +111,7 @@ dependencies = [
  "monty",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "zip",
 ]
 

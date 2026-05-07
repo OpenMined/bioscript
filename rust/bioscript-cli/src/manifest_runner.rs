@@ -122,9 +122,10 @@ fn run_panel_manifest_with_store(
     participant_id: Option<&str>,
     filters: &[String],
 ) -> Result<Vec<BTreeMap<String, String>>, String> {
-    let mut rows = Vec::new();
+    let mut rows_by_member: Vec<Vec<BTreeMap<String, String>>> = vec![Vec::new(); panel.members.len()];
+    let mut variant_entries = Vec::new();
 
-    for member in &panel.members {
+    for (member_index, member) in panel.members.iter().enumerate() {
         let Some(path) = &member.path else {
             return Err("remote panel members are not executable yet".to_owned());
         };
@@ -134,21 +135,16 @@ fn run_panel_manifest_with_store(
             if !matches_filters(&manifest, &resolved, filters) {
                 continue;
             }
-            rows.push(run_variant_manifest_with_store(
-                runtime_root,
-                &manifest,
-                store,
-                participant_id,
-            )?);
+            variant_entries.push((member_index, resolved, manifest));
         } else if member.kind == "assay" {
             let assay = load_assay_manifest(&resolved)?;
-            rows.extend(run_assay_manifest_with_store(
+            rows_by_member[member_index] = run_assay_manifest_with_store(
                 runtime_root,
                 &assay,
                 store,
                 participant_id,
                 filters,
-            )?);
+            )?;
         } else {
             return Err(format!(
                 "panel member kind '{}' is not executable",
@@ -157,6 +153,29 @@ fn run_panel_manifest_with_store(
         }
     }
 
+    let observations = store
+        .lookup_variants(
+            &variant_entries
+                .iter()
+                .map(|(_, _, manifest)| manifest.spec.clone())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|err| err.to_string())?;
+
+    for ((member_index, resolved, manifest), observation) in
+        variant_entries.into_iter().zip(observations)
+    {
+        rows_by_member[member_index].push(variant_row(
+            runtime_root,
+            &resolved,
+            &manifest.name,
+            &manifest.tags,
+            &observation,
+            participant_id,
+        ));
+    }
+
+    let rows = rows_by_member.into_iter().flatten().collect();
     Ok(rows)
 }
 
@@ -181,7 +200,7 @@ fn run_assay_manifest_with_store(
     participant_id: Option<&str>,
     filters: &[String],
 ) -> Result<Vec<BTreeMap<String, String>>, String> {
-    let mut rows = Vec::new();
+    let mut entries = Vec::new();
 
     for member in &assay.members {
         if member.kind != "variant" {
@@ -198,18 +217,32 @@ fn run_assay_manifest_with_store(
         if !matches_filters(&manifest, &resolved, filters) {
             continue;
         }
-        let observation = store
-            .lookup_variant(&manifest.spec)
-            .map_err(|err| err.to_string())?;
-        rows.push(variant_row(
+        entries.push((resolved, manifest));
+    }
+
+    let observations = store
+        .lookup_variants(
+            &entries
+                .iter()
+                .map(|(_, manifest)| manifest.spec.clone())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|err| err.to_string())?;
+
+    let rows = entries
+        .into_iter()
+        .zip(observations)
+        .map(|((resolved, manifest), observation)| {
+            variant_row(
             runtime_root,
             &resolved,
             &manifest.name,
             &manifest.tags,
             &observation,
             participant_id,
-        ));
-    }
+            )
+        })
+        .collect();
 
     Ok(rows)
 }

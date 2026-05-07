@@ -7,7 +7,13 @@ use bioscript_core::RuntimeError;
 use flate2::read::MultiGzDecoder;
 use zip::ZipArchive;
 
-use super::{DetectedKind, split_fields};
+use crate::genotype::{DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row};
+
+use super::DetectedKind;
+
+mod classify;
+
+use classify::{classify_stats, supports_sex_detection, unsupported_sex_inference};
 
 const MAX_SEX_DETECTION_LINES: usize = 50_000_000;
 const MAX_ZIP_ENTRY_BYTES: u64 = 256 * 1024 * 1024;
@@ -163,8 +169,18 @@ pub(crate) fn infer_sex_from_text_lines(
     kind: DetectedKind,
 ) -> Result<SexInference, RuntimeError> {
     let mut stats = SexStats::default();
+    let delimiter = detect_delimiter(lines);
+    let mut column_indexes = None;
+    let mut comment_header = None;
     for line in lines {
-        update_stats_from_line(&mut stats, line, kind);
+        update_stats_from_line(
+            &mut stats,
+            line,
+            kind,
+            delimiter,
+            &mut column_indexes,
+            &mut comment_header,
+        )?;
     }
     Ok(classify_stats(&stats, kind))
 }
@@ -174,8 +190,45 @@ fn infer_sex_from_reader<R: BufRead>(
     kind: DetectedKind,
 ) -> Result<SexInference, RuntimeError> {
     let mut stats = SexStats::default();
+    let mut probe_lines = Vec::new();
     let mut line = String::new();
-    for _ in 0..MAX_SEX_DETECTION_LINES {
+    for _ in 0..64 {
+        line.clear();
+        let bytes = reader
+            .read_line(&mut line)
+            .map_err(|err| RuntimeError::Io(format!("failed to scan sex markers: {err}")))?;
+        if bytes == 0 {
+            let delimiter = detect_delimiter(&probe_lines);
+            let mut column_indexes = None;
+            let mut comment_header = None;
+            for probe_line in &probe_lines {
+                update_stats_from_line(
+                    &mut stats,
+                    probe_line,
+                    kind,
+                    delimiter,
+                    &mut column_indexes,
+                    &mut comment_header,
+                )?;
+            }
+            return Ok(classify_stats(&stats, kind));
+        }
+        probe_lines.push(line.trim_end_matches(['\n', '\r']).to_owned());
+    }
+    let delimiter = detect_delimiter(&probe_lines);
+    let mut column_indexes = None;
+    let mut comment_header = None;
+    for probe_line in &probe_lines {
+        update_stats_from_line(
+            &mut stats,
+            probe_line,
+            kind,
+            delimiter,
+            &mut column_indexes,
+            &mut comment_header,
+        )?;
+    }
+    for _ in probe_lines.len()..MAX_SEX_DETECTION_LINES {
         line.clear();
         let bytes = reader
             .read_line(&mut line)
@@ -183,35 +236,55 @@ fn infer_sex_from_reader<R: BufRead>(
         if bytes == 0 {
             break;
         }
-        update_stats_from_line(&mut stats, line.trim_end_matches(['\n', '\r']), kind);
+        update_stats_from_line(
+            &mut stats,
+            line.trim_end_matches(['\n', '\r']),
+            kind,
+            delimiter,
+            &mut column_indexes,
+            &mut comment_header,
+        )?;
     }
     Ok(classify_stats(&stats, kind))
 }
 
-fn update_stats_from_line(stats: &mut SexStats, line: &str, kind: DetectedKind) {
+fn update_stats_from_line(
+    stats: &mut SexStats,
+    line: &str,
+    kind: DetectedKind,
+    delimiter: Delimiter,
+    column_indexes: &mut Option<DelimitedColumnIndexes>,
+    comment_header: &mut Option<Vec<String>>,
+) -> Result<(), RuntimeError> {
     let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
-        return;
+    if trimmed.is_empty() {
+        return Ok(());
     }
     match kind {
         DetectedKind::Vcf => update_vcf_stats(stats, trimmed),
         DetectedKind::GenotypeText | DetectedKind::Unknown => {
-            update_genotype_text_stats(stats, trimmed);
+            update_genotype_text_stats(stats, trimmed, delimiter, column_indexes, comment_header)?;
         }
         _ => {}
     }
+    Ok(())
 }
 
-fn update_genotype_text_stats(stats: &mut SexStats, line: &str) {
-    let fields = split_fields(line);
-    if fields.len() < 4 {
-        return;
-    }
-    let rsid = fields[0].trim();
-    let chrom = normalize_chrom(fields.get(1).map(String::as_str).unwrap_or_default());
-    let genotype = genotype_text_field(&fields);
+fn update_genotype_text_stats(
+    stats: &mut SexStats,
+    line: &str,
+    delimiter: Delimiter,
+    column_indexes: &mut Option<DelimitedColumnIndexes>,
+    comment_header: &mut Option<Vec<String>>,
+) -> Result<(), RuntimeError> {
+    let Some(row) = parse_streaming_row(line, delimiter, column_indexes, comment_header)? else {
+        return Ok(());
+    };
+    let rsid = row.rsid.as_deref().unwrap_or_default();
+    let chrom = normalize_chrom(row.chrom.as_deref().unwrap_or_default());
+    let genotype = row.genotype.as_str();
     if chrom != "Y" {
-        return;
+        return Ok(());
     }
     stats.total_y_snps += 1;
     let called = is_called_genotype_text(genotype);
@@ -227,6 +300,7 @@ fn update_genotype_text_stats(stats: &mut SexStats, line: &str) {
             stats.male_markers_called += 1;
         }
     }
+    Ok(())
 }
 
 fn update_vcf_stats(stats: &mut SexStats, line: &str) {
@@ -261,114 +335,12 @@ fn update_vcf_stats(stats: &mut SexStats, line: &str) {
     }
 }
 
-fn classify_stats(stats: &SexStats, kind: DetectedKind) -> SexInference {
-    match kind {
-        DetectedKind::Vcf => classify_vcf_stats(stats),
-        DetectedKind::GenotypeText | DetectedKind::Unknown => classify_y_fingerprint_stats(stats),
-        _ => unsupported_sex_inference(),
-    }
-}
-
-fn supports_sex_detection(kind: DetectedKind) -> bool {
-    matches!(
-        kind,
-        DetectedKind::Vcf | DetectedKind::GenotypeText | DetectedKind::Unknown
-    )
-}
-
-fn unsupported_sex_inference() -> SexInference {
-    SexInference {
-        sex: InferredSex::Unknown,
-        confidence: SexDetectionConfidence::Low,
-        method: "unsupported_source_type".to_owned(),
-        evidence: vec!["sex detection currently supports genotype text and VCF inputs".to_owned()],
-    }
-}
-
-fn classify_y_fingerprint_stats(stats: &SexStats) -> SexInference {
-    let (sex, confidence) = if stats.called_y_snps > 500 {
-        (InferredSex::Male, SexDetectionConfidence::High)
-    } else if stats.called_y_snps > 100 && stats.male_markers_called > 10 {
-        (InferredSex::Male, SexDetectionConfidence::Medium)
-    } else if stats.total_y_snps > 1000 && stats.called_y_snps < 10 && stats.male_markers_called < 3
-    {
-        (
-            InferredSex::Female,
-            if stats.called_y_snps == 0 {
-                SexDetectionConfidence::High
-            } else {
-                SexDetectionConfidence::Medium
-            },
-        )
-    } else if stats.called_y_snps > 50 || stats.male_markers_called > 5 {
-        (InferredSex::Male, SexDetectionConfidence::Medium)
-    } else if stats.called_y_snps < 10 && stats.total_y_snps > 0 {
-        (InferredSex::Female, SexDetectionConfidence::Medium)
-    } else {
-        (InferredSex::Unknown, SexDetectionConfidence::Low)
-    };
-    SexInference {
-        sex,
-        confidence,
-        method: "y_fingerprint".to_owned(),
-        evidence: y_fingerprint_evidence(stats),
-    }
-}
-
-fn classify_vcf_stats(stats: &SexStats) -> SexInference {
-    let (sex, confidence) = if stats.called_y_snps > 500
-        || (stats.x_haploid_gt_sites >= 20 && stats.x_diploid_gt_sites == 0)
-    {
-        (InferredSex::Male, SexDetectionConfidence::High)
-    } else if stats.x_non_par_sites >= 50
-        && stats.x_diploid_gt_sites > 0
-        && stats.x_het_gt_sites * 100 / stats.x_diploid_gt_sites.max(1) >= 2
-    {
-        (InferredSex::Female, SexDetectionConfidence::Medium)
-    } else {
-        (InferredSex::Unknown, SexDetectionConfidence::Low)
-    };
-    SexInference {
-        sex,
-        confidence,
-        method: "vcf_non_par_x_gt_y_count".to_owned(),
-        evidence: vec![
-            format!("x_non_par_sites={}", stats.x_non_par_sites),
-            format!("x_haploid_gt_sites={}", stats.x_haploid_gt_sites),
-            format!("x_diploid_gt_sites={}", stats.x_diploid_gt_sites),
-            format!("x_het_gt_sites={}", stats.x_het_gt_sites),
-            format!("called_y_snps={}", stats.called_y_snps),
-        ],
-    }
-}
-
-fn y_fingerprint_evidence(stats: &SexStats) -> Vec<String> {
-    let mut evidence = vec![
-        format!("total_y_snps={}", stats.total_y_snps),
-        format!("called_y_snps={}", stats.called_y_snps),
-        format!("male_markers_found={}", stats.male_markers_found),
-        format!("male_markers_called={}", stats.male_markers_called),
-    ];
-    if !stats.y_examples.is_empty() {
-        evidence.push(format!("y_examples={}", stats.y_examples.join(",")));
-    }
-    evidence
-}
-
 fn normalize_chrom(value: &str) -> String {
     value
         .trim()
         .trim_start_matches("chr")
         .trim_start_matches("CHR")
         .to_ascii_uppercase()
-}
-
-fn genotype_text_field(fields: &[String]) -> &str {
-    if fields.len() >= 4 {
-        fields[3].trim()
-    } else {
-        fields.last().map(String::as_str).unwrap_or_default().trim()
-    }
 }
 
 fn is_called_genotype_text(value: &str) -> bool {
@@ -473,6 +445,41 @@ mod tests {
         assert_eq!(result.sex, InferredSex::Female);
         assert_eq!(result.confidence, SexDetectionConfidence::High);
         assert!(result.evidence.iter().any(|item| item == "called_y_snps=0"));
+    }
+
+    #[test]
+    fn y_fingerprint_respects_header_column_order() {
+        let mut lines = vec!["# rsid\tchromosome\tposition\tgs\tbaf\tlrr\tgenotype".to_owned()];
+        lines.extend((0..1001).map(|idx| format!("rs{idx}\tY\t{idx}\t0\t0.5\t-4.0\t--")));
+        lines.push("rs11575897\tY\t2001\t0\t0.5\t-4.2\t--".to_owned());
+        let result = infer_sex_from_text_lines(&lines, DetectedKind::GenotypeText).unwrap();
+        assert_eq!(result.sex, InferredSex::Female);
+        assert_eq!(result.confidence, SexDetectionConfidence::High);
+        assert!(result.evidence.iter().any(|item| item == "called_y_snps=0"));
+    }
+
+    #[test]
+    fn y_fingerprint_treats_sparse_y_calls_without_male_markers_as_female() {
+        let mut lines: Vec<String> = (0..5500)
+            .map(|idx| format!("rs{idx}\tY\t{idx}\t--\t0\t0.5\t-4.0"))
+            .collect();
+        for idx in 0..900 {
+            lines.push(format!("noise{idx}\tY\t{}\tAA\t0.2\t0\t0.0", idx + 6000));
+        }
+        for marker in [
+            "rs11575897",
+            "rs2534636",
+            "rs35284970",
+            "rs13447361",
+            "rs2267801",
+            "rs2267802",
+            "rs9786142",
+        ] {
+            lines.push(format!("{marker}\tY\t9000\t--\t0\t0.5\t-4.0"));
+        }
+        let result = infer_sex_from_text_lines(&lines, DetectedKind::GenotypeText).unwrap();
+        assert_eq!(result.sex, InferredSex::Female);
+        assert_eq!(result.confidence, SexDetectionConfidence::High);
     }
 
     #[test]

@@ -287,7 +287,7 @@ fn observe_snp_pileup(
     )
 }
 
-fn snp_pileup_with_reader<R: Read + Seek>(
+pub(super) fn snp_pileup_with_reader<R: Read + Seek>(
     reader: &mut cram::io::indexed_reader::IndexedReader<R>,
     label: &str,
     locus: &GenomicLocus,

@@ -1,5 +1,9 @@
 use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
+use bioscript_core::Assembly;
+
+use crate::inspect::InferredSex;
+
 #[derive(Debug, Clone)]
 pub struct GenotypeStore {
     pub(crate) backend: QueryBackend,
@@ -72,11 +76,29 @@ impl FromStr for GenotypeSourceFormat {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct GenotypeLoadOptions {
     pub format: Option<GenotypeSourceFormat>,
     pub input_index: Option<PathBuf>,
     pub reference_file: Option<PathBuf>,
     pub reference_index: Option<PathBuf>,
+    pub assembly: Option<Assembly>,
+    pub inferred_sex: Option<InferredSex>,
+    pub impute_vcf_missing_as_reference: bool,
     pub allow_reference_md5_mismatch: bool,
+}
+
+impl Default for GenotypeLoadOptions {
+    fn default() -> Self {
+        Self {
+            format: None,
+            input_index: None,
+            reference_file: None,
+            reference_index: None,
+            assembly: None,
+            inferred_sex: None,
+            impute_vcf_missing_as_reference: true,
+            allow_reference_md5_mismatch: false,
+        }
+    }
 }

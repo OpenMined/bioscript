@@ -1,0 +1,121 @@
+use bioscript_core::{Assembly, GenomicLocus, VariantKind, VariantObservation, VariantSpec};
+
+use crate::inspect::InferredSex;
+
+use super::ParsedVcfRow;
+
+pub(crate) fn choose_variant_locus_for_assembly(
+    variant: &VariantSpec,
+    assembly: Option<Assembly>,
+) -> Option<GenomicLocus> {
+    match assembly {
+        Some(Assembly::Grch37) => variant.grch37.clone().or_else(|| variant.grch38.clone()),
+        Some(Assembly::Grch38) => variant.grch38.clone().or_else(|| variant.grch37.clone()),
+        None => variant.grch37.clone().or_else(|| variant.grch38.clone()),
+    }
+}
+
+pub(super) fn first_single_base_allele(value: Option<&str>) -> Option<char> {
+    let value = value?;
+    let mut chars = value.chars();
+    let base = chars.next()?;
+    chars.next().is_none().then_some(base)
+}
+
+pub(super) fn imputed_reference_observation(
+    backend_name: &str,
+    label: &str,
+    variant: &VariantSpec,
+    locus: &GenomicLocus,
+    assembly: Option<Assembly>,
+    inferred_sex: Option<InferredSex>,
+    missing_evidence: &str,
+) -> Option<VariantObservation> {
+    if !matches!(variant.kind, None | Some(VariantKind::Snp)) {
+        return None;
+    }
+    let reference = first_single_base_allele(variant.reference.as_deref())?;
+    first_single_base_allele(variant.alternate.as_deref())?;
+    let genotype = reference_genotype_for_locus(reference, locus, inferred_sex);
+    Some(VariantObservation {
+        backend: backend_name.to_owned(),
+        matched_rsid: variant.rsids.first().cloned(),
+        assembly,
+        genotype: Some(genotype),
+        evidence: vec![format!(
+            "{label}: {missing_evidence} | imputed reference genotype from absent variant-only VCF record"
+        )],
+        ..VariantObservation::default()
+    })
+}
+
+fn reference_genotype_for_locus(
+    reference: char,
+    locus: &GenomicLocus,
+    inferred_sex: Option<InferredSex>,
+) -> String {
+    let reference = reference.to_ascii_uppercase();
+    if inferred_sex == Some(InferredSex::Male) && is_sex_chromosome(&locus.chrom) {
+        reference.to_string()
+    } else {
+        format!("{reference}{reference}")
+    }
+}
+
+fn is_sex_chromosome(chrom: &str) -> bool {
+    matches!(
+        chrom
+            .trim()
+            .trim_start_matches("chr")
+            .trim_start_matches("CHR")
+            .to_ascii_uppercase()
+            .as_str(),
+        "X" | "Y" | "23" | "24"
+    )
+}
+
+pub(crate) fn normalize_chromosome_name(value: &str) -> String {
+    value.trim().trim_start_matches("chr").to_ascii_lowercase()
+}
+
+pub(crate) fn vcf_row_matches_variant(
+    row: &ParsedVcfRow,
+    variant: &VariantSpec,
+    assembly: Option<Assembly>,
+) -> bool {
+    let Some(locus) = choose_variant_locus_for_assembly(variant, assembly) else {
+        return false;
+    };
+
+    if normalize_chromosome_name(&row.chrom) != normalize_chromosome_name(&locus.chrom) {
+        return false;
+    }
+
+    match variant.kind.unwrap_or(VariantKind::Other) {
+        VariantKind::Snp => {
+            row.position == locus.start
+                && variant
+                    .reference
+                    .as_ref()
+                    .is_none_or(|reference| reference.eq_ignore_ascii_case(&row.reference))
+                && variant.alternate.as_ref().is_none_or(|alternate| {
+                    row.alternates
+                        .iter()
+                        .any(|candidate| candidate.eq_ignore_ascii_case(alternate))
+                })
+        }
+        VariantKind::Deletion => {
+            let expected_len = variant.deletion_length.unwrap_or(0);
+            row.position == locus.start.saturating_sub(1)
+                && row.alternates.iter().any(|alternate| {
+                    let actual_len = row.reference.len().saturating_sub(alternate.len());
+                    (expected_len == 0 || actual_len == expected_len)
+                        && alternate.len() < row.reference.len()
+                })
+        }
+        VariantKind::Insertion | VariantKind::Indel => {
+            row.position == locus.start.saturating_sub(1)
+        }
+        VariantKind::Other => row.position == locus.start,
+    }
+}
