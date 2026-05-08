@@ -24,6 +24,31 @@ pub fn observe_vcf_snp_with_reader<R>(
 where
     R: Read + Seek,
 {
+    observe_vcf_snp_with_reader_and_assembly_ref(
+        indexed,
+        label,
+        locus,
+        reference,
+        alternate,
+        None,
+        matched_rsid,
+        assembly,
+    )
+}
+
+pub(crate) fn observe_vcf_snp_with_reader_and_assembly_ref<R>(
+    indexed: &mut csi::io::IndexedReader<bgzf::io::Reader<R>, tabix::Index>,
+    label: &str,
+    locus: &GenomicLocus,
+    reference: char,
+    alternate: char,
+    assembly_reference: Option<char>,
+    matched_rsid: Option<String>,
+    assembly: Option<Assembly>,
+) -> Result<VariantObservation, RuntimeError>
+where
+    R: Read + Seek,
+{
     let locus_label = format!("{}:{}", locus.chrom, locus.start);
 
     let Some(seq_name) = resolve_vcf_chrom_name(indexed.index(), &locus.chrom) else {
@@ -57,8 +82,10 @@ where
         RuntimeError::Io(format!("{label}: tabix query for {locus_label}: {err}"))
     })?;
 
-    let reference_str = reference.to_ascii_uppercase().to_string();
+    let expected_reference = assembly_reference.unwrap_or(reference);
+    let reference_str = expected_reference.to_ascii_uppercase().to_string();
     let alternate_str = alternate.to_ascii_uppercase().to_string();
+    let catalog_reference_str = reference.to_ascii_uppercase().to_string();
 
     let mut saw_any = false;
     for record_result in query {
@@ -79,6 +106,10 @@ where
             .alternates
             .iter()
             .any(|alt| alt.eq_ignore_ascii_case(&alternate_str))
+            && !row
+                .alternates
+                .iter()
+                .any(|alt| alt.eq_ignore_ascii_case(&catalog_reference_str))
         {
             continue;
         }
@@ -95,7 +126,7 @@ where
 
     let evidence = if saw_any {
         vec![format!(
-            "{label}: {locus_label} present but ref={reference}/alt={alternate} did not match any record"
+            "{label}: {locus_label} present but ref={expected_reference}/alt={alternate} did not match any record"
         )]
     } else {
         vec![format!("{label}: no VCF record at {locus_label}")]

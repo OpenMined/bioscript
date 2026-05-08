@@ -9,10 +9,12 @@ use zip::ZipArchive;
 
 use crate::genotype::{DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row};
 
-use super::DetectedKind;
+use super::{DetectedKind, InspectOptions};
 
+mod alignment_depth;
 mod classify;
 
+pub(crate) use alignment_depth::infer_sex_from_alignment_path;
 use classify::{classify_stats, supports_sex_detection, unsupported_sex_inference};
 
 const MAX_SEX_DETECTION_LINES: usize = 50_000_000;
@@ -484,18 +486,63 @@ mod tests {
 
     #[test]
     fn vcf_non_par_x_gt_detects_diploid_het_signal() {
-        let lines = vec![
-            "chrX\t3000000\t.\tC\tT\t.\tPASS\t.\tGT\t0/1".to_owned(),
-            "chrX\t4000000\t.\tC\tT\t.\tPASS\t.\tGT\t0/0".to_owned(),
-            "chrX\t5000000\t.\tC\tT\t.\tPASS\t.\tGT\t1/1".to_owned(),
-        ];
+        let lines: Vec<String> = (0..100)
+            .map(|idx| {
+                let gt = if idx % 3 == 0 { "0/1" } else { "0/0" };
+                format!("chrX\t{}\t.\tC\tT\t.\tPASS\t.\tGT\t{gt}", 3_000_000 + idx)
+            })
+            .collect();
         let result = infer_sex_from_text_lines(&lines, DetectedKind::Vcf).unwrap();
+        assert_eq!(result.sex, InferredSex::Female);
         assert_eq!(result.method, "vcf_non_par_x_gt_y_count");
         assert!(
             result
                 .evidence
                 .iter()
-                .any(|item| item == "x_het_gt_sites=1")
+                .any(|item| item == "x_het_gt_sites=34")
+        );
+    }
+
+    #[test]
+    fn vcf_non_par_x_gt_beats_low_y_call_presence_when_signals_conflict() {
+        let mut lines: Vec<String> = (0..20)
+            .map(|idx| format!("chrY\t{}\t.\tC\tT\t.\tPASS\t.\tGT\t1", 3_000_000 + idx))
+            .collect();
+        lines.extend((0..1000).map(|idx| {
+            let gt = if idx % 2 == 0 { "0/1" } else { "0/0" };
+            format!("chrX\t{}\t.\tC\tT\t.\tPASS\t.\tGT\t{gt}", 3_000_000 + idx)
+        }));
+
+        let result = infer_sex_from_text_lines(&lines, DetectedKind::Vcf).unwrap();
+        assert_eq!(result.sex, InferredSex::Female);
+        assert_eq!(result.confidence, SexDetectionConfidence::High);
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "called_y_snps=20")
+        );
+    }
+
+    #[test]
+    fn vcf_strong_y_signal_beats_diploid_x_het_from_wgs_callers() {
+        let mut lines: Vec<String> = (0..600)
+            .map(|idx| format!("chrY\t{}\t.\tC\tT\t.\tPASS\t.\tGT\t1", 3_000_000 + idx))
+            .collect();
+        lines.extend((0..2000).map(|idx| {
+            let gt = if idx % 10 < 3 { "0/1" } else { "0/0" };
+            format!("chrX\t{}\t.\tC\tT\t.\tPASS\t.\tGT\t{gt}", 3_000_000 + idx)
+        }));
+
+        let result = infer_sex_from_text_lines(&lines, DetectedKind::Vcf).unwrap();
+        assert_eq!(result.sex, InferredSex::Male);
+        assert_eq!(result.confidence, SexDetectionConfidence::High);
+        assert!(result.evidence.iter().any(|item| item == "x_het_pct=30.00"));
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "y_to_x_pct=30.00")
         );
     }
 }

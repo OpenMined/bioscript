@@ -33,7 +33,7 @@ pub fn imputed_reference_observation(
 ) -> Option<VariantObservation> {
     let genotype = match variant.kind {
         None | Some(VariantKind::Snp) => {
-            let reference = first_single_base_allele(variant.reference.as_deref())?;
+            let reference = reference_for_assembly(variant, assembly)?;
             first_single_base_allele(variant.alternate.as_deref())?;
             reference_genotype_for_locus(reference, locus, inferred_sex)
         }
@@ -77,6 +77,16 @@ fn reference_genotype_for_locus(
     }
 }
 
+pub(crate) fn reference_for_assembly(
+    variant: &VariantSpec,
+    assembly: Option<Assembly>,
+) -> Option<char> {
+    let value = variant
+        .assembly_reference(assembly)
+        .or(variant.reference.as_deref())?;
+    first_single_base_allele(Some(value))
+}
+
 fn is_sex_chromosome(chrom: &str) -> bool {
     matches!(
         chrom
@@ -108,16 +118,13 @@ pub(crate) fn vcf_row_matches_variant(
 
     match variant.kind.unwrap_or(VariantKind::Other) {
         VariantKind::Snp => {
+            let expected_reference = variant
+                .assembly_reference(assembly)
+                .or(variant.reference.as_deref());
             row.position == locus.start
-                && variant
-                    .reference
-                    .as_ref()
+                && expected_reference
                     .is_none_or(|reference| reference.eq_ignore_ascii_case(&row.reference))
-                && variant.alternate.as_ref().is_none_or(|alternate| {
-                    row.alternates
-                        .iter()
-                        .any(|candidate| candidate.eq_ignore_ascii_case(alternate))
-                })
+                && snp_row_has_catalog_allele(row, variant)
         }
         VariantKind::Deletion => {
             let expected_len = variant.deletion_length.unwrap_or(0);
@@ -133,4 +140,22 @@ pub(crate) fn vcf_row_matches_variant(
         }
         VariantKind::Other => row.position == locus.start,
     }
+}
+
+fn snp_row_has_catalog_allele(row: &ParsedVcfRow, variant: &VariantSpec) -> bool {
+    let Some(alternate) = variant.alternate.as_ref() else {
+        return true;
+    };
+    if row
+        .alternates
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(alternate))
+    {
+        return true;
+    }
+    variant.reference.as_ref().is_some_and(|reference| {
+        row.alternates
+            .iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(reference))
+    })
 }

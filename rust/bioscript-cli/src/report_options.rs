@@ -108,6 +108,7 @@ impl AppReportCliState {
                 self.loader.reference_index =
                     Some(PathBuf::from(next_arg(iter, "--reference-index")?));
             }
+            "--allow-md5-mismatch" => self.loader.allow_reference_md5_mismatch = true,
             value if value.starts_with('-') => return Err(format!("unexpected argument: {value}")),
             value => self.consume_path(value),
         }

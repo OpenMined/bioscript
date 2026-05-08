@@ -105,6 +105,26 @@ where
     cram_stream::for_each_cram_record_with_reader_inner(reader, label, locus, true, on_record)
 }
 
+pub(crate) fn for_each_cram_record_with_reader_allow_md5_mismatch<R, F>(
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
+    label: &str,
+    locus: &GenomicLocus,
+    allow_reference_md5_mismatch: bool,
+    on_record: F,
+) -> Result<(), RuntimeError>
+where
+    R: Read + Seek,
+    F: FnMut(AlignmentRecord) -> Result<bool, RuntimeError>,
+{
+    cram_stream::for_each_cram_record_with_reader_inner(
+        reader,
+        label,
+        locus,
+        allow_reference_md5_mismatch,
+        on_record,
+    )
+}
+
 /// Iterate raw CRAM records intersecting `locus`, streaming from an
 /// already-built CRAM `IndexedReader`. The raw variant preserves the
 /// `cram::Record` handle so callers can pull base+quality at a specific

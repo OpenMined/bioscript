@@ -132,6 +132,28 @@ pub(crate) fn validate_coordinates(root: &Value, issues: &mut Vec<Issue>) {
         } else {
             validate_coordinate_range(coord, assembly, issues);
         }
+        validate_assembly_ref(coord, assembly, issues);
+    }
+}
+
+fn validate_assembly_ref(coord: &Mapping, assembly: &str, issues: &mut Vec<Issue>) {
+    let Some(value) = coord.get(Value::String("assembly_ref".to_owned())) else {
+        return;
+    };
+    let Some(reference) = value.as_str() else {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("coordinates.{assembly}.assembly_ref"),
+            message: "expected string".to_owned(),
+        });
+        return;
+    };
+    if !is_base_allele(reference) {
+        issues.push(Issue {
+            severity: Severity::Error,
+            path: format!("coordinates.{assembly}.assembly_ref"),
+            message: "expected A, C, G, or T".to_owned(),
+        });
     }
 }
 

@@ -414,6 +414,8 @@ fn variant_spec_from_root(root: &Value) -> Result<VariantSpec, String> {
         rsids,
         grch37,
         grch38,
+        grch37_assembly_ref: scalar_at(root, &["coordinates", "grch37", "assembly_ref"]),
+        grch38_assembly_ref: scalar_at(root, &["coordinates", "grch38", "assembly_ref"]),
         reference,
         alternate,
         kind,

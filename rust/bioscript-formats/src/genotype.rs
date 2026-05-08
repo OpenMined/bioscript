@@ -548,6 +548,8 @@ mod tests {
             rsids: vec!["rs1".to_owned()],
             grch37: Some(locus("1", 10, 10)),
             grch38: Some(locus("2", 20, 20)),
+            grch37_assembly_ref: None,
+            grch38_assembly_ref: None,
             reference: Some("A".to_owned()),
             alternate: Some("G".to_owned()),
             kind: Some(VariantKind::Snp),
@@ -831,6 +833,22 @@ mod tests {
             ..VariantSpec::default()
         };
         assert!(vcf_row_matches_variant(&row, &snp, Some(Assembly::Grch38)));
+        let assembly_ref_snp = VariantSpec {
+            grch37: Some(locus("1", 10, 10)),
+            grch37_assembly_ref: Some("G".to_owned()),
+            reference: Some("A".to_owned()),
+            alternate: Some("G".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        };
+        let inverted_row = parse_vcf_record("1\t10\trs10\tG\tA\t.\tPASS\t.\tGT\t1/1")
+            .unwrap()
+            .unwrap();
+        assert!(vcf_row_matches_variant(
+            &inverted_row,
+            &assembly_ref_snp,
+            Some(Assembly::Grch37)
+        ));
         let deletion_row = parse_vcf_record("1\t9\trsdel\tATC\tA\t.\tPASS\t.\tGT\t0/1")
             .unwrap()
             .unwrap();
@@ -878,6 +896,58 @@ mod tests {
             },
             Some(Assembly::Grch38)
         ));
+    }
+
+    #[test]
+    fn vcf_scan_translates_assembly_ref_snv_rows_and_missing_reference() {
+        let dir = temp_dir("vcf-assembly-ref");
+        let vcf_path = dir.join("sample.grch37.vcf");
+        fs::write(
+            &vcf_path,
+            "##fileformat=VCFv4.3\n\
+             ##reference=GRCh37\n\
+             #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+             1\t10\trs10\tT\tC,A\t.\tPASS\t.\tGT\t1/1\n",
+        )
+        .unwrap();
+
+        let backend = VcfBackend {
+            path: vcf_path,
+            options: GenotypeLoadOptions {
+                assembly: Some(Assembly::Grch37),
+                ..GenotypeLoadOptions::default()
+            },
+        };
+        let present = VariantSpec {
+            grch37: Some(locus("1", 10, 10)),
+            grch37_assembly_ref: Some("T".to_owned()),
+            reference: Some("C".to_owned()),
+            alternate: Some("T".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        };
+        let missing = VariantSpec {
+            grch37: Some(locus("1", 20, 20)),
+            grch37_assembly_ref: Some("T".to_owned()),
+            reference: Some("C".to_owned()),
+            alternate: Some("T".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        };
+
+        let observations = scan_vcf_variants(&backend, &[present, missing]).unwrap();
+        assert_eq!(observations[0].genotype.as_deref(), Some("CC"));
+        assert!(
+            observations[0].evidence[0].contains("resolved by locus"),
+            "{:?}",
+            observations[0].evidence
+        );
+        assert_eq!(observations[1].genotype.as_deref(), Some("TT"));
+        assert!(
+            observations[1].evidence[0].contains("imputed reference genotype"),
+            "{:?}",
+            observations[1].evidence
+        );
     }
 
     #[test]

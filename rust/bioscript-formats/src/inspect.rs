@@ -283,10 +283,19 @@ pub fn inspect_file(path: &Path, options: &InspectOptions) -> Result<FileInspect
         .flatten();
     let (has_index, index_path) = detect_index(path, detected_kind, options);
     let confidence = classify_confidence(detected_kind, &sample_lines, source.as_ref());
-    let inferred_sex = options
-        .detect_sex
-        .then(|| sex::infer_sex_from_path(path, detected_kind))
-        .transpose()?;
+    let inferred_sex = if options.detect_sex {
+        if detected_kind == DetectedKind::AlignmentCram {
+            Some(sex::infer_sex_from_alignment_path(
+                path,
+                options,
+                detected_kind,
+            )?)
+        } else {
+            Some(sex::infer_sex_from_path(path, detected_kind)?)
+        }
+    } else {
+        None
+    };
 
     Ok(FileInspection {
         path: path.to_path_buf(),
