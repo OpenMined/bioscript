@@ -67,12 +67,12 @@ fn classify_vcf_stats(stats: &SexStats) -> SexInference {
     let x_het_pct = if stats.x_diploid_gt_sites == 0 {
         0.0
     } else {
-        stats.x_het_gt_sites as f64 * 100.0 / stats.x_diploid_gt_sites as f64
+        count_as_f64(stats.x_het_gt_sites) * 100.0 / count_as_f64(stats.x_diploid_gt_sites)
     };
     let y_to_x_pct = if stats.x_non_par_sites == 0 {
         0.0
     } else {
-        stats.called_y_snps as f64 * 100.0 / stats.x_non_par_sites as f64
+        count_as_f64(stats.called_y_snps) * 100.0 / count_as_f64(stats.x_non_par_sites)
     };
     let female_like_x =
         stats.x_non_par_sites >= 50 && stats.x_diploid_gt_sites > 0 && x_het_pct >= 2.0;
@@ -113,6 +113,10 @@ fn classify_vcf_stats(stats: &SexStats) -> SexInference {
             format!("y_to_x_pct={y_to_x_pct:.2}"),
         ],
     }
+}
+
+fn count_as_f64(count: usize) -> f64 {
+    f64::from(u32::try_from(count).unwrap_or(u32::MAX))
 }
 
 fn y_fingerprint_evidence(stats: &SexStats) -> Vec<String> {
