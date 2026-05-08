@@ -205,6 +205,7 @@ fn run_bioscript_analysis_script(
         RuntimeConfig {
             limits,
             loader: loader.clone(),
+            ..RuntimeConfig::default()
         },
     )
     .map_err(|err| err.to_string())?;

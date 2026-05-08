@@ -86,6 +86,12 @@ pub(crate) fn query_cram_records(
 /// Iterate decoded alignment records intersecting `locus`, streaming from an
 /// already-built CRAM `IndexedReader`. This is the reader-based entry point
 /// used by non-filesystem callers (e.g. wasm with a JS `ReadAt` shim).
+///
+/// MD5 mismatches between the CRAM slices and the supplied reference are
+/// tolerated (lenient decode). The wasm caller has no way to surface a
+/// `--allow-md5-mismatch` flag and the web flow expects to keep going when
+/// the FASTA is "close enough"; this matches what users get from the CLI
+/// after passing that flag.
 pub fn for_each_cram_record_with_reader<R, F>(
     reader: &mut cram::io::indexed_reader::IndexedReader<R>,
     label: &str,
@@ -96,7 +102,7 @@ where
     R: Read + Seek,
     F: FnMut(AlignmentRecord) -> Result<bool, RuntimeError>,
 {
-    cram_stream::for_each_cram_record_with_reader_inner(reader, label, locus, false, on_record)
+    cram_stream::for_each_cram_record_with_reader_inner(reader, label, locus, true, on_record)
 }
 
 pub(crate) fn for_each_cram_record_with_reader_allow_md5_mismatch<R, F>(
@@ -133,7 +139,7 @@ where
     R: Read + Seek,
     F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
 {
-    for_each_raw_cram_record_with_reader_inner(reader, label, locus, false, on_record)
+    for_each_raw_cram_record_with_reader_inner(reader, label, locus, true, on_record)
 }
 
 #[cfg(test)]

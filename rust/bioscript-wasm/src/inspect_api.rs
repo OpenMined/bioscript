@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use bioscript_formats::{
-    inspect_bytes as inspect_bytes_rs, DetectedKind, DetectionConfidence, FileContainer,
-    FileInspection, InspectOptions, SourceMetadata,
+    DetectedKind, DetectionConfidence, FileContainer, FileInspection, InspectOptions,
+    SourceMetadata, inspect_bytes as inspect_bytes_rs,
 };
 use bioscript_schema::resolve_remote_resource_text as resolve_remote_resource_text_rs;
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,8 @@ struct InspectOptionsJs {
     input_index: Option<String>,
     reference_file: Option<String>,
     reference_index: Option<String>,
+    #[serde(default, rename = "detectSex")]
+    detect_sex: bool,
 }
 
 /// Classify bytes as a known genomic file. Mirrors `bioscript-formats::inspect::inspect_bytes`.
@@ -32,6 +34,7 @@ pub fn inspect_bytes(
         input_index: options_js.input_index.map(PathBuf::from),
         reference_file: options_js.reference_file.map(PathBuf::from),
         reference_index: options_js.reference_index.map(PathBuf::from),
+        detect_sex: options_js.detect_sex,
     };
 
     let inspection = inspect_bytes_rs(name, bytes, &options)

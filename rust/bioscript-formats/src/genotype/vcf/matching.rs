@@ -22,7 +22,7 @@ pub(super) fn first_single_base_allele(value: Option<&str>) -> Option<char> {
     chars.next().is_none().then_some(base)
 }
 
-pub(super) fn imputed_reference_observation(
+pub fn imputed_reference_observation(
     backend_name: &str,
     label: &str,
     variant: &VariantSpec,

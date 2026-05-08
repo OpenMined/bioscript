@@ -143,24 +143,40 @@ fn variant_manifest_from_root(path: &Path, value: &Value) -> Result<VariantManif
 /// valid panel manifest shape.
 pub fn load_panel_manifest(path: &Path) -> Result<PanelManifest, String> {
     let value = load_yaml(path)?;
+    panel_manifest_from_root(path, &value)
+}
+
+/// Load a panel manifest from YAML text.
+///
+/// # Errors
+///
+/// Returns an error when the text cannot be parsed or converted into a valid
+/// panel manifest shape.
+pub fn load_panel_manifest_text(name: &str, text: &str) -> Result<PanelManifest, String> {
+    let value: Value =
+        serde_yaml::from_str(text).map_err(|err| format!("failed to parse YAML {name}: {err}"))?;
+    panel_manifest_from_root(Path::new(name), &value)
+}
+
+fn panel_manifest_from_root(path: &Path, value: &Value) -> Result<PanelManifest, String> {
     let mut issues = Vec::new();
-    validate_panel_root(&value, &mut issues);
+    validate_panel_root(value, &mut issues);
     if issues.iter().any(|issue| issue.severity == Severity::Error) {
         return Err(render_single_manifest_errors(path, &issues));
     }
 
     let permissions = Permissions {
-        domains: seq_of_strings(&value, &["permissions", "domains"]).unwrap_or_default(),
+        domains: seq_of_strings(value, &["permissions", "domains"]).unwrap_or_default(),
     };
-    let downloads = parse_downloads(&value)?;
-    let members = parse_panel_members(&value)?;
-    let interpretations = parse_panel_interpretations(&value)?;
+    let downloads = parse_downloads(value)?;
+    let members = parse_panel_members(value)?;
+    let interpretations = parse_panel_interpretations(value)?;
 
     Ok(PanelManifest {
         path: path.to_path_buf(),
-        name: required_non_empty_string(&value, &["name"])?,
-        label: scalar_at(&value, &["label"]),
-        tags: seq_of_strings(&value, &["tags"]).unwrap_or_default(),
+        name: required_non_empty_string(value, &["name"])?,
+        label: scalar_at(value, &["label"]),
+        tags: seq_of_strings(value, &["tags"]).unwrap_or_default(),
         permissions,
         downloads,
         members,
@@ -182,18 +198,34 @@ pub fn load_panel_manifest(path: &Path) -> Result<PanelManifest, String> {
 /// valid assay manifest shape.
 pub fn load_assay_manifest(path: &Path) -> Result<AssayManifest, String> {
     let value = load_yaml(path)?;
+    assay_manifest_from_root(path, &value)
+}
+
+/// Load an assay manifest from YAML text.
+///
+/// # Errors
+///
+/// Returns an error when the text cannot be parsed or converted into a valid
+/// assay manifest shape.
+pub fn load_assay_manifest_text(name: &str, text: &str) -> Result<AssayManifest, String> {
+    let value: Value =
+        serde_yaml::from_str(text).map_err(|err| format!("failed to parse YAML {name}: {err}"))?;
+    assay_manifest_from_root(Path::new(name), &value)
+}
+
+fn assay_manifest_from_root(path: &Path, value: &Value) -> Result<AssayManifest, String> {
     let mut issues = Vec::new();
-    validate_assay_root(&value, &mut issues);
+    validate_assay_root(value, &mut issues);
     if issues.iter().any(|issue| issue.severity == Severity::Error) {
         return Err(render_single_manifest_errors(path, &issues));
     }
 
     Ok(AssayManifest {
         path: path.to_path_buf(),
-        name: required_non_empty_string(&value, &["name"])?,
-        tags: seq_of_strings(&value, &["tags"]).unwrap_or_default(),
-        members: parse_panel_members(&value)?,
-        interpretations: parse_panel_interpretations(&value)?,
+        name: required_non_empty_string(value, &["name"])?,
+        tags: seq_of_strings(value, &["tags"]).unwrap_or_default(),
+        members: parse_panel_members(value)?,
+        interpretations: parse_panel_interpretations(value)?,
     })
 }
 

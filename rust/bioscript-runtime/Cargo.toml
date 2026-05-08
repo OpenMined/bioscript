@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bioscript-core = { path = "../bioscript-core" }
 bioscript-formats = { path = "../bioscript-formats" }
+getrandom = { version = "0.3", features = ["wasm_js"] }
 monty = { path = "../../monty/crates/monty" }
 
 [lints.clippy]

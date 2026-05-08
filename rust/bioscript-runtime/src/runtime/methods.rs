@@ -1,4 +1,4 @@
-use std::{fs, time::Instant};
+use std::fs;
 
 use bioscript_core::RuntimeError;
 use bioscript_formats::{GenotypeLoadOptions, GenotypeStore};
@@ -12,6 +12,7 @@ use super::{
         genotype_file_object, variant_object, variant_observation_object, variant_plan_object,
     },
     resolve_optional_loader_path,
+    timing::RuntimeInstant,
     variants::{
         dataclass_handle_id, dataclass_to_variant_spec, variant_spec_from_kwargs,
         variant_specs_from_plan,
@@ -24,7 +25,7 @@ impl BioscriptRuntime {
         args: &[MontyObject],
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
+        let started = RuntimeInstant::now();
         reject_kwargs(kwargs, "bioscript.load_genotypes")?;
         if args.len() != 2 {
             return Err(RuntimeError::InvalidArguments(
@@ -37,7 +38,30 @@ impl BioscriptRuntime {
             "bioscript.load_genotypes",
         )?)?;
         let loader = self.resolved_loader_options()?;
-        let store = GenotypeStore::from_file_with_options(&path, &loader)?;
+        let inner_store = if let Some(bytes) = self.read_virtual_binary_file(&path) {
+            GenotypeStore::from_bytes(
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("input"),
+                &bytes,
+            )?
+        } else {
+            GenotypeStore::from_file_with_options(&path, &loader)?
+        };
+        // Layer pre-resolved observations on top of whatever backend the path
+        // resolves to. The report pipeline collects every variant the panel
+        // declares before running analyses, so `genotypes.lookup_variants(...)`
+        // hits the cache and we don't re-walk the genome inside Python. On a
+        // miss (script asks about a novel rsid) we fall through to the inner
+        // store — same behavior as before this cache existed.
+        let store = if self.config.preloaded_observations.is_empty() {
+            inner_store
+        } else {
+            GenotypeStore::with_cached_observations(
+                self.config.preloaded_observations.clone(),
+                inner_store,
+            )
+        };
         let handle = self.state.next_handle();
         self.state
             .genotype_files
@@ -123,7 +147,7 @@ impl BioscriptRuntime {
         args: &[MontyObject],
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
+        let started = RuntimeInstant::now();
         reject_kwargs(kwargs, "GenotypeFile.lookup_variant")?;
         if args.len() != 2 {
             return Err(RuntimeError::InvalidArguments(
@@ -159,7 +183,7 @@ impl BioscriptRuntime {
         args: &[MontyObject],
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
+        let started = RuntimeInstant::now();
         reject_kwargs(kwargs, "GenotypeFile.lookup_variant_details")?;
         if args.len() != 2 {
             return Err(RuntimeError::InvalidArguments(
@@ -192,7 +216,7 @@ impl BioscriptRuntime {
         args: &[MontyObject],
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
+        let started = RuntimeInstant::now();
         reject_kwargs(kwargs, "GenotypeFile.lookup_variants")?;
         if args.len() != 2 {
             return Err(RuntimeError::InvalidArguments(
@@ -233,7 +257,7 @@ impl BioscriptRuntime {
         args: &[MontyObject],
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
+        let started = RuntimeInstant::now();
         reject_kwargs(kwargs, "GenotypeFile.lookup_variants_details")?;
         if args.len() != 2 {
             return Err(RuntimeError::InvalidArguments(
@@ -271,7 +295,7 @@ impl BioscriptRuntime {
         args: &[MontyObject],
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
-        let started = Instant::now();
+        let started = RuntimeInstant::now();
         reject_kwargs(kwargs, "bioscript.write_tsv")?;
         if args.len() != 3 {
             return Err(RuntimeError::InvalidArguments(
@@ -281,14 +305,6 @@ impl BioscriptRuntime {
         let path =
             self.resolve_user_write_path(&expect_string_arg(args, 1, "bioscript.write_tsv")?)?;
         let rows = expect_rows(&args[2])?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|err| {
-                RuntimeError::Io(format!(
-                    "failed to create parent dir {}: {err}",
-                    parent.display()
-                ))
-            })?;
-        }
         let mut output = String::new();
         if let Some(first) = rows.first() {
             let headers: Vec<String> = first.keys().cloned().collect();
@@ -302,6 +318,22 @@ impl BioscriptRuntime {
                 output.push_str(&values.join("\t"));
                 output.push('\n');
             }
+        }
+        if self.write_virtual_text_file(&path, output.clone()) {
+            self.record_timing(
+                "write_tsv",
+                started.elapsed(),
+                format!("path={} rows={}", path.display(), rows.len()),
+            );
+            return Ok(MontyObject::None);
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| {
+                RuntimeError::Io(format!(
+                    "failed to create parent dir {}: {err}",
+                    parent.display()
+                ))
+            })?;
         }
         fs::write(&path, output).map_err(|err| {
             RuntimeError::Io(format!("failed to write {}: {err}", path.display()))

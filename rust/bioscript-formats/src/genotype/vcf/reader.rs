@@ -5,9 +5,9 @@ use noodles::core::{Position, Region};
 use noodles::csi::{self, BinningIndex};
 use noodles::tabix;
 
-use bioscript_core::{Assembly, GenomicLocus, RuntimeError, VariantObservation};
+use bioscript_core::{Assembly, GenomicLocus, RuntimeError, VariantObservation, VariantSpec};
 
-use super::parse_vcf_record;
+use super::{parse_vcf_record, vcf_row_matches_variant};
 
 /// Observe a SNP at `locus` over an already-built tabix-indexed bgzipped VCF
 /// reader. Caller builds `csi::io::IndexedReader::new(reader, tabix_index)`
@@ -127,6 +127,97 @@ where
     let evidence = if saw_any {
         vec![format!(
             "{label}: {locus_label} present but ref={expected_reference}/alt={alternate} did not match any record"
+        )]
+    } else {
+        vec![format!("{label}: no VCF record at {locus_label}")]
+    };
+    Ok(VariantObservation {
+        backend: "vcf".to_owned(),
+        matched_rsid,
+        assembly,
+        evidence,
+        ..VariantObservation::default()
+    })
+}
+
+pub fn observe_vcf_variant_with_reader<R>(
+    indexed: &mut csi::io::IndexedReader<bgzf::io::Reader<R>, tabix::Index>,
+    label: &str,
+    locus: &GenomicLocus,
+    variant: &VariantSpec,
+    matched_rsid: Option<String>,
+    assembly: Option<Assembly>,
+) -> Result<VariantObservation, RuntimeError>
+where
+    R: Read + Seek,
+{
+    let locus_label = format!("{}:{}-{}", locus.chrom, locus.start, locus.end);
+
+    let Some(seq_name) = resolve_vcf_chrom_name(indexed.index(), &locus.chrom) else {
+        return Ok(VariantObservation {
+            backend: "vcf".to_owned(),
+            matched_rsid,
+            assembly,
+            evidence: vec![format!(
+                "{label}: tabix index has no contig matching {} (tried chr-prefixed and bare forms)",
+                locus.chrom
+            )],
+            ..VariantObservation::default()
+        });
+    };
+
+    let start = locus.start.saturating_sub(1).max(1);
+    let end = locus.end.max(locus.start).max(start);
+    let start_position = Position::try_from(usize::try_from(start).map_err(|err| {
+        RuntimeError::Io(format!(
+            "{label}: invalid VCF start position {start} for {locus_label}: {err}"
+        ))
+    })?)
+    .map_err(|err| {
+        RuntimeError::Io(format!(
+            "{label}: invalid VCF start position {start} for {locus_label}: {err}"
+        ))
+    })?;
+    let end_position = Position::try_from(usize::try_from(end).map_err(|err| {
+        RuntimeError::Io(format!(
+            "{label}: invalid VCF end position {end} for {locus_label}: {err}"
+        ))
+    })?)
+    .map_err(|err| {
+        RuntimeError::Io(format!(
+            "{label}: invalid VCF end position {end} for {locus_label}: {err}"
+        ))
+    })?;
+    let region = Region::new(seq_name.as_str(), start_position..=end_position);
+
+    let query = indexed.query(&region).map_err(|err| {
+        RuntimeError::Io(format!("{label}: tabix query for {locus_label}: {err}"))
+    })?;
+
+    let mut saw_any = false;
+    for record_result in query {
+        let record = record_result
+            .map_err(|err| RuntimeError::Io(format!("{label}: tabix record iter: {err}")))?;
+        let line: &str = record.as_ref();
+        let Some(row) = parse_vcf_record(line)? else {
+            continue;
+        };
+        saw_any = true;
+        if vcf_row_matches_variant(&row, variant, assembly) {
+            return Ok(VariantObservation {
+                backend: "vcf".to_owned(),
+                matched_rsid: matched_rsid.or_else(|| row.rsid.clone()),
+                assembly,
+                genotype: Some(row.genotype.clone()),
+                evidence: vec![format!("{label}: resolved by indexed locus {locus_label}")],
+                ..VariantObservation::default()
+            });
+        }
+    }
+
+    let evidence = if saw_any {
+        vec![format!(
+            "{label}: indexed region {locus_label} had records, but none matched query"
         )]
     } else {
         vec![format!("{label}: no VCF record at {locus_label}")]

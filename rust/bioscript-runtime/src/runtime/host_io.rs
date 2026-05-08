@@ -14,6 +14,9 @@ pub(crate) fn host_read_text(
 ) -> Result<MontyObject, RuntimeError> {
     reject_kwargs(kwargs, "read_text")?;
     let path = runtime.resolve_existing_user_path(&expect_string_arg(args, 0, "read_text")?)?;
+    if let Some(content) = runtime.read_virtual_text_file(&path) {
+        return Ok(MontyObject::String(content));
+    }
     let content = read_text_limited(&path, MAX_HOST_TEXT_BYTES)?;
     Ok(MontyObject::String(content))
 }
@@ -30,6 +33,9 @@ pub(crate) fn host_write_text(
         return Err(RuntimeError::InvalidArguments(format!(
             "write_text content exceeds {MAX_HOST_TEXT_BYTES} bytes"
         )));
+    }
+    if runtime.write_virtual_text_file(&path, content.clone()) {
+        return Ok(MontyObject::None);
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| {
