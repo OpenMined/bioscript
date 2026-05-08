@@ -518,6 +518,55 @@ fn cram_md5_mismatch_is_tolerated_and_returns_correct_result() {
 }
 
 #[test]
+fn cram_md5_mismatch_still_decodes_chr6_pgx_loci() {
+    let Some(fx) = cram_fixture_or_skip("cram_md5_mismatch_still_decodes_chr6_pgx_loci") else {
+        return;
+    };
+    let store = open_cram_store_with_md5_policy(&fx, true);
+
+    for (rsid, start, reference, alternate, expected_ref_base) in [
+        ("rs1360780", 35_639_794, "T", "C", "T"),
+        ("rs4713916", 35_702_206, "A", "G", "A"),
+        ("rs1799971", 154_039_662, "A", "G", "A"),
+    ] {
+        let observation = store
+            .lookup_variant(&VariantSpec {
+                rsids: vec![rsid.to_owned()],
+                grch38: Some(bioscript_core::GenomicLocus {
+                    chrom: "6".to_owned(),
+                    start,
+                    end: start,
+                }),
+                reference: Some(reference.to_owned()),
+                alternate: Some(alternate.to_owned()),
+                kind: Some(VariantKind::Snp),
+                ..VariantSpec::default()
+            })
+            .unwrap_or_else(|err| {
+                panic!("{rsid} lookup should decode despite MD5 mismatch: {err:?}")
+            });
+
+        let depth = observation.depth.unwrap_or(0);
+        assert!(
+            depth >= 10,
+            "{rsid} should have CRAM coverage after lenient MD5 decode, got depth {depth}: {:?}",
+            observation.evidence
+        );
+        assert!(
+            !observation.raw_counts.contains_key("C") || rsid != "rs1799971",
+            "{rsid} should not decode reference-like rs1799971 bases as previous-base C: {:?}",
+            observation.raw_counts
+        );
+        assert!(
+            observation.raw_counts.contains_key(expected_ref_base)
+                || observation.ref_count.unwrap_or(0) == 0,
+            "{rsid} should include expected reference base {expected_ref_base} when reference reads are present: {:?}",
+            observation.raw_counts
+        );
+    }
+}
+
+#[test]
 fn cram_rs9357296_reports_heterozygous_counts_for_na06985() {
     let Some(fx) = cram_fixture_or_skip("cram_rs9357296_reports_heterozygous_counts_for_na06985")
     else {

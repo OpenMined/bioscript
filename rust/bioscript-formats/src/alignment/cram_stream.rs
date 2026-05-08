@@ -232,6 +232,7 @@ where
         let reference_sequence_repository = reader.reference_sequence_repository().clone();
 
         let mut stop = false;
+        let mut callback_err: Option<RuntimeError> = None;
 
         for (index, slice_result) in container.slices().enumerate() {
             let slice = slice_result.map_err(|err| {
@@ -256,30 +257,28 @@ where
                 ))
             })?;
 
-            let records = slice.records(
+            let decode_result = slice.records_while(
                 reference_sequence_repository.clone(),
                 header,
                 &compression_header,
                 &core_data_src,
                 &external_data_srcs,
+                !allow_reference_md5_mismatch,
+                |record| {
+                    Ok(handle_decoded_cram_record(
+                        label,
+                        record,
+                        interval,
+                        locus_end,
+                        &mut stop,
+                        &mut callback_err,
+                        on_record,
+                    ))
+                },
             );
 
-            match records {
-                Ok(records) => {
-                    let mut callback_err: Option<RuntimeError> = None;
-                    for record in &records {
-                        if !handle_decoded_cram_record(
-                            label,
-                            record,
-                            interval,
-                            locus_end,
-                            &mut stop,
-                            &mut callback_err,
-                            on_record,
-                        ) {
-                            break;
-                        }
-                    }
+            match decode_result {
+                Ok(()) => {
                     if let Some(err) = callback_err {
                         return Err(err);
                     }
@@ -287,7 +286,7 @@ where
                 Err(err) if allow_reference_md5_mismatch && is_reference_md5_mismatch(&err) => {
                     eprintln!(
                         "[bioscript] warning: CRAM reference MD5 mismatch for {label} slice landmark {landmark} — \
-                         this noodles version cannot retry without checksum validation. \
+                         decoding continued with checksum validation disabled for this slice. \
                          Details: {err}"
                     );
                 }

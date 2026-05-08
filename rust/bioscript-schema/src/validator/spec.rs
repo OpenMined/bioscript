@@ -25,12 +25,18 @@ pub(crate) fn variant_spec_from_root(root: &Value) -> Result<VariantSpec, String
         rsids,
         grch37,
         grch38,
+        grch37_assembly_ref: assembly_ref_from_root(root, "grch37"),
+        grch38_assembly_ref: assembly_ref_from_root(root, "grch38"),
         reference,
         alternate,
         kind,
         deletion_length,
         motifs,
     })
+}
+
+fn assembly_ref_from_root(root: &Value, assembly: &str) -> Option<String> {
+    scalar_at(root, &["coordinates", assembly, "assembly_ref"])
 }
 
 fn preferred_alternate_from_root(root: &Value) -> Option<String> {

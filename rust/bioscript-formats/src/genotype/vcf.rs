@@ -23,10 +23,12 @@ mod reader;
 
 use indexed::observe_indexed_vcf_variant;
 pub(crate) use matching::{
-    choose_variant_locus_for_assembly, normalize_chromosome_name, vcf_row_matches_variant,
+    choose_variant_locus_for_assembly, normalize_chromosome_name, reference_for_assembly,
+    vcf_row_matches_variant,
 };
 use matching::{first_single_base_allele, imputed_reference_observation};
 pub use reader::observe_vcf_snp_with_reader;
+use reader::observe_vcf_snp_with_reader_and_assembly_ref;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedVcfRow {
@@ -241,12 +243,13 @@ pub(crate) fn lookup_indexed_vcf_variants(
             first_single_base_allele(variant.alternate.as_deref()),
             matches!(variant.kind, None | Some(VariantKind::Snp)),
         ) {
-            observe_vcf_snp_with_reader(
+            observe_vcf_snp_with_reader_and_assembly_ref(
                 &mut indexed,
                 &label,
                 &locus,
                 reference,
                 alternate,
+                reference_for_assembly(variant, detected_assembly),
                 variant.rsids.first().cloned(),
                 detected_assembly,
             )?

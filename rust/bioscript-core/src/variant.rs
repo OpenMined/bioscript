@@ -27,6 +27,8 @@ pub struct VariantSpec {
     pub rsids: Vec<String>,
     pub grch37: Option<GenomicLocus>,
     pub grch38: Option<GenomicLocus>,
+    pub grch37_assembly_ref: Option<String>,
+    pub grch38_assembly_ref: Option<String>,
     pub reference: Option<String>,
     pub alternate: Option<String>,
     pub kind: Option<VariantKind>,
@@ -57,6 +59,15 @@ impl VariantSpec {
     #[must_use]
     pub fn has_coordinates(&self) -> bool {
         self.grch37.is_some() || self.grch38.is_some()
+    }
+
+    #[must_use]
+    pub fn assembly_reference(&self, assembly: Option<Assembly>) -> Option<&str> {
+        match assembly {
+            Some(Assembly::Grch37) => self.grch37_assembly_ref.as_deref(),
+            Some(Assembly::Grch38) => self.grch38_assembly_ref.as_deref(),
+            None => None,
+        }
     }
 }
 

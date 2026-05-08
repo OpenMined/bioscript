@@ -6,7 +6,10 @@ use std::{
 };
 
 use bioscript_core::Assembly;
-use bioscript_formats::{DetectedKind, FileContainer, InspectOptions, inspect_bytes, inspect_file};
+use bioscript_formats::{
+    DetectedKind, FileContainer, InferredSex, InspectOptions, SexDetectionConfidence,
+    inspect_bytes, inspect_file,
+};
 use zip::write::SimpleFileOptions;
 
 fn repo_root() -> PathBuf {
@@ -49,6 +52,15 @@ fn shared_fixture_or_skip(test_name: &str, relative: &str) -> Option<PathBuf> {
         return None;
     }
     Some(path)
+}
+
+fn require_large_tests(test_name: &str) -> bool {
+    if env::var_os("BIOSCRIPT_RUN_LARGE_TESTS").is_some() {
+        true
+    } else {
+        eprintln!("skipping {test_name}: set BIOSCRIPT_RUN_LARGE_TESTS=1 to enable");
+        false
+    }
 }
 
 fn temp_dir(label: &str) -> PathBuf {
@@ -479,6 +491,110 @@ fn chr_y_cram_fixture_reports_index_without_decoding_entire_file() {
     assert!(inspection.index_path.is_some());
     assert!(inspection.duration_ms < 1000);
     assert!(elapsed < 1000);
+}
+
+#[test]
+fn na06985_vcf_sex_detection_uses_non_par_x_over_y_calls() {
+    let test_name = "na06985_vcf_sex_detection_uses_non_par_x_over_y_calls";
+    let Some(path) = shared_fixture_or_skip(test_name, "1k-genomes/vcf/NA06985.clean.vcf.gz")
+    else {
+        return;
+    };
+    let index_path = shared_fixture_or_skip(test_name, "1k-genomes/vcf/NA06985.clean.vcf.gz.tbi");
+
+    let inspection = inspect_file(
+        &path,
+        &InspectOptions {
+            input_index: index_path,
+            detect_sex: true,
+            ..InspectOptions::default()
+        },
+    )
+    .unwrap();
+    let inferred = inspection.inferred_sex.expect("sex inference");
+
+    assert_eq!(inspection.detected_kind, DetectedKind::Vcf);
+    assert_eq!(inferred.sex, InferredSex::Female);
+    assert_eq!(inferred.confidence, SexDetectionConfidence::High);
+    assert_eq!(inferred.method, "vcf_non_par_x_gt_y_count");
+    assert!(
+        inferred
+            .evidence
+            .iter()
+            .any(|item| item.starts_with("x_het_pct=")),
+        "missing X heterozygosity evidence: {:?}",
+        inferred.evidence
+    );
+    assert!(
+        inferred
+            .evidence
+            .iter()
+            .any(|item| item == "called_y_snps=2924"),
+        "missing conflicting Y evidence: {:?}",
+        inferred.evidence
+    );
+}
+
+#[test]
+fn na06985_cram_sex_detection_uses_depth_ratios_not_y_presence() {
+    let test_name = "na06985_cram_sex_detection_uses_depth_ratios_not_y_presence";
+    if !require_large_tests(test_name) {
+        return;
+    }
+    let Some(path) = shared_fixture_or_skip(test_name, "1k-genomes/aligned/NA06985.final.cram")
+    else {
+        return;
+    };
+    let Some(input_index) =
+        shared_fixture_or_skip(test_name, "1k-genomes/aligned/NA06985.final.cram.crai")
+    else {
+        return;
+    };
+    let Some(reference_file) = shared_fixture_or_skip(
+        test_name,
+        "1k-genomes/ref/GRCh38_full_analysis_set_plus_decoy_hla.fa",
+    ) else {
+        return;
+    };
+    let Some(reference_index) = shared_fixture_or_skip(
+        test_name,
+        "1k-genomes/ref/GRCh38_full_analysis_set_plus_decoy_hla.fa.fai",
+    ) else {
+        return;
+    };
+
+    let inspection = inspect_file(
+        &path,
+        &InspectOptions {
+            input_index: Some(input_index),
+            reference_file: Some(reference_file),
+            reference_index: Some(reference_index),
+            detect_sex: true,
+        },
+    )
+    .unwrap();
+    let inferred = inspection.inferred_sex.expect("sex inference");
+
+    assert_eq!(inspection.detected_kind, DetectedKind::AlignmentCram);
+    assert_eq!(inferred.sex, InferredSex::Female);
+    assert_eq!(inferred.confidence, SexDetectionConfidence::High);
+    assert_eq!(inferred.method, "alignment_autosome_x_y_depth_ratio");
+    assert!(
+        inferred
+            .evidence
+            .iter()
+            .any(|item| item.starts_with("x_to_autosome_ratio=")),
+        "missing X/autosome ratio evidence: {:?}",
+        inferred.evidence
+    );
+    assert!(
+        inferred
+            .evidence
+            .iter()
+            .any(|item| item.starts_with("y_to_autosome_ratio=")),
+        "missing Y/autosome ratio evidence: {:?}",
+        inferred.evidence
+    );
 }
 
 #[test]

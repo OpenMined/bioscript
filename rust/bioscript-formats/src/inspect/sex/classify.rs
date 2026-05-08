@@ -64,15 +64,38 @@ fn classify_y_fingerprint_stats(stats: &SexStats) -> SexInference {
 }
 
 fn classify_vcf_stats(stats: &SexStats) -> SexInference {
-    let (sex, confidence) = if stats.called_y_snps > 500
-        || (stats.x_haploid_gt_sites >= 20 && stats.x_diploid_gt_sites == 0)
-    {
+    let x_het_pct = if stats.x_diploid_gt_sites == 0 {
+        0.0
+    } else {
+        stats.x_het_gt_sites as f64 * 100.0 / stats.x_diploid_gt_sites as f64
+    };
+    let y_to_x_pct = if stats.x_non_par_sites == 0 {
+        0.0
+    } else {
+        stats.called_y_snps as f64 * 100.0 / stats.x_non_par_sites as f64
+    };
+    let female_like_x =
+        stats.x_non_par_sites >= 50 && stats.x_diploid_gt_sites > 0 && x_het_pct >= 2.0;
+    let male_like_x = stats.x_haploid_gt_sites >= 20
+        || (stats.x_non_par_sites >= 50 && stats.x_diploid_gt_sites > 0 && x_het_pct <= 0.2);
+    let male_like_y = stats.called_y_snps > 500;
+    let strong_y_signal =
+        stats.called_y_snps >= 10_000 || (stats.x_non_par_sites >= 1000 && y_to_x_pct >= 10.0);
+    let (sex, confidence) = if strong_y_signal {
         (InferredSex::Male, SexDetectionConfidence::High)
-    } else if stats.x_non_par_sites >= 50
-        && stats.x_diploid_gt_sites > 0
-        && stats.x_het_gt_sites * 100 / stats.x_diploid_gt_sites.max(1) >= 2
-    {
-        (InferredSex::Female, SexDetectionConfidence::Medium)
+    } else if female_like_x {
+        (
+            InferredSex::Female,
+            if stats.x_non_par_sites >= 1000 && x_het_pct >= 10.0 {
+                SexDetectionConfidence::High
+            } else {
+                SexDetectionConfidence::Medium
+            },
+        )
+    } else if male_like_x {
+        (InferredSex::Male, SexDetectionConfidence::High)
+    } else if male_like_y {
+        (InferredSex::Unknown, SexDetectionConfidence::Medium)
     } else {
         (InferredSex::Unknown, SexDetectionConfidence::Low)
     };
@@ -85,7 +108,9 @@ fn classify_vcf_stats(stats: &SexStats) -> SexInference {
             format!("x_haploid_gt_sites={}", stats.x_haploid_gt_sites),
             format!("x_diploid_gt_sites={}", stats.x_diploid_gt_sites),
             format!("x_het_gt_sites={}", stats.x_het_gt_sites),
+            format!("x_het_pct={x_het_pct:.2}"),
             format!("called_y_snps={}", stats.called_y_snps),
+            format!("y_to_x_pct={y_to_x_pct:.2}"),
         ],
     }
 }

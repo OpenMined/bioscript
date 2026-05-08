@@ -18,10 +18,12 @@ coordinates:
   grch37:
     chrom: "1"
     pos: 12345
+    assembly_ref: "A"
   grch38:
     chrom: "1"
     start: 12345
     end: 12346
+    assembly_ref: "G"
 
 alleles:
   kind: "snv"

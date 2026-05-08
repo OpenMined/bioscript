@@ -32,9 +32,11 @@ coordinates:
   grch37:
     chrom: "12"
     pos: 112241766
+    assembly_ref: "G"
   grch38:
     chrom: "12"
     pos: 111803962
+    assembly_ref: "G"
 
 alleles:
   kind: "snv"
@@ -56,6 +58,12 @@ At least one of these must also exist:
 
 - `identifiers`
 - `coordinates`
+
+`coordinates.<assembly>.assembly_ref` is optional for SNVs. Use it when an
+older assembly's reference base differs from the canonical `alleles.ref` used
+by the catalogue. VCF inputs are matched against the assembly reference base
+and then translated back to the canonical `alleles.ref` / `alleles.alts`
+representation before findings are evaluated.
 
 ## Top-Level `tags`
 
