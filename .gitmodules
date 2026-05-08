@@ -1,6 +1,7 @@
 [submodule "monty"]
 	path = monty
 	url = git@github.com:madhavajay/monty.git
+	branch = madhava/bioscript
 [submodule "noodles"]
 	path = noodles
 	url = git@github.com:madhavajay/noodles.git
