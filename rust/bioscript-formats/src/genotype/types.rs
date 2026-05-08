@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
-use bioscript_core::Assembly;
+use bioscript_core::{Assembly, VariantObservation};
 
 use crate::inspect::InferredSex;
 
@@ -15,6 +15,18 @@ pub(crate) enum QueryBackend {
     Delimited(DelimitedBackend),
     Vcf(VcfBackend),
     Cram(CramBackend),
+    /// Pre-resolved observations layered on top of any other backend.
+    /// Variant lookups consult `observations` first (matched by rsid OR by
+    /// chrom+pos+ref+alt). On miss, falls back to `fallback`. This is the
+    /// abstraction that lets the report pipeline collect every observation
+    /// up-front in `run_manifest_rows` and have the analysis Python scripts'
+    /// `genotypes.lookup_variants(plan)` calls resolve from the cache without
+    /// re-walking the underlying genome — works identically on CLI (path
+    /// fallback) and wasm (rsid-map empty fallback).
+    Cached {
+        observations: Vec<VariantObservation>,
+        fallback: Box<QueryBackend>,
+    },
 }
 
 #[derive(Debug, Clone)]

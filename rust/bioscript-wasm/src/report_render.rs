@@ -17,7 +17,9 @@ pub(super) fn app_report_json(input: AppReportJsonInput<'_>) -> serde_json::Valu
     let called = input
         .observations
         .iter()
-        .filter(|item| item.get("call_status").and_then(serde_json::Value::as_str) == Some("called"))
+        .filter(|item| {
+            item.get("call_status").and_then(serde_json::Value::as_str) == Some("called")
+        })
         .count();
     serde_json::json!({
         "schema": "bioscript:report:1.0",
@@ -121,7 +123,14 @@ pub(super) fn render_app_html_document(
     let analysis_outputs = collect_report_analyses(reports);
     let participants = collect_report_participants(reports);
     render_report_manifest_header(&mut out, reports);
-    let _ = write!(out, "<div class=\"muted\">{} observation(s), {} analysis output(s), {} PGx label finding(s), {} PGx summary finding(s)</div>", observations.len(), analysis_outputs.len(), label_findings.len(), summary_findings.len());
+    let _ = write!(
+        out,
+        "<div class=\"muted\">{} observation(s), {} analysis output(s), {} PGx label finding(s), {} PGx summary finding(s)</div>",
+        observations.len(),
+        analysis_outputs.len(),
+        label_findings.len(),
+        summary_findings.len()
+    );
     render_participant_filter(&mut out, &participants);
     out.push_str("<nav class=\"nav\"><a href=\"#input-info\">Input</a><a href=\"#observations\">Observations</a><a href=\"#analysis\">Analysis</a><a href=\"#pgx\">PGx</a><a href=\"#provenance\">Provenance</a><a href=\"#source\">Source</a><a href=\"#json\">Raw JSON</a></nav>");
     out.push_str("<section id=\"input-info\"><h2>Input</h2>");
@@ -129,7 +138,12 @@ pub(super) fn render_app_html_document(
     out.push_str("</section><section id=\"observations\"><h2>Observations</h2>");
     render_observation_table(&mut out, observations, participants.len() > 1);
     out.push_str("</section><section id=\"analysis\"><h2>Analysis</h2>");
-    render_analysis_tables(&mut out, &analysis_outputs, observations, participants.len() > 1);
+    render_analysis_tables(
+        &mut out,
+        &analysis_outputs,
+        observations,
+        participants.len() > 1,
+    );
     out.push_str("</section><section id=\"pgx\"><h2>PGx</h2>");
     render_pgx_table(&mut out, &label_findings, &summary_findings);
     out.push_str("</section><section id=\"provenance\"><h2>Provenance</h2>");
@@ -138,7 +152,8 @@ pub(super) fn render_app_html_document(
     render_report_source_section(&mut out, reports);
     out.push_str("</section><section id=\"json\"><h2>Raw Reports JSON</h2><details><summary>Show raw report JSON</summary>");
     for report in reports {
-        let text = serde_json::to_string_pretty(report).map_err(|err| JsError::new(&err.to_string()))?;
+        let text =
+            serde_json::to_string_pretty(report).map_err(|err| JsError::new(&err.to_string()))?;
         let _ = write!(out, "<pre>{}</pre>", html_escape(&text));
     }
     out.push_str("</details></section></div>");

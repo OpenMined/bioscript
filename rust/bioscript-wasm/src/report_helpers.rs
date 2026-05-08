@@ -23,18 +23,50 @@ pub(super) fn variant_row(
     row.insert("tags".to_owned(), tags.join(","));
     row.insert("backend".to_owned(), observation.backend.clone());
     row.insert("participant_id".to_owned(), participant_id.to_owned());
-    row.insert("matched_rsid".to_owned(), observation.matched_rsid.clone().unwrap_or_default());
-    row.insert("assembly".to_owned(), observation.assembly.map(assembly_row_value).unwrap_or_default());
-    row.insert("genotype".to_owned(), observation.genotype.clone().unwrap_or_default());
-    row.insert("ref_count".to_owned(), observation.ref_count.map_or_else(String::new, |value| value.to_string()));
-    row.insert("alt_count".to_owned(), observation.alt_count.map_or_else(String::new, |value| value.to_string()));
-    row.insert("depth".to_owned(), observation.depth.map_or_else(String::new, |value| value.to_string()));
-    row.insert("raw_counts".to_owned(), serde_json::to_string(&observation.raw_counts).unwrap_or_default());
+    row.insert(
+        "matched_rsid".to_owned(),
+        observation.matched_rsid.clone().unwrap_or_default(),
+    );
+    row.insert(
+        "assembly".to_owned(),
+        observation
+            .assembly
+            .map(assembly_row_value)
+            .unwrap_or_default(),
+    );
+    row.insert(
+        "genotype".to_owned(),
+        observation.genotype.clone().unwrap_or_default(),
+    );
+    row.insert(
+        "ref_count".to_owned(),
+        observation
+            .ref_count
+            .map_or_else(String::new, |value| value.to_string()),
+    );
+    row.insert(
+        "alt_count".to_owned(),
+        observation
+            .alt_count
+            .map_or_else(String::new, |value| value.to_string()),
+    );
+    row.insert(
+        "depth".to_owned(),
+        observation
+            .depth
+            .map_or_else(String::new, |value| value.to_string()),
+    );
+    row.insert(
+        "raw_counts".to_owned(),
+        serde_json::to_string(&observation.raw_counts).unwrap_or_default(),
+    );
     row.insert("evidence".to_owned(), observation.evidence.join(" | "));
     row
 }
 
-pub(super) fn render_app_observations_tsv(observations: &[serde_json::Value]) -> Result<String, JsError> {
+pub(super) fn render_app_observations_tsv(
+    observations: &[serde_json::Value],
+) -> Result<String, JsError> {
     let mut out = OBSERVATION_TSV_HEADERS.join("\t");
     out.push('\n');
     for observation in observations {
@@ -94,7 +126,12 @@ pub(super) fn app_assay_id(path: &Path) -> Result<String, JsError> {
     path.file_stem()
         .and_then(|value| value.to_str())
         .map(ToOwned::to_owned)
-        .ok_or_else(|| JsError::new(&format!("failed to derive assay id from {}", path.display())))
+        .ok_or_else(|| {
+            JsError::new(&format!(
+                "failed to derive assay id from {}",
+                path.display()
+            ))
+        })
 }
 
 pub(super) fn matches_filters(manifest: &VariantManifest, path: &str, filters: &[String]) -> bool {
@@ -134,8 +171,9 @@ pub(super) fn parse_analysis_output_text(
         "jsonl" => {
             let mut rows: Vec<serde_json::Value> = Vec::new();
             for line in text.lines().filter(|line| !line.trim().is_empty()) {
-                rows.push(serde_json::from_str(line)
-                    .map_err(|err| JsError::new(&format!("failed to parse analysis JSONL: {err}")))?);
+                rows.push(serde_json::from_str(line).map_err(|err| {
+                    JsError::new(&format!("failed to parse analysis JSONL: {err}"))
+                })?);
             }
             let row_headers = rows
                 .iter()
@@ -144,7 +182,9 @@ pub(super) fn parse_analysis_output_text(
                 .unwrap_or_default();
             Ok((rows, row_headers))
         }
-        other => Err(JsError::new(&format!("unsupported analysis output_format '{other}'"))),
+        other => Err(JsError::new(&format!(
+            "unsupported analysis output_format '{other}'"
+        ))),
     }
 }
 
@@ -164,7 +204,9 @@ fn parse_analysis_tsv(text: &str) -> (Vec<serde_json::Value>, Vec<String>) {
                 .map(|(index, header)| {
                     (
                         header.clone(),
-                        serde_json::Value::String(fields.get(index).copied().unwrap_or_default().to_owned()),
+                        serde_json::Value::String(
+                            fields.get(index).copied().unwrap_or_default().to_owned(),
+                        ),
                     )
                 })
                 .collect();
@@ -175,7 +217,8 @@ fn parse_analysis_tsv(text: &str) -> (Vec<serde_json::Value>, Vec<String>) {
 }
 
 pub(super) fn yaml_to_json(value: serde_yaml::Value) -> Result<serde_json::Value, JsError> {
-    serde_json::to_value(value).map_err(|err| JsError::new(&format!("failed to convert YAML to JSON: {err}")))
+    serde_json::to_value(value)
+        .map_err(|err| JsError::new(&format!("failed to convert YAML to JSON: {err}")))
 }
 
 pub(super) fn collect_manifest_provenance_entries(
@@ -203,7 +246,9 @@ pub(super) fn collect_manifest_provenance_entries(
     Ok(())
 }
 
-pub(super) fn input_inspection_json(inspection: &bioscript_formats::FileInspection) -> serde_json::Value {
+pub(super) fn input_inspection_json(
+    inspection: &bioscript_formats::FileInspection,
+) -> serde_json::Value {
     serde_json::json!({
         "container": match inspection.container {
             bioscript_formats::FileContainer::Plain => "plain",
@@ -246,7 +291,10 @@ pub(super) fn input_inspection_json(inspection: &bioscript_formats::FileInspecti
 }
 
 pub(super) fn yaml_string(value: &serde_yaml::Value, key: &str) -> Option<String> {
-    value.get(key).and_then(serde_yaml::Value::as_str).map(ToOwned::to_owned)
+    value
+        .get(key)
+        .and_then(serde_yaml::Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 pub(super) fn yaml_string_sequence(value: &serde_yaml::Value, key: &str) -> Vec<serde_json::Value> {
@@ -286,7 +334,10 @@ pub(super) fn variant_primary_source_from_yaml(value: &serde_yaml::Value) -> ser
             "fields": ["identifiers.rsids"],
         });
     }
-    links.into_values().next().unwrap_or(serde_json::Value::Null)
+    links
+        .into_values()
+        .next()
+        .unwrap_or(serde_json::Value::Null)
 }
 
 pub(super) fn normalize_app_genotype(
@@ -305,7 +356,10 @@ pub(super) fn normalize_app_genotype(
     }
     let ref_ch = ref_allele.chars().next().unwrap_or_default();
     let alt_ch = alt_allele.chars().next().unwrap_or_default();
-    if is_confident_male_sex_chromosome(chrom, inferred_sex) && alleles.len() == 2 && alleles[0] == alleles[1] {
+    if is_confident_male_sex_chromosome(chrom, inferred_sex)
+        && alleles.len() == 2
+        && alleles[0] == alleles[1]
+    {
         let allele = alleles[0];
         if allele == ref_ch {
             return ("0".to_owned(), "hem_ref".to_owned());
@@ -329,11 +383,18 @@ pub(super) fn normalize_app_genotype(
 
 fn is_confident_male_sex_chromosome(chrom: &str, inferred_sex: Option<&SexInference>) -> bool {
     matches!(
-        chrom.trim().trim_start_matches("chr").to_ascii_uppercase().as_str(),
+        chrom
+            .trim()
+            .trim_start_matches("chr")
+            .to_ascii_uppercase()
+            .as_str(),
         "X" | "Y" | "23" | "24"
     ) && inferred_sex.is_some_and(|sex| {
         sex.sex == InferredSex::Male
-            && matches!(sex.confidence, SexDetectionConfidence::High | SexDetectionConfidence::Medium)
+            && matches!(
+                sex.confidence,
+                SexDetectionConfidence::High | SexDetectionConfidence::Medium
+            )
     })
 }
 

@@ -5,7 +5,7 @@ use std::{
 };
 
 use bioscript_schema::{
-    resolve_remote_resource_text, RemoteResourceKind, RemoteResourceResolution,
+    RemoteResourceKind, RemoteResourceResolution, resolve_remote_resource_text,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};

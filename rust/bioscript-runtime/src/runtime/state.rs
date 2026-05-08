@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use bioscript_core::VariantObservation;
 use bioscript_formats::{GenotypeLoadOptions, GenotypeStore};
 use monty::{MontyException, ResourceLimits};
 
@@ -18,6 +19,12 @@ pub struct RuntimeConfig {
     pub loader: GenotypeLoadOptions,
     pub virtual_binary_files: BTreeMap<String, Vec<u8>>,
     pub virtual_text_files: BTreeMap<String, String>,
+    /// Observations the host has already resolved before invoking the
+    /// runtime — `bioscript.load_genotypes(...)` wraps the underlying store
+    /// in a cache layered on these so analysis Python scripts'
+    /// `genotypes.lookup_variants(plan)` calls hit the cache first and only
+    /// fall through to the store for novel rsids the panel didn't cover.
+    pub preloaded_observations: Vec<VariantObservation>,
 }
 
 impl Default for RuntimeConfig {
@@ -33,6 +40,7 @@ impl Default for RuntimeConfig {
             loader: GenotypeLoadOptions::default(),
             virtual_binary_files: BTreeMap::new(),
             virtual_text_files: BTreeMap::new(),
+            preloaded_observations: Vec::new(),
         }
     }
 }

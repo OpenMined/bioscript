@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use bioscript_formats::{
-    inspect_bytes as inspect_bytes_rs, DetectedKind, DetectionConfidence, FileContainer,
-    FileInspection, InspectOptions, SourceMetadata,
+    DetectedKind, DetectionConfidence, FileContainer, FileInspection, InspectOptions,
+    SourceMetadata, inspect_bytes as inspect_bytes_rs,
 };
 use bioscript_schema::resolve_remote_resource_text as resolve_remote_resource_text_rs;
 use serde::{Deserialize, Serialize};

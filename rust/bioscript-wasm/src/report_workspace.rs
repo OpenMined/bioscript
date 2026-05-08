@@ -1,5 +1,42 @@
 use super::*;
 
+#[path = "report_workspace/analysis.rs"]
+mod analysis;
+
+/// What a manifest row walk produces: human-readable rows for the
+/// observation TSV/HTML, and the underlying `VariantObservation`s ready to
+/// hand to the analysis runtime as a pre-resolved cache (so analysis Python
+/// scripts' `genotypes.lookup_variants(plan)` call hits cache instead of
+/// re-walking the genome).
+pub(super) struct ManifestRowsOutput {
+    pub rows: Vec<BTreeMap<String, String>>,
+    pub observations: Vec<VariantObservation>,
+}
+
+/// Abstract per-variant observation source so the workspace can run against
+/// either a path-based `GenotypeStore` (text/zip — bytes already in memory)
+/// or a CRAM/VCF-reader-backed lookup that streams through JS-supplied
+/// `readAt` callbacks.
+pub(super) trait VariantLookup {
+    fn lookup_variant(&self, spec: &VariantSpec) -> Result<VariantObservation, RuntimeError>;
+    fn lookup_variants(
+        &self,
+        specs: &[VariantSpec],
+    ) -> Result<Vec<VariantObservation>, RuntimeError>;
+}
+
+impl VariantLookup for GenotypeStore {
+    fn lookup_variant(&self, spec: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
+        GenotypeStore::lookup_variant(self, spec)
+    }
+    fn lookup_variants(
+        &self,
+        specs: &[VariantSpec],
+    ) -> Result<Vec<VariantObservation>, RuntimeError> {
+        GenotypeStore::lookup_variants(self, specs)
+    }
+}
+
 pub(super) struct PackageWorkspace {
     files: BTreeMap<String, String>,
 }
@@ -58,39 +95,51 @@ impl PackageWorkspace {
     pub(super) fn run_manifest_rows(
         &self,
         manifest_path: &str,
-        store: &GenotypeStore,
+        store: &dyn VariantLookup,
         participant_id: &str,
         filters: &[String],
-    ) -> Result<Vec<BTreeMap<String, String>>, JsError> {
+    ) -> Result<ManifestRowsOutput, JsError> {
         match self.schema(manifest_path)?.as_str() {
             "bioscript:variant:1.0" | "bioscript:variant" => {
                 let manifest = self.load_variant(manifest_path)?;
                 let observation = store
                     .lookup_variant(&manifest.spec)
                     .map_err(|err| JsError::new(&format!("lookup {}: {err:?}", manifest.name)))?;
-                Ok(vec![variant_row(
+                let row = variant_row(
                     manifest_path,
                     &manifest.name,
                     &manifest.tags,
                     &observation,
                     participant_id,
-                )])
+                );
+                Ok(ManifestRowsOutput {
+                    rows: vec![row],
+                    observations: vec![observation],
+                })
             }
-            "bioscript:panel:1.0" => self.run_panel_rows(manifest_path, store, participant_id, filters),
-            "bioscript:assay:1.0" => self.run_assay_rows(manifest_path, store, participant_id, filters),
-            other => Err(JsError::new(&format!("unsupported manifest schema '{other}'"))),
+            "bioscript:panel:1.0" => {
+                self.run_panel_rows(manifest_path, store, participant_id, filters)
+            }
+            "bioscript:assay:1.0" => {
+                self.run_assay_rows(manifest_path, store, participant_id, filters)
+            }
+            other => Err(JsError::new(&format!(
+                "unsupported manifest schema '{other}'"
+            ))),
         }
     }
 
     fn run_panel_rows(
         &self,
         manifest_path: &str,
-        store: &GenotypeStore,
+        store: &dyn VariantLookup,
         participant_id: &str,
         filters: &[String],
-    ) -> Result<Vec<BTreeMap<String, String>>, JsError> {
+    ) -> Result<ManifestRowsOutput, JsError> {
         let panel = self.load_panel(manifest_path)?;
-        let mut rows_by_member: Vec<Vec<BTreeMap<String, String>>> = vec![Vec::new(); panel.members.len()];
+        let mut rows_by_member: Vec<Vec<BTreeMap<String, String>>> =
+            vec![Vec::new(); panel.members.len()];
+        let mut all_observations = Vec::<VariantObservation>::new();
         let mut variants = Vec::<(usize, String, VariantManifest)>::new();
         for (index, member) in panel.members.iter().enumerate() {
             let Some(path) = &member.path else {
@@ -103,7 +152,10 @@ impl PackageWorkspace {
                     variants.push((index, resolved, variant));
                 }
             } else if member.kind == "assay" {
-                rows_by_member[index] = self.run_assay_rows(&resolved, store, participant_id, filters)?;
+                let assay_output =
+                    self.run_assay_rows(&resolved, store, participant_id, filters)?;
+                rows_by_member[index] = assay_output.rows;
+                all_observations.extend(assay_output.observations);
             }
         }
         let specs = variants
@@ -113,7 +165,9 @@ impl PackageWorkspace {
         let observations = store
             .lookup_variants(&specs)
             .map_err(|err| JsError::new(&format!("panel lookup failed: {err:?}")))?;
-        for ((member_index, resolved, manifest), observation) in variants.into_iter().zip(observations) {
+        for ((member_index, resolved, manifest), observation) in
+            variants.into_iter().zip(observations)
+        {
             rows_by_member[member_index].push(variant_row(
                 &resolved,
                 &manifest.name,
@@ -121,17 +175,21 @@ impl PackageWorkspace {
                 &observation,
                 participant_id,
             ));
+            all_observations.push(observation);
         }
-        Ok(rows_by_member.into_iter().flatten().collect())
+        Ok(ManifestRowsOutput {
+            rows: rows_by_member.into_iter().flatten().collect(),
+            observations: all_observations,
+        })
     }
 
     fn run_assay_rows(
         &self,
         manifest_path: &str,
-        store: &GenotypeStore,
+        store: &dyn VariantLookup,
         participant_id: &str,
         filters: &[String],
-    ) -> Result<Vec<BTreeMap<String, String>>, JsError> {
+    ) -> Result<ManifestRowsOutput, JsError> {
         let assay = self.load_assay(manifest_path)?;
         let mut variants = Vec::<(String, VariantManifest)>::new();
         for member in &assay.members {
@@ -154,176 +212,22 @@ impl PackageWorkspace {
         let observations = store
             .lookup_variants(&specs)
             .map_err(|err| JsError::new(&format!("assay lookup failed: {err:?}")))?;
-        Ok(variants
-            .into_iter()
-            .zip(observations)
-            .map(|((resolved, manifest), observation)| {
-                variant_row(
-                    &resolved,
-                    &manifest.name,
-                    &manifest.tags,
-                    &observation,
-                    participant_id,
-                )
-            })
-            .collect())
-    }
-
-    pub(super) fn run_manifest_analyses(
-        &self,
-        manifest_path: &str,
-        input_name: &str,
-        input_bytes: &[u8],
-        participant_id: &str,
-        loader: &GenotypeLoadOptions,
-        options: &ReportOptionsInput,
-    ) -> Result<Vec<serde_json::Value>, JsError> {
-        match self.schema(manifest_path)?.as_str() {
-            "bioscript:panel:1.0" => {
-                let panel = self.load_panel(manifest_path)?;
-                let mut analyses = self.run_interpretations(
-                    manifest_path,
-                    &panel.name,
-                    &panel.interpretations,
-                    input_name,
-                    input_bytes,
-                    participant_id,
-                    loader,
-                    options,
-                )?;
-                for member in &panel.members {
-                    if member.kind != "assay" {
-                        continue;
-                    }
-                    let Some(path) = &member.path else {
-                        continue;
-                    };
-                    let resolved = self.resolve(manifest_path, path)?;
-                    analyses.extend(self.run_manifest_analyses(
-                        &resolved,
-                        input_name,
-                        input_bytes,
-                        participant_id,
-                        loader,
-                        options,
-                    )?);
-                }
-                Ok(analyses)
-            }
-            "bioscript:assay:1.0" => {
-                let assay = self.load_assay(manifest_path)?;
-                self.run_interpretations(
-                    manifest_path,
-                    &assay.name,
-                    &assay.interpretations,
-                    input_name,
-                    input_bytes,
-                    participant_id,
-                    loader,
-                    options,
-                )
-            }
-            _ => Ok(Vec::new()),
+        let mut rows = Vec::with_capacity(variants.len());
+        let mut collected = Vec::with_capacity(variants.len());
+        for ((resolved, manifest), observation) in variants.into_iter().zip(observations) {
+            rows.push(variant_row(
+                &resolved,
+                &manifest.name,
+                &manifest.tags,
+                &observation,
+                participant_id,
+            ));
+            collected.push(observation);
         }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn run_interpretations(
-        &self,
-        manifest_path: &str,
-        manifest_name: &str,
-        interpretations: &[PanelInterpretation],
-        input_name: &str,
-        input_bytes: &[u8],
-        participant_id: &str,
-        loader: &GenotypeLoadOptions,
-        options: &ReportOptionsInput,
-    ) -> Result<Vec<serde_json::Value>, JsError> {
-        let mut outputs = Vec::new();
-        for interpretation in interpretations {
-            if interpretation.kind != "bioscript" {
-                return Err(JsError::new(&format!(
-                    "analysis '{}' uses unsupported kind '{}'",
-                    interpretation.id, interpretation.kind
-                )));
-            }
-            let script_path = self.resolve(manifest_path, &interpretation.path)?;
-            let output_file = format!(
-                "analysis/{participant_id}/{}.{}",
-                interpretation.id,
-                interpretation.output_format.as_deref().unwrap_or("json")
-            );
-            let mut virtual_text_files = self.files.clone();
-            let mut virtual_binary_files = BTreeMap::new();
-            virtual_binary_files.insert(input_name.to_owned(), input_bytes.to_vec());
-            let limits = ResourceLimits::new()
-                .max_duration(Duration::from_millis(options.analysis_max_duration_ms))
-                .max_memory(16 * 1024 * 1024)
-                .max_allocations(400_000)
-                .gc_interval(1000)
-                .max_recursion_depth(Some(200));
-            let runtime = BioscriptRuntime::with_config(
-                PathBuf::new(),
-                RuntimeConfig {
-                    limits,
-                    loader: loader.clone(),
-                    virtual_binary_files,
-                    virtual_text_files: std::mem::take(&mut virtual_text_files),
-                },
-            )
-            .map_err(|err| JsError::new(&format!("create analysis runtime failed: {err:?}")))?;
-            runtime
-                .run_file(
-                    &script_path,
-                    None,
-                    vec![
-                        ("input_file", MontyObject::String(input_name.to_owned())),
-                        ("output_file", MontyObject::String(output_file.clone())),
-                        ("participant_id", MontyObject::String(participant_id.to_owned())),
-                    ],
-                )
-                .map_err(|err| JsError::new(&format!("analysis {} failed: {err:?}", interpretation.id)))?;
-            let written = runtime.virtual_written_text_files();
-            let text = written
-                .get(&output_file)
-                .ok_or_else(|| JsError::new(&format!("analysis {} did not write {output_file}", interpretation.id)))?;
-            let format = interpretation
-                .output_format
-                .as_deref()
-                .unwrap_or("json")
-                .to_ascii_lowercase();
-            let (rows, row_headers) = parse_analysis_output_text(text, &format)?;
-            outputs.push(serde_json::json!({
-                "schema": "bioscript:analysis-output:1.0",
-                "version": "1.0",
-                "participant_id": participant_id,
-                "assay_id": manifest_name,
-                "analysis_id": interpretation.id,
-                "analysis_label": interpretation.label,
-                "kind": interpretation.kind,
-                "output_format": format,
-                "manifest_path": manifest_path,
-                "script_path": script_path,
-                "output_file": output_file,
-                "derived_from": interpretation.derived_from,
-                "emits": interpretation.emits.iter().map(|emit| serde_json::json!({
-                    "key": emit.key,
-                    "label": emit.label,
-                    "value_type": emit.value_type,
-                    "format": emit.format,
-                })).collect::<Vec<_>>(),
-                "logic": interpretation.logic.as_ref().map(|logic| serde_json::json!({
-                    "description": logic.description,
-                    "source": logic.source.as_ref().map(|source| serde_json::json!({
-                        "name": source.name,
-                        "url": source.url,
-                    })),
-                })),
-                "row_headers": row_headers,
-                "rows": rows,
-            }));
-        }
-        Ok(outputs)
+        Ok(ManifestRowsOutput {
+            rows,
+            observations: collected,
+        })
     }
 
     pub(super) fn app_observation_from_manifest_row(
@@ -349,11 +253,20 @@ impl PackageWorkspace {
         let locus = if assembly.eq_ignore_ascii_case("grch37") {
             manifest.spec.grch37.as_ref()
         } else {
-            manifest.spec.grch38.as_ref().or(manifest.spec.grch37.as_ref())
+            manifest
+                .spec
+                .grch38
+                .as_ref()
+                .or(manifest.spec.grch37.as_ref())
         };
         let chrom = locus.map_or(String::new(), |locus| locus.chrom.clone());
-        let (genotype, zygosity) =
-            normalize_app_genotype(&genotype_display, &ref_allele, &alt_allele, &chrom, inferred_sex);
+        let (genotype, zygosity) = normalize_app_genotype(
+            &genotype_display,
+            &ref_allele,
+            &alt_allele,
+            &chrom,
+            inferred_sex,
+        );
         let outcome = if genotype == "./." {
             "no_call"
         } else if zygosity == "hom_ref" || zygosity == "hem_ref" {
@@ -397,7 +310,10 @@ impl PackageWorkspace {
         }))
     }
 
-    pub(super) fn report_manifest_metadata(&self, path: &str) -> Result<serde_json::Value, JsError> {
+    pub(super) fn report_manifest_metadata(
+        &self,
+        path: &str,
+    ) -> Result<serde_json::Value, JsError> {
         let value = self.yaml(path)?;
         let members = value
             .get("members")
@@ -426,18 +342,30 @@ impl PackageWorkspace {
         }))
     }
 
-    pub(super) fn load_manifest_findings(&self, path: &str) -> Result<Vec<serde_json::Value>, JsError> {
+    pub(super) fn load_manifest_findings(
+        &self,
+        path: &str,
+    ) -> Result<Vec<serde_json::Value>, JsError> {
         let value = self.yaml(path)?;
         let schema = yaml_string(&value, "schema").unwrap_or_default();
         let mut findings = Vec::new();
         if matches!(
             schema.as_str(),
-            "bioscript:variant:1.0" | "bioscript:variant" | "bioscript:assay:1.0" | "bioscript:panel:1.0" | "bioscript:pgx-findings:1.0"
+            "bioscript:variant:1.0"
+                | "bioscript:variant"
+                | "bioscript:assay:1.0"
+                | "bioscript:panel:1.0"
+                | "bioscript:pgx-findings:1.0"
         ) {
-            if let Some(items) = value.get("findings").and_then(serde_yaml::Value::as_sequence) {
+            if let Some(items) = value
+                .get("findings")
+                .and_then(serde_yaml::Value::as_sequence)
+            {
                 for item in items {
                     let json_item = yaml_to_json(item.clone())?;
-                    if let Some(include) = json_item.get("include").and_then(serde_json::Value::as_str) {
+                    if let Some(include) =
+                        json_item.get("include").and_then(serde_json::Value::as_str)
+                    {
                         let include_path = self.resolve(path, include)?;
                         let mut included = self.load_manifest_findings(&include_path)?;
                         let inherited_binding = json_item.get("binding").cloned();
@@ -449,7 +377,9 @@ impl PackageWorkspace {
                                 if let Some(object) = included_item.as_object_mut() {
                                     object.insert(
                                         "binding".to_owned(),
-                                        inherited_binding.clone().unwrap_or(serde_json::Value::Null),
+                                        inherited_binding
+                                            .clone()
+                                            .unwrap_or(serde_json::Value::Null),
                                     );
                                 }
                             }
@@ -461,12 +391,25 @@ impl PackageWorkspace {
                 }
             }
         }
-        if matches!(schema.as_str(), "bioscript:assay:1.0" | "bioscript:panel:1.0") {
-            if let Some(items) = value.get("members").and_then(serde_yaml::Value::as_sequence) {
+        if matches!(
+            schema.as_str(),
+            "bioscript:assay:1.0" | "bioscript:panel:1.0"
+        ) {
+            if let Some(items) = value
+                .get("members")
+                .and_then(serde_yaml::Value::as_sequence)
+            {
                 for member in items {
-                    let Some(kind) = member.get("kind").and_then(serde_yaml::Value::as_str) else { continue };
-                    if !matches!(kind, "variant" | "assay") { continue; }
-                    let Some(member_path) = member.get("path").and_then(serde_yaml::Value::as_str) else { continue };
+                    let Some(kind) = member.get("kind").and_then(serde_yaml::Value::as_str) else {
+                        continue;
+                    };
+                    if !matches!(kind, "variant" | "assay") {
+                        continue;
+                    }
+                    let Some(member_path) = member.get("path").and_then(serde_yaml::Value::as_str)
+                    else {
+                        continue;
+                    };
                     let resolved = self.resolve(path, member_path)?;
                     findings.extend(self.load_manifest_findings(&resolved)?);
                 }
@@ -475,17 +418,33 @@ impl PackageWorkspace {
         Ok(findings)
     }
 
-    pub(super) fn load_manifest_provenance_links(&self, path: &str) -> Result<Vec<serde_json::Value>, JsError> {
+    pub(super) fn load_manifest_provenance_links(
+        &self,
+        path: &str,
+    ) -> Result<Vec<serde_json::Value>, JsError> {
         let value = self.yaml(path)?;
         let schema = yaml_string(&value, "schema").unwrap_or_default();
         let mut links = BTreeMap::<String, serde_json::Value>::new();
         collect_manifest_provenance_entries(&value, &mut links)?;
-        if matches!(schema.as_str(), "bioscript:assay:1.0" | "bioscript:panel:1.0") {
-            if let Some(items) = value.get("members").and_then(serde_yaml::Value::as_sequence) {
+        if matches!(
+            schema.as_str(),
+            "bioscript:assay:1.0" | "bioscript:panel:1.0"
+        ) {
+            if let Some(items) = value
+                .get("members")
+                .and_then(serde_yaml::Value::as_sequence)
+            {
                 for member in items {
-                    let Some(kind) = member.get("kind").and_then(serde_yaml::Value::as_str) else { continue };
-                    if !matches!(kind, "variant" | "assay") { continue; }
-                    let Some(member_path) = member.get("path").and_then(serde_yaml::Value::as_str) else { continue };
+                    let Some(kind) = member.get("kind").and_then(serde_yaml::Value::as_str) else {
+                        continue;
+                    };
+                    if !matches!(kind, "variant" | "assay") {
+                        continue;
+                    }
+                    let Some(member_path) = member.get("path").and_then(serde_yaml::Value::as_str)
+                    else {
+                        continue;
+                    };
                     let resolved = self.resolve(path, member_path)?;
                     for item in self.load_manifest_provenance_links(&resolved)? {
                         if let Some(url) = item.get("url").and_then(serde_json::Value::as_str) {
