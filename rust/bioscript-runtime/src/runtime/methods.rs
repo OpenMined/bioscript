@@ -38,7 +38,7 @@ impl BioscriptRuntime {
             "bioscript.load_genotypes",
         )?)?;
         let loader = self.resolved_loader_options()?;
-        let store = if let Some(bytes) = self.read_virtual_binary_file(&path) {
+        let inner_store = if let Some(bytes) = self.read_virtual_binary_file(&path) {
             GenotypeStore::from_bytes(
                 path.file_name()
                     .and_then(|value| value.to_str())
@@ -47,6 +47,20 @@ impl BioscriptRuntime {
             )?
         } else {
             GenotypeStore::from_file_with_options(&path, &loader)?
+        };
+        // Layer pre-resolved observations on top of whatever backend the path
+        // resolves to. The report pipeline collects every variant the panel
+        // declares before running analyses, so `genotypes.lookup_variants(...)`
+        // hits the cache and we don't re-walk the genome inside Python. On a
+        // miss (script asks about a novel rsid) we fall through to the inner
+        // store — same behavior as before this cache existed.
+        let store = if self.config.preloaded_observations.is_empty() {
+            inner_store
+        } else {
+            GenotypeStore::with_cached_observations(
+                self.config.preloaded_observations.clone(),
+                inner_store,
+            )
         };
         let handle = self.state.next_handle();
         self.state

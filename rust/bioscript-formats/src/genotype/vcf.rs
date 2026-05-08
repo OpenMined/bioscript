@@ -20,7 +20,7 @@ use super::{
 mod matching;
 mod reader;
 
-use matching::imputed_reference_observation;
+pub use matching::imputed_reference_observation;
 pub(crate) use matching::{
     choose_variant_locus_for_assembly, normalize_chromosome_name, vcf_row_matches_variant,
 };

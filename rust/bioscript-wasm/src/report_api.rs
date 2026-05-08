@@ -5,7 +5,10 @@ use std::{
     time::Duration,
 };
 
-use bioscript_core::{Assembly, OBSERVATION_TSV_HEADERS, VariantObservation};
+use bioscript_core::{
+    Assembly, GenomicLocus, OBSERVATION_TSV_HEADERS, RuntimeError, VariantKind, VariantObservation,
+    VariantSpec,
+};
 use bioscript_formats::{
     GenotypeLoadOptions, GenotypeStore, InferredSex, InspectOptions, SexDetectionConfidence,
     SexInference, inspect_bytes as inspect_bytes_rs,
@@ -19,15 +22,20 @@ use monty::{MontyObject, ResourceLimits};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-#[path = "report_render.rs"]
-mod report_render;
 #[path = "report_helpers.rs"]
 mod report_helpers;
+#[path = "report_lookup.rs"]
+mod report_lookup;
+#[path = "report_render.rs"]
+mod report_render;
 #[path = "report_workspace.rs"]
 mod report_workspace;
 
 use report_helpers::*;
-use report_render::{app_report_json, match_app_findings, render_app_html_document, AppReportJsonInput};
+use report_lookup::{CramReportLookup, VcfReportLookup};
+use report_render::{
+    AppReportJsonInput, app_report_json, match_app_findings, render_app_html_document,
+};
 use report_workspace::PackageWorkspace;
 
 include!("../../bioscript-cli/src/report_matching.rs");
@@ -113,8 +121,10 @@ pub fn run_package_report_bytes(
         .map(|inference| inference.sex);
     let store = GenotypeStore::from_bytes(input_name, input_bytes)
         .map_err(|err| JsError::new(&format!("load genotypes failed: {err:?}")))?;
-    let rows = workspace.run_manifest_rows(manifest_path, &store, &participant_id, &options.filters)?;
-    let observations = rows
+    let manifest_output =
+        workspace.run_manifest_rows(manifest_path, &store, &participant_id, &options.filters)?;
+    let observations = manifest_output
+        .rows
         .iter()
         .map(|row| {
             workspace.app_observation_from_manifest_row(
@@ -129,6 +139,7 @@ pub fn run_package_report_bytes(
         manifest_path,
         input_name,
         input_bytes,
+        &manifest_output.observations,
         &participant_id,
         &loader,
         &options,
@@ -154,7 +165,11 @@ pub fn run_package_report_bytes(
     );
     serde_json::to_string(&ReportRunOutput {
         artifacts: vec![
-            artifact("observations.tsv", "text/tab-separated-values", observations_tsv),
+            artifact(
+                "observations.tsv",
+                "text/tab-separated-values",
+                observations_tsv,
+            ),
             artifact("analysis.jsonl", "application/jsonl", analysis_jsonl),
             artifact("reports.jsonl", "application/jsonl", reports_jsonl),
             artifact("index.html", "text/html", html),
@@ -165,3 +180,219 @@ pub fn run_package_report_bytes(
     .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
 }
 
+/// Mirrors `runPackageReportBytes` but for CRAM input. The CRAM body and
+/// FASTA reference are streamed via JS-supplied `readAt` callbacks so the
+/// browser doesn't have to load multi-GB genomes into wasm memory. The CRAI
+/// and FAI indexes are passed inline.
+///
+/// Analyses run against the observations produced from the CRAM lookup. The
+/// per-script Python interpreter still receives `input_bytes` as a virtual
+/// file; for CRAM that's an empty buffer because typical PGx analysis scripts
+/// (apoe, mthfr, apol1, …) read observation rows rather than raw genome bytes.
+#[wasm_bindgen(js_name = runPackageReportFromCram)]
+#[allow(clippy::too_many_arguments)]
+pub fn run_package_report_from_cram(
+    manifest_path: &str,
+    package_files_json: &str,
+    input_name: &str,
+    cram_read_at: js_sys::Function,
+    cram_len: f64,
+    crai_bytes: &[u8],
+    fasta_read_at: js_sys::Function,
+    fasta_len: f64,
+    fai_bytes: &[u8],
+    options_json: Option<String>,
+) -> Result<String, JsError> {
+    use crate::js_reader::JsReader;
+    use std::io::BufReader;
+    let started_ms = js_sys::Date::now();
+    let package_files: Vec<PackageFileInput> = serde_json::from_str(package_files_json)
+        .map_err(|err| JsError::new(&format!("invalid package files JSON: {err}")))?;
+    let options = match options_json {
+        Some(text) if !text.is_empty() => serde_json::from_str(&text)
+            .map_err(|err| JsError::new(&format!("invalid report options JSON: {err}")))?,
+        _ => ReportOptionsInput::default(),
+    };
+    let workspace = PackageWorkspace::new(package_files)?;
+    let participant_id = participant_id_from_name(input_name);
+    let assay_id = app_assay_id(Path::new(manifest_path))?;
+    let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
+    let findings = workspace.load_manifest_findings(manifest_path)?;
+    let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
+
+    let crai_index = bioscript_formats::alignment::parse_crai_bytes(crai_bytes)
+        .map_err(|err| JsError::new(&format!("parse crai: {err:?}")))?;
+    let fai_index = bioscript_formats::alignment::parse_fai_bytes(fai_bytes)
+        .map_err(|err| JsError::new(&format!("parse fai: {err:?}")))?;
+    let fasta_reader = BufReader::new(JsReader::new(fasta_read_at, fasta_len as u64, "fasta"));
+    let repository = bioscript_formats::alignment::build_reference_repository_from_readers(
+        fasta_reader,
+        fai_index,
+    );
+    let cram_reader = JsReader::new(cram_read_at, cram_len as u64, "cram");
+    let indexed = bioscript_formats::alignment::build_cram_indexed_reader_from_reader(
+        cram_reader,
+        crai_index,
+        repository,
+    )
+    .map_err(|err| JsError::new(&format!("build cram reader: {err:?}")))?;
+
+    let lookup = CramReportLookup {
+        reader: std::cell::RefCell::new(indexed),
+        label: input_name.to_owned(),
+    };
+
+    let mut loader = GenotypeLoadOptions::default();
+    loader.format = Some(bioscript_formats::GenotypeSourceFormat::Cram);
+    loader.allow_reference_md5_mismatch = true;
+    let manifest_output =
+        workspace.run_manifest_rows(manifest_path, &lookup, &participant_id, &options.filters)?;
+    let observations = manifest_output
+        .rows
+        .iter()
+        .map(|row| workspace.app_observation_from_manifest_row(row, &assay_id, None, None))
+        .collect::<Result<Vec<_>, _>>()?;
+    // Analysis scripts call `bioscript.load_genotypes(input_file)` then rsid
+    // lookups via `genotypes.lookup_variants(plan)`. The runtime now layers a
+    // pre-resolved-observation cache over whatever the input file resolves
+    // to (Plan B in genotype/types.rs:QueryBackend::Cached), so for CRAM the
+    // cache hits and we skip re-walking the genome. The input bytes can be
+    // empty since every spec the panel/assays declared is in the cache.
+    let analyses = workspace.run_manifest_analyses(
+        manifest_path,
+        input_name,
+        &[],
+        &manifest_output.observations,
+        &participant_id,
+        &loader,
+        &options,
+    )?;
+    let matched_findings = match_app_findings(&findings, &observations, &analyses);
+    let reports = vec![app_report_json(AppReportJsonInput {
+        assay_id: &assay_id,
+        participant_id: &participant_id,
+        input_file_name: input_name,
+        observations: &observations,
+        analyses: &analyses,
+        findings: &matched_findings,
+        provenance: &provenance,
+        input_inspection: None,
+        manifest_metadata: &manifest_metadata,
+    })];
+    let observations_tsv = render_app_observations_tsv(&observations)?;
+    let analysis_jsonl = render_jsonl(&analyses)?;
+    let reports_jsonl = render_jsonl(&reports)?;
+    let html = render_app_html_document(&observations, &reports)?;
+    let text_output = "observations: observations.tsv\nanalysis: analysis.jsonl\nreports: reports.jsonl\nhtml: index.html\n".to_owned();
+    serde_json::to_string(&ReportRunOutput {
+        artifacts: vec![
+            artifact(
+                "observations.tsv",
+                "text/tab-separated-values",
+                observations_tsv,
+            ),
+            artifact("analysis.jsonl", "application/jsonl", analysis_jsonl),
+            artifact("reports.jsonl", "application/jsonl", reports_jsonl),
+            artifact("index.html", "text/html", html),
+        ],
+        duration_ms: (js_sys::Date::now() - started_ms).max(0.0) as u128,
+        text_output,
+    })
+    .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
+}
+
+/// Mirrors `runPackageReportBytes` but for a bgzipped, tabix-indexed VCF
+/// streamed via JS-supplied `readAt` callbacks. The TBI is passed inline.
+#[wasm_bindgen(js_name = runPackageReportFromVcf)]
+#[allow(clippy::too_many_arguments)]
+pub fn run_package_report_from_vcf(
+    manifest_path: &str,
+    package_files_json: &str,
+    input_name: &str,
+    vcf_read_at: js_sys::Function,
+    vcf_len: f64,
+    tbi_bytes: &[u8],
+    options_json: Option<String>,
+) -> Result<String, JsError> {
+    use crate::js_reader::JsReader;
+    let started_ms = js_sys::Date::now();
+    let package_files: Vec<PackageFileInput> = serde_json::from_str(package_files_json)
+        .map_err(|err| JsError::new(&format!("invalid package files JSON: {err}")))?;
+    let options = match options_json {
+        Some(text) if !text.is_empty() => serde_json::from_str(&text)
+            .map_err(|err| JsError::new(&format!("invalid report options JSON: {err}")))?,
+        _ => ReportOptionsInput::default(),
+    };
+    let workspace = PackageWorkspace::new(package_files)?;
+    let participant_id = participant_id_from_name(input_name);
+    let assay_id = app_assay_id(Path::new(manifest_path))?;
+    let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
+    let findings = workspace.load_manifest_findings(manifest_path)?;
+    let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
+
+    let tabix_index = bioscript_formats::alignment::parse_tbi_bytes(tbi_bytes)
+        .map_err(|err| JsError::new(&format!("parse tbi: {err:?}")))?;
+    let vcf_reader = JsReader::new(vcf_read_at, vcf_len as u64, "vcf");
+    let indexed = noodles::csi::io::IndexedReader::new(vcf_reader, tabix_index);
+
+    let lookup = VcfReportLookup {
+        reader: std::cell::RefCell::new(indexed),
+        label: input_name.to_owned(),
+    };
+
+    let mut loader = GenotypeLoadOptions::default();
+    loader.format = Some(bioscript_formats::GenotypeSourceFormat::Vcf);
+    let manifest_output =
+        workspace.run_manifest_rows(manifest_path, &lookup, &participant_id, &options.filters)?;
+    let observations = manifest_output
+        .rows
+        .iter()
+        .map(|row| workspace.app_observation_from_manifest_row(row, &assay_id, None, None))
+        .collect::<Result<Vec<_>, _>>()?;
+    // Pre-resolved observation cache replaces the synth approach: analysis
+    // scripts hit the cache via QueryBackend::Cached and skip re-opening the
+    // VCF. See report_api.rs:run_package_report_from_cram for the same
+    // pattern and bioscript-formats::genotype::types::QueryBackend::Cached
+    // for the dispatch.
+    let analyses = workspace.run_manifest_analyses(
+        manifest_path,
+        input_name,
+        &[],
+        &manifest_output.observations,
+        &participant_id,
+        &loader,
+        &options,
+    )?;
+    let matched_findings = match_app_findings(&findings, &observations, &analyses);
+    let reports = vec![app_report_json(AppReportJsonInput {
+        assay_id: &assay_id,
+        participant_id: &participant_id,
+        input_file_name: input_name,
+        observations: &observations,
+        analyses: &analyses,
+        findings: &matched_findings,
+        provenance: &provenance,
+        input_inspection: None,
+        manifest_metadata: &manifest_metadata,
+    })];
+    let observations_tsv = render_app_observations_tsv(&observations)?;
+    let analysis_jsonl = render_jsonl(&analyses)?;
+    let reports_jsonl = render_jsonl(&reports)?;
+    let html = render_app_html_document(&observations, &reports)?;
+    let text_output = "observations: observations.tsv\nanalysis: analysis.jsonl\nreports: reports.jsonl\nhtml: index.html\n".to_owned();
+    serde_json::to_string(&ReportRunOutput {
+        artifacts: vec![
+            artifact(
+                "observations.tsv",
+                "text/tab-separated-values",
+                observations_tsv,
+            ),
+            artifact("analysis.jsonl", "application/jsonl", analysis_jsonl),
+            artifact("reports.jsonl", "application/jsonl", reports_jsonl),
+            artifact("index.html", "text/html", html),
+        ],
+        duration_ms: (js_sys::Date::now() - started_ms).max(0.0) as u128,
+        text_output,
+    })
+    .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
+}

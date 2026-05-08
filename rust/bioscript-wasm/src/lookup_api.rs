@@ -2,8 +2,8 @@ use std::io::BufReader;
 
 use bioscript_core::{GenomicLocus, VariantKind, VariantObservation, VariantSpec};
 use bioscript_formats::{
-    alignment, observe_cram_indel_with_reader, observe_cram_snp_with_reader,
-    observe_vcf_snp_with_reader, GenotypeStore,
+    GenotypeStore, alignment, observe_cram_indel_with_reader, observe_cram_snp_with_reader,
+    observe_vcf_snp_with_reader,
 };
 use noodles::csi as noodles_csi;
 use serde::{Deserialize, Serialize};

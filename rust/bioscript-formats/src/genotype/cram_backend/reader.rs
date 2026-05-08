@@ -32,7 +32,11 @@ pub fn observe_cram_snp_with_reader<R: Read + Seek>(
     matched_rsid: Option<String>,
     assembly: Option<Assembly>,
 ) -> Result<VariantObservation, RuntimeError> {
-    let pileup = snp_pileup_with_reader(reader, label, locus, reference, alternate, false)?;
+    // Reader-based callers (wasm) have no way to surface a CLI flag for
+    // strict MD5 checking and the rust CLI report flow effectively defaults
+    // to lenient when an FASTA has subtle masking/case differences. Match
+    // that behavior here.
+    let pileup = snp_pileup_with_reader(reader, label, locus, reference, alternate, true)?;
     let ref_count = pileup.filtered_ref_count;
     let alt_count = pileup.filtered_alt_count;
     let depth = pileup.filtered_depth;
