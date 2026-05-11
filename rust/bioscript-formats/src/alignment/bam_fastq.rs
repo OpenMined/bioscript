@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::File,
     io::{self, BufWriter, Write},
     path::Path,
@@ -35,13 +35,7 @@ pub fn write_bam_region_fastq_pair(
     reader
         .read_header()
         .map_err(|err| RuntimeError::Io(format!("failed to read BAM header: {err}")))?;
-    let mut read1 = FastqWriter::create(read1_path)?;
-    let mut read2 = FastqWriter::create(read2_path)?;
-    let mut summary = FastqPairSummary {
-        read1_records: 0,
-        read2_records: 0,
-        skipped_records: 0,
-    };
+    let mut templates = TemplateFastqRecords::default();
 
     for result in reader.records() {
         let record =
@@ -49,9 +43,12 @@ pub fn write_bam_region_fastq_pair(
         if !record_in_templates(&record, &target_names) {
             continue;
         }
-        emit_fastq_record(&record, &mut read1, &mut read2, &mut summary)?;
+        templates.push(&record)?;
     }
 
+    let mut read1 = FastqWriter::create(read1_path)?;
+    let mut read2 = FastqWriter::create(read2_path)?;
+    let summary = templates.write_paired(&mut read1, &mut read2)?;
     read1.finish()?;
     read2.finish()?;
     Ok(summary)
@@ -92,25 +89,134 @@ fn record_in_templates(record: &bam::Record, target_names: &HashSet<Vec<u8>>) ->
         .is_some_and(|name| target_names.contains::<[u8]>(name.as_ref()))
 }
 
-fn emit_fastq_record(
-    record: &bam::Record,
-    read1: &mut FastqWriter,
-    read2: &mut FastqWriter,
-    summary: &mut FastqPairSummary,
-) -> Result<(), RuntimeError> {
-    let flags = record.flags();
-    if flags.is_secondary() || flags.is_supplementary() {
-        summary.skipped_records += 1;
-    } else if flags.is_first_segment() {
-        write_fastq_record(read1, record)?;
-        summary.read1_records += 1;
-    } else if flags.is_last_segment() {
-        write_fastq_record(read2, record)?;
-        summary.read2_records += 1;
-    } else {
-        summary.skipped_records += 1;
+#[derive(Debug, Default)]
+struct TemplateFastqRecords {
+    order: Vec<Vec<u8>>,
+    records: HashMap<Vec<u8>, TemplateFastqRecordPair>,
+    skipped_records: usize,
+}
+
+impl TemplateFastqRecords {
+    fn push(&mut self, record: &bam::Record) -> Result<(), RuntimeError> {
+        let flags = record.flags();
+        if flags.is_secondary() || flags.is_supplementary() {
+            self.skipped_records += 1;
+            return Ok(());
+        }
+        let Some(name) = record.name() else {
+            self.skipped_records += 1;
+            return Ok(());
+        };
+        let bytes: &[u8] = name.as_ref();
+        let key: Vec<u8> = bytes.to_vec();
+        let fastq_record = FastqRecord::try_from_bam(record)?;
+        if let Some(pair) = self.records.get_mut(&key) {
+            pair.push(fastq_record, &mut self.skipped_records);
+        } else {
+            let mut pair = TemplateFastqRecordPair::default();
+            pair.push(fastq_record, &mut self.skipped_records);
+            self.order.push(key.clone());
+            self.records.insert(key, pair);
+        }
+        Ok(())
     }
-    Ok(())
+
+    fn write_paired(
+        self,
+        read1: &mut FastqWriter,
+        read2: &mut FastqWriter,
+    ) -> Result<FastqPairSummary, RuntimeError> {
+        let mut summary = FastqPairSummary {
+            read1_records: 0,
+            read2_records: 0,
+            skipped_records: self.skipped_records,
+        };
+        for key in self.order {
+            let pair = self.records.get(&key).expect("template order key exists");
+            if let (Some(first), Some(last)) = (&pair.first, &pair.last) {
+                first.write(&mut *read1)?;
+                last.write(&mut *read2)?;
+                summary.read1_records += 1;
+                summary.read2_records += 1;
+            } else {
+                summary.skipped_records += pair.present_count();
+            }
+        }
+        Ok(summary)
+    }
+}
+
+#[derive(Debug, Default)]
+struct TemplateFastqRecordPair {
+    first: Option<FastqRecord>,
+    last: Option<FastqRecord>,
+}
+
+impl TemplateFastqRecordPair {
+    fn push(&mut self, record: FastqRecord, skipped_records: &mut usize) {
+        match record.segment {
+            FastqSegment::First if self.first.is_none() => self.first = Some(record),
+            FastqSegment::Last if self.last.is_none() => self.last = Some(record),
+            _ => *skipped_records += 1,
+        }
+    }
+
+    fn present_count(&self) -> usize {
+        usize::from(self.first.is_some()) + usize::from(self.last.is_some())
+    }
+}
+
+#[derive(Debug)]
+struct FastqRecord {
+    name: Vec<u8>,
+    sequence: Vec<u8>,
+    qualities: Vec<u8>,
+    segment: FastqSegment,
+}
+
+impl FastqRecord {
+    fn try_from_bam(record: &bam::Record) -> Result<Self, RuntimeError> {
+        let flags = record.flags();
+        let segment = if flags.is_first_segment() {
+            FastqSegment::First
+        } else if flags.is_last_segment() {
+            FastqSegment::Last
+        } else {
+            FastqSegment::Other
+        };
+        let sequence = record.sequence().iter().collect::<Vec<_>>();
+        Ok(Self {
+            name: record.name().map_or_else(
+                || b"*".to_vec(),
+                |name| {
+                    let bytes: &[u8] = name.as_ref();
+                    bytes.to_vec()
+                },
+            ),
+            qualities: fastq_qualities(record, sequence.len())?,
+            sequence,
+            segment,
+        })
+    }
+
+    fn write(&self, mut writer: impl Write) -> Result<(), RuntimeError> {
+        writer
+            .write_all(b"@")
+            .and_then(|()| writer.write_all(&self.name))
+            .and_then(|()| writer.write_all(b"\n"))
+            .and_then(|()| writer.write_all(&self.sequence))
+            .and_then(|()| writer.write_all(b"\n+\n"))
+            .and_then(|()| writer.write_all(&self.qualities))
+            .and_then(|()| writer.write_all(b"\n"))
+            .map_err(|err| RuntimeError::Io(format!("failed to write FASTQ record: {err}")))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FastqSegment {
+    First,
+    Last,
+    Other,
 }
 
 enum FastqWriter {
@@ -157,21 +263,6 @@ impl Write for FastqWriter {
             Self::Gzip(writer) => writer.flush(),
         }
     }
-}
-
-fn write_fastq_record(mut writer: impl Write, record: &bam::Record) -> Result<(), RuntimeError> {
-    let name = record.name().map_or(b"*".as_slice(), |name| name.as_ref());
-    let sequence = record.sequence().iter().collect::<Vec<_>>();
-    let qualities = fastq_qualities(record, sequence.len())?;
-    writer
-        .write_all(b"@")
-        .and_then(|()| writer.write_all(name))
-        .and_then(|()| writer.write_all(b"\n"))
-        .and_then(|()| writer.write_all(&sequence))
-        .and_then(|()| writer.write_all(b"\n+\n"))
-        .and_then(|()| writer.write_all(&qualities))
-        .and_then(|()| writer.write_all(b"\n"))
-        .map_err(|err| RuntimeError::Io(format!("failed to write FASTQ record: {err}")))
 }
 
 fn fastq_qualities(record: &bam::Record, sequence_len: usize) -> Result<Vec<u8>, RuntimeError> {

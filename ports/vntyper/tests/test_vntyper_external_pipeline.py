@@ -73,6 +73,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                     self.assertTrue(kwargs["capture_output"])
                     return SimpleNamespace(stdout="chr1\t100\t10\nchr1\t101\t0\nchr1\t102\t20\n")
                 if command[0] == "java":
+                    self.assertTrue(Path(command[command.index("--temploc") + 1]).is_dir())
                     shutil.copyfile(FIXTURE_VCF, command[command.index("-o") + 1])
                     Path(command[command.index("-p") + 1]).write_text("@HD\n", encoding="utf-8")
                 return SimpleNamespace(stdout="")
@@ -134,6 +135,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
 
             def fake_runner(command, check):
                 calls.append(("kestrel", command))
+                self.assertTrue(Path(command[command.index("--temploc") + 1]).is_dir())
                 shutil.copyfile(FIXTURE_VCF, command[command.index("-o") + 1])
                 Path(command[command.index("-p") + 1]).write_text("@HD\n", encoding="utf-8")
 

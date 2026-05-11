@@ -186,6 +186,36 @@ def require_native_bam_pipeline_prerequisites():
     }
 
 
+def require_samtools_fastq_oracle_prerequisites():
+    """Skip unless native FASTQ extraction can be compared against samtools."""
+    manifest = require_test_data(check_md5=False)
+    missing = []
+    if os.environ.get("BIOSCRIPT_RUN_SAMTOOLS_ORACLE") != "1":
+        missing.append("BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1")
+    if shutil.which("samtools") is None:
+        missing.append("samtools on PATH")
+    missing_cases = [
+        str(path)
+        for bam in REPRESENTATIVE_BAM_CASES.values()
+        for path in [bam, Path(f"{bam}.bai")]
+        if not path.exists()
+    ]
+    missing.extend(missing_cases)
+    try:
+        import_native_module()
+    except Exception as exc:
+        missing.append(f"bioscript._native importable ({exc})")
+    if missing:
+        raise unittest.SkipTest(
+            "VNtyper samtools FASTQ oracle prerequisites are missing: " + "; ".join(missing)
+        )
+    return {
+        "manifest": manifest,
+        "samtools": shutil.which("samtools"),
+        "bam_cases": {label: str(path) for label, path in REPRESENTATIVE_BAM_CASES.items()},
+    }
+
+
 def import_native_module():
     python_root = ROOT / "python"
     if str(python_root) not in sys.path:

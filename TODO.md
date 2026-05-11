@@ -176,7 +176,13 @@ surface requires it.
       bcftools. A gated real-data native BAM pipeline test now exists and skips
       until explicitly enabled with `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1` and
       `bioscript._native`, Java/Kestrel, BAM/BAI inputs, and expected outputs
-      are all available.
+      are all available. A separate `samtools` oracle gate now exists at
+      `ports/vntyper/tests/test_samtools_fastq_oracle.py`; it is opt-in with
+      `BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1` and compares native FASTQ extraction
+      counts against `samtools view -P`, name-sort, and `samtools fastq`.
+      The local environment is Arch Linux, but `sudo pacman -Sy --needed
+      --noconfirm samtools bcftools` cannot run non-interactively here because
+      sudo requires a terminal password.
       FASTQ-backed Kestrel expected outputs are gated by
       `test_fastq_expected_outputs.py`; true positive/negative BAM labels still
       need validation against upstream expected results.
@@ -231,6 +237,15 @@ surface requires it.
       `ports/vntyper/bioscript/vntyper_external_pipeline.py` and is covered
       with an injected fake runner; the real-tool run remains gated on local
       samtools/bcftools/Kestrel prerequisites and expected labels.
+      Native BioScript BAM FASTQ extraction now writes complete primary R1/R2
+      pairs only and matches the copied representative FASTQ fixture counts
+      for `example_6449_hg19_subset.bam` (`82523/82523`) and
+      `example_66bf_hg19_subset.bam` (`19877/19877`). The native BAM/Kestrel
+      gate now passes locally when explicitly enabled with
+      `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1` and a temporarily copied
+      `bioscript._native` extension. The remaining M4 work is proving the
+      external `samtools`/`bcftools` comparison path once those tools are
+      available locally, or replacing that milestone with the native Rust path.
 - [x] M5: Native Rust Kestrel feasibility spike:
       reproduce Kestrel VCF output for one tiny fixture or document why the JVM
       adapter remains the practical first target.

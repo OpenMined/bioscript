@@ -231,6 +231,7 @@ def create_output_dirs(result: ExternalPipelineResult, plan: vntyper_commands.Vn
     Path(plan.sliced_bam).parent.mkdir(parents=True, exist_ok=True)
     Path(plan.fastq_1).parent.mkdir(parents=True, exist_ok=True)
     Path(plan.kestrel_vcf).parent.mkdir(parents=True, exist_ok=True)
+    Path(plan.kestrel_vcf).parent.joinpath("tmp").mkdir(parents=True, exist_ok=True)
 
 
 def materialize_post_kestrel_outputs(
