@@ -14,6 +14,7 @@ use bioscript_libs::{
             call_fastq_paths_to_vcf, call_fastq_paths_to_vcf_references, call_sequences_to_vcf,
             count_fastq_kmers, count_sequence_kmers, detect_active_regions, difference_threshold,
             read_reference_records, recovery_threshold, reference_kmers, scan_limit_length,
+            score_haplotype_alignment,
         },
     },
     pyfaidx::Fasta,
@@ -1117,6 +1118,28 @@ fn kestrel_native_alignment_emits_edit_operations() {
         ]
     );
     assert!(align_haplotype("ACGT", "ACGX").is_err());
+}
+
+#[test]
+fn kestrel_native_alignment_scores_with_java_weight_shape() {
+    let weight = AlignmentWeight::default();
+
+    assert_eq!(
+        score_haplotype_alignment("ACGTAC", "ACGTAC", &weight).unwrap(),
+        60.0
+    );
+    assert_eq!(
+        score_haplotype_alignment("ACGTAC", "ACGTTC", &weight).unwrap(),
+        40.0
+    );
+    assert_eq!(
+        score_haplotype_alignment("ACGTAC", "ACGTTAC", &weight).unwrap(),
+        20.0
+    );
+    assert_eq!(
+        score_haplotype_alignment("ACGTAC", "ACGTACAA", &weight).unwrap(),
+        16.0
+    );
 }
 
 #[test]

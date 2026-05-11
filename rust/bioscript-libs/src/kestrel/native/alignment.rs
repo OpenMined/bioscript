@@ -1,6 +1,6 @@
 use crate::{LibError, LibResult};
 
-use super::variant::NativeVariantCall;
+use super::{alignment_weight::AlignmentWeight, variant::NativeVariantCall};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlignmentOp {
@@ -138,6 +138,34 @@ pub fn call_alignment_variants(
         }
     }
     Ok(variants)
+}
+
+pub fn score_alignment(alignment: &NativeAlignment, weight: &AlignmentWeight) -> f32 {
+    alignment.ops.iter().fold(0.0, |score, op| match *op {
+        AlignmentOp::Match(length) => score + weight.match_weight * length as f32,
+        AlignmentOp::Mismatch(length) => score + weight.mismatch * length as f32,
+        AlignmentOp::Insertion(length) | AlignmentOp::Deletion(length) => {
+            score + gap_score(length, weight)
+        }
+    })
+}
+
+pub fn score_haplotype_alignment(
+    reference: &str,
+    haplotype: &str,
+    weight: &AlignmentWeight,
+) -> LibResult<f32> {
+    Ok(score_alignment(
+        &align_haplotype(reference, haplotype)?,
+        weight,
+    ))
+}
+
+fn gap_score(length: usize, weight: &AlignmentWeight) -> f32 {
+    if length == 0 {
+        return 0.0;
+    }
+    weight.gap_open + weight.gap_extend * length.saturating_sub(1) as f32
 }
 
 fn push_op(ops: &mut Vec<AlignmentOp>, op: AlignmentOp) {
