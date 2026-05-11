@@ -17,6 +17,7 @@ mod methods;
 mod objects;
 mod state;
 mod timing;
+mod tool_methods;
 mod trace;
 mod variants;
 
