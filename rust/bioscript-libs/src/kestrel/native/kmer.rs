@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::{
     fs::File,
     io::{BufRead, BufReader},
@@ -11,8 +11,8 @@ use flate2::read::MultiGzDecoder;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KmerCountMap {
     kmer_size: usize,
-    counts: BTreeMap<String, u32>,
-    transitions: BTreeMap<(String, String), u32>,
+    counts: HashMap<String, u32>,
+    transitions: HashMap<(String, String), u32>,
 }
 
 impl KmerCountMap {
@@ -21,8 +21,8 @@ impl KmerCountMap {
         kmer_size: usize,
     ) -> LibResult<Self> {
         validate_kmer_size(kmer_size)?;
-        let mut counts = BTreeMap::new();
-        let mut transitions = BTreeMap::new();
+        let mut counts = HashMap::new();
+        let mut transitions = HashMap::new();
         for sequence in sequences {
             count_into(&mut counts, &mut transitions, sequence, kmer_size)?;
         }
@@ -38,8 +38,8 @@ impl KmerCountMap {
         kmer_size: usize,
     ) -> LibResult<Self> {
         validate_kmer_size(kmer_size)?;
-        let mut counts = BTreeMap::new();
-        let mut transitions = BTreeMap::new();
+        let mut counts = HashMap::new();
+        let mut transitions = HashMap::new();
         for path in paths {
             count_fastq_path_into(&mut counts, &mut transitions, path, kmer_size)?;
         }
@@ -60,7 +60,7 @@ impl KmerCountMap {
         Ok(*self.counts.get(&normalized).unwrap_or(&0))
     }
 
-    pub fn counts(&self) -> &BTreeMap<String, u32> {
+    pub fn counts(&self) -> &HashMap<String, u32> {
         &self.counts
     }
 
@@ -105,16 +105,22 @@ impl KmerCountMap {
 }
 
 pub fn count_sequence_kmers(sequence: &str, kmer_size: usize) -> LibResult<BTreeMap<String, u32>> {
-    Ok(KmerCountMap::from_sequences([sequence], kmer_size)?.counts)
+    Ok(KmerCountMap::from_sequences([sequence], kmer_size)?
+        .counts
+        .into_iter()
+        .collect())
 }
 
 pub fn count_fastq_kmers(path: &Path, kmer_size: usize) -> LibResult<BTreeMap<String, u32>> {
-    Ok(KmerCountMap::from_fastq_paths([path], kmer_size)?.counts)
+    Ok(KmerCountMap::from_fastq_paths([path], kmer_size)?
+        .counts
+        .into_iter()
+        .collect())
 }
 
 fn count_fastq_path_into(
-    counts: &mut BTreeMap<String, u32>,
-    transitions: &mut BTreeMap<(String, String), u32>,
+    counts: &mut HashMap<String, u32>,
+    transitions: &mut HashMap<(String, String), u32>,
     path: &Path,
     kmer_size: usize,
 ) -> LibResult<()> {
@@ -165,8 +171,8 @@ fn count_fastq_path_into(
 }
 
 fn count_into(
-    counts: &mut BTreeMap<String, u32>,
-    transitions: &mut BTreeMap<(String, String), u32>,
+    counts: &mut HashMap<String, u32>,
+    transitions: &mut HashMap<(String, String), u32>,
     sequence: &str,
     kmer_size: usize,
 ) -> LibResult<()> {

@@ -228,12 +228,13 @@ surface requires it.
       `AAAACCCCGGGGTTTT`. It also assigns VCF DP from the total assembled
       active-region haplotype depth, matching Java's mixed reference/alternate
       depth shape. A local full VNtyper motif FASTQ probe currently shows that
-      the native path is still too slow for the 551-record motif dictionary:
-      even a constrained single-reference full-FASTQ run spends about 22
-      seconds before producing a no-call VCF, while tiny 100-read samples scale
+      the native path is still not yet proven for the 551-record motif
+      dictionary: after replacing the internal k-mer/transition store with
+      `HashMap`, a constrained single-reference full-FASTQ run improved from
+      about 22 seconds to about 6.3 seconds, while tiny 100-read samples scale
       acceptably. The remaining work is the full Java active-region detector
-      heuristics, a faster k-mer/count-transition representation or candidate
-      motif prefilter, and broader parity against Java Kestrel outputs on
+      heuristics, additional k-mer/count-transition optimization or candidate
+      motif prefiltering, and broader parity against Java Kestrel outputs on
       larger synthetic and VNtyper fixtures.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
