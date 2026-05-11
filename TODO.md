@@ -157,7 +157,8 @@ surface requires it.
       native detector searches for a later abrupt count increase and uses that
       k-mer as a recovered right anchor. The first left-scan peak suppression
       rule is also ported: short isolated count increases can be skipped rather
-      than being emitted as left-end active regions. The
+      than being emitted as left-end active regions, and left-open candidate
+      scans now respect the same scan-limit length used by right scans. The
       native `align_haplotype` and `call_alignment_variants` helpers provide a
       first deterministic reference-vs-haplotype edit surface that emits
       SNP/insertion/deletion calls using the same native VCF normalization path.
