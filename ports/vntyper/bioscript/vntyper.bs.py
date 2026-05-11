@@ -1,3 +1,4 @@
+from bioscript import bcftools
 from bioscript import kestrel
 from bioscript import samtools
 from bioscript import vcf
@@ -26,11 +27,16 @@ def main():
         fastq_1,
         fastq_2,
     )
+    sorted_vcf = work_dir + "/kestrel/output.sorted.vcf.gz"
+    bcftools_sort_command = bcftools.sort(work_dir + "/kestrel/output.vcf", sorted_vcf)
+    bcftools_index_command = bcftools.index(sorted_vcf)
 
     report = {
         "participant_id": sample,
         "samtools_fastq_command": fastq_command,
         "kestrel_command": kestrel_command,
+        "bcftools_sort_command": bcftools_sort_command,
+        "bcftools_index_command": bcftools_index_command,
     }
     bioscript.write_tsv(output_file, [report])
 

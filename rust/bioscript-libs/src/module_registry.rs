@@ -2,6 +2,7 @@ use crate::{LibError, LibResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleName {
+    Bcftools,
     Kestrel,
     Pysam,
     Pyfaidx,
@@ -12,6 +13,7 @@ pub enum ModuleName {
 impl ModuleName {
     pub fn parse(name: &str) -> LibResult<Self> {
         match name {
+            "bcftools" => Ok(Self::Bcftools),
             "kestrel" => Ok(Self::Kestrel),
             "pysam" => Ok(Self::Pysam),
             "pyfaidx" => Ok(Self::Pyfaidx),
@@ -23,6 +25,7 @@ impl ModuleName {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Bcftools => "bcftools",
             Self::Kestrel => "kestrel",
             Self::Pysam => "pysam",
             Self::Pyfaidx => "pyfaidx",
@@ -41,6 +44,11 @@ pub struct ModuleDescriptor {
 
 pub fn supported_modules() -> &'static [ModuleDescriptor] {
     &[
+        ModuleDescriptor {
+            name: ModuleName::Bcftools,
+            import_path: "from bioscript import bcftools",
+            summary: "structured bcftools command wrapper for VCF sort, index, view, and norm",
+        },
         ModuleDescriptor {
             name: ModuleName::Kestrel,
             import_path: "from bioscript import kestrel",

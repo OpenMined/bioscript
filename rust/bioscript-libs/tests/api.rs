@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use bioscript_libs::{
-    LibError, ModuleName,
+    LibError, ModuleName, bcftools,
     kestrel::KestrelRunConfig,
     pyfaidx::Fasta,
     pysam::{AlignedSegment, AlignmentFile},
@@ -25,10 +25,34 @@ fn registry_lists_initial_bioscript_import_modules() {
     assert_eq!(ModuleName::parse("pysam").unwrap(), ModuleName::Pysam);
     assert_eq!(ModuleName::parse("kestrel").unwrap(), ModuleName::Kestrel);
     assert_eq!(ModuleName::parse("samtools").unwrap(), ModuleName::Samtools);
+    assert_eq!(ModuleName::parse("bcftools").unwrap(), ModuleName::Bcftools);
     assert!(matches!(
         ModuleName::parse("numpy"),
         Err(LibError::UnknownModule(name)) if name == "numpy"
     ));
+}
+
+#[test]
+fn bcftools_vntyper_subset_builds_allowed_commands() {
+    let sorted = bcftools::sort(
+        PathBuf::from("calls.vcf").as_path(),
+        PathBuf::from("calls.vcf.gz").as_path(),
+    )
+    .unwrap();
+    assert_eq!(
+        sorted.argv(),
+        vec!["bcftools", "sort", "-Oz", "-o", "calls.vcf.gz", "calls.vcf"]
+    );
+
+    let filtered = bcftools::view_filter(
+        PathBuf::from("calls.vcf").as_path(),
+        PathBuf::from("pass.vcf.gz").as_path(),
+        "FILTER=\"PASS\"",
+    )
+    .unwrap();
+    assert_eq!(filtered.program(), "bcftools");
+    assert_eq!(filtered.args()[0], "view");
+    assert!(filtered.args().contains(&"FILTER=\"PASS\"".to_owned()));
 }
 
 #[test]
