@@ -161,7 +161,11 @@ surface requires it.
       scans now respect the same scan-limit length used by right scans. The
       left-scan recovery check now also follows Java's discard shape when
       counts recover before the scan reaches the left end, which prevents those
-      internal recoveries from being emitted as left-end active regions. The
+      internal recoveries from being emitted as left-end active regions.
+      Java's `callAmbiguousRegions` switch is now exposed as
+      `call_ambiguous_regions` through the native detector and Python wrapper,
+      with default-on behavior and optional rejection of active regions whose
+      reference span contains ambiguous bases. The
       native `align_haplotype` and `call_alignment_variants` helpers provide a
       first deterministic reference-vs-haplotype edit surface that emits
       SNP/insertion/deletion calls using the same native VCF normalization path.

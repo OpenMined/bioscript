@@ -19,6 +19,7 @@ pub struct ActiveRegionDetectorConfig {
     pub peak_scan_length: usize,
     pub scan_limit_factor: f32,
     pub recover_right_anchor: bool,
+    pub call_ambiguous_regions: bool,
 }
 
 impl Default for ActiveRegionDetectorConfig {
@@ -33,6 +34,7 @@ impl Default for ActiveRegionDetectorConfig {
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
             recover_right_anchor: true,
+            call_ambiguous_regions: true,
         }
     }
 }
@@ -142,6 +144,12 @@ fn candidate_regions(
                 continue;
             };
             if end < counts.len() && end.saturating_sub(index) >= kmer_size.saturating_sub(1) {
+                if !config.call_ambiguous_regions
+                    && contains_ambiguous_region_base(region, index, end + kmer_size)
+                {
+                    index += 1;
+                    continue;
+                }
                 regions.push(ActiveRegion::new(
                     region,
                     Some(index - 1),
@@ -156,6 +164,11 @@ fn candidate_regions(
                 && end == counts.len()
                 && end.saturating_sub(index) >= kmer_size.saturating_sub(1)
             {
+                if !config.call_ambiguous_regions
+                    && contains_ambiguous_region_base(region, index, region.sequence.len())
+                {
+                    break;
+                }
                 regions.push(ActiveRegion::new(
                     region,
                     Some(index - 1),
@@ -188,6 +201,13 @@ fn candidate_regions(
                 index += 1;
                 continue;
             }
+            let start_base = start.unwrap_or(0);
+            if !config.call_ambiguous_regions
+                && contains_ambiguous_region_base(region, start_base, index + kmer_size)
+            {
+                index += 1;
+                continue;
+            }
             regions.push(ActiveRegion::new(
                 region,
                 start,
@@ -201,6 +221,12 @@ fn candidate_regions(
         index += 1;
     }
     Ok(regions)
+}
+
+fn contains_ambiguous_region_base(region: &ReferenceRegion, start: usize, end: usize) -> bool {
+    region.sequence[start.min(region.sequence.len())..end.min(region.sequence.len())]
+        .bytes()
+        .any(|base| !matches!(base, b'A' | b'a' | b'C' | b'c' | b'G' | b'g' | b'T' | b't'))
 }
 
 pub fn scan_limit_length(

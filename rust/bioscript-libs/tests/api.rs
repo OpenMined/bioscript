@@ -516,6 +516,7 @@ fn kestrel_native_active_region_detector_finds_depth_drop_candidates() {
         peak_scan_length: 7,
         scan_limit_factor: 7.0,
         recover_right_anchor: true,
+        call_ambiguous_regions: true,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -549,6 +550,7 @@ fn kestrel_native_active_region_detector_emits_right_open_candidates() {
         peak_scan_length: 7,
         scan_limit_factor: 7.0,
         recover_right_anchor: true,
+        call_ambiguous_regions: true,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -582,6 +584,7 @@ fn kestrel_native_active_region_detector_respects_anchor_both_ends() {
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
             recover_right_anchor: true,
+            call_ambiguous_regions: true,
         },
     )
     .unwrap();
@@ -608,6 +611,7 @@ fn kestrel_native_active_region_detector_emits_left_open_candidates() {
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
             recover_right_anchor: true,
+            call_ambiguous_regions: true,
         },
     )
     .unwrap();
@@ -653,6 +657,7 @@ fn kestrel_native_active_region_detector_scans_past_short_peaks() {
             peak_scan_length: 0,
             scan_limit_factor: 7.0,
             recover_right_anchor: true,
+            call_ambiguous_regions: true,
         },
     )
     .unwrap();
@@ -672,6 +677,7 @@ fn kestrel_native_active_region_detector_scans_past_short_peaks() {
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
             recover_right_anchor: true,
+            call_ambiguous_regions: true,
         },
     )
     .unwrap();
@@ -700,6 +706,7 @@ fn kestrel_native_active_region_detector_discards_over_limit_scans() {
         peak_scan_length: 0,
         scan_limit_factor: 1.0,
         recover_right_anchor: true,
+        call_ambiguous_regions: true,
     };
 
     assert_eq!(scan_limit_length(4, &config).unwrap(), 4);
@@ -712,6 +719,7 @@ fn kestrel_native_active_region_detector_discards_over_limit_scans() {
             &ActiveRegionDetectorConfig {
                 scan_limit_factor: f32::INFINITY,
                 recover_right_anchor: true,
+                call_ambiguous_regions: true,
                 ..config
             }
         )
@@ -743,6 +751,7 @@ fn kestrel_native_active_region_detector_recovers_right_anchor() {
         peak_scan_length: 0,
         scan_limit_factor: 7.0,
         recover_right_anchor: true,
+        call_ambiguous_regions: true,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -757,6 +766,7 @@ fn kestrel_native_active_region_detector_recovers_right_anchor() {
         &counts,
         &ActiveRegionDetectorConfig {
             recover_right_anchor: false,
+            call_ambiguous_regions: true,
             ..config
         },
     )
@@ -788,6 +798,7 @@ fn kestrel_native_active_region_detector_skips_left_peak() {
         peak_scan_length: 7,
         scan_limit_factor: 7.0,
         recover_right_anchor: true,
+        call_ambiguous_regions: true,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -824,6 +835,7 @@ fn kestrel_native_active_region_detector_limits_left_open_scans() {
         peak_scan_length: 0,
         scan_limit_factor: 1.0,
         recover_right_anchor: true,
+        call_ambiguous_regions: true,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -872,6 +884,7 @@ fn kestrel_native_active_region_detector_discards_left_scan_recovery_before_left
             peak_scan_length: 0,
             scan_limit_factor: 7.0,
             recover_right_anchor: true,
+            call_ambiguous_regions: true,
         },
     )
     .unwrap();
@@ -883,6 +896,49 @@ fn kestrel_native_active_region_detector_discards_left_scan_recovery_before_left
             .iter()
             .all(|region| !(region.left_end && region.end_kmer_index == 3))
     );
+}
+
+#[test]
+fn kestrel_native_active_region_detector_honors_ambiguous_region_flag() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "AAAACCCNGGGGTTTT".to_owned(),
+    };
+    let counts = KmerCountMap::from_sequences(
+        [
+            "AAAA", "AAAC", "AACC", "ACCC", "GGGG", "GGGT", "GGTT", "GTTT", "TTTT",
+        ],
+        4,
+    )
+    .unwrap();
+    let config = ActiveRegionDetectorConfig {
+        minimum_difference: 1,
+        difference_quantile: 0.0,
+        count_reverse_kmers: false,
+        anchor_both_ends: true,
+        decay_min: 1.0,
+        decay_alpha: 0.80,
+        peak_scan_length: 7,
+        scan_limit_factor: 7.0,
+        recover_right_anchor: true,
+        call_ambiguous_regions: true,
+    };
+
+    let allowed = detect_active_regions(&region, &counts, &config).unwrap();
+    assert_eq!(allowed.regions.len(), 1);
+    assert_eq!(allowed.regions[0].left_end_kmer.as_deref(), Some("ACCC"));
+    assert_eq!(allowed.regions[0].right_end_kmer.as_deref(), Some("GGGG"));
+
+    let rejected = detect_active_regions(
+        &region,
+        &counts,
+        &ActiveRegionDetectorConfig {
+            call_ambiguous_regions: false,
+            ..config
+        },
+    )
+    .unwrap();
+    assert!(rejected.regions.is_empty());
 }
 
 #[test]
@@ -913,6 +969,7 @@ fn kestrel_native_recovery_threshold_matches_java_decay_shape() {
         peak_scan_length: 7,
         scan_limit_factor: 7.0,
         recover_right_anchor: true,
+        call_ambiguous_regions: true,
         ..ActiveRegionDetectorConfig::default()
     };
     assert_eq!(
@@ -1129,6 +1186,7 @@ fn kestrel_native_sequences_engine_counts_detects_assembles_and_writes_vcf() {
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
             recover_right_anchor: true,
+            call_ambiguous_regions: true,
         },
         &HaplotypeAssemblyConfig {
             min_kmer_count: 1,
@@ -1177,6 +1235,7 @@ fn kestrel_native_fastq_engine_counts_detects_assembles_and_writes_vcf() {
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
             recover_right_anchor: true,
+            call_ambiguous_regions: true,
         },
         &HaplotypeAssemblyConfig {
             min_kmer_count: 1,
