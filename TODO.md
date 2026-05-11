@@ -202,6 +202,12 @@ surface requires it.
       perfect-reference no-variant and simple SNP fixtures. The remaining work
       is the full Java active-region detector heuristics and broader parity
       against Java Kestrel outputs on sparse synthetic and VNtyper fixtures.
+      A known next sparse synthetic target is reference-consistent split reads
+      (`AAAACCC`, `CCCTGGG`, `GGGTTTT`) against `AAAACCCCGGGGTTTT`: Java
+      Kestrel emits no variant rows with the current parity flags, while the
+      native graph assembler can bridge the sparse k-mer path and over-call
+      variants. That gap should be fixed before expanding the Java parity gate
+      to sparse-read fixtures.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
