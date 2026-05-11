@@ -151,7 +151,11 @@ surface requires it.
       active region. The native detector also exposes a Java-shaped
       `scan_limit_factor` control; until alignment-weight max-gap parity is
       implemented, BioScript uses `max(k, factor * k)` and discards candidate
-      right scans that exceed that limit. The
+      right scans that exceed that limit. Java's default `recoverRightAnchor`
+      behavior is now partially ported as `recover_right_anchor`: when the
+      normal recovery threshold is never reached inside the scan limit, the
+      native detector searches for a later abrupt count increase and uses that
+      k-mer as a recovered right anchor. The
       native `align_haplotype` and `call_alignment_variants` helpers provide a
       first deterministic reference-vs-haplotype edit surface that emits
       SNP/insertion/deletion calls using the same native VCF normalization path.
