@@ -206,7 +206,7 @@ surface requires it.
       logs.
 - [ ] M8: FASTQ path works using external fastp/bwa or documented prealigned
       inputs.
-- [ ] M9: Optional adVNTR/SHARK/cohort/report modules triaged.
+- [x] M9: Optional adVNTR/SHARK/cohort/report modules triaged.
 - [ ] M10: IGV visualization parity.
 - [ ] M11: Replace selected external-tool behavior with Rust/noodles wrappers
       where the benefit is clear.
