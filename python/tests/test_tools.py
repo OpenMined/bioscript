@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from bioscript import bcftools, kestrel, samtools
 
@@ -76,6 +78,57 @@ class ToolCommandTests(unittest.TestCase):
             samtools.depth("slice.bam", "chr1:1-10", include_zero=True),
             ["samtools", "depth", "-a", "-r", "chr1:1-10", "slice.bam"],
         )
+
+    def test_samtools_native_wrappers_delegate_to_extension(self) -> None:
+        calls = []
+
+        def view_region_native(bam, index, region, output):
+            calls.append((bam, index, region, output))
+            return 7
+
+        fake_native = SimpleNamespace(
+            samtools_view_region_native=view_region_native,
+            samtools_depth_native=lambda bam, index, region: {"mean": 2.5},
+            samtools_fastq_native=lambda bam, index, region, fastq_1, fastq_2: {
+                "read1_records": 3,
+                "read2_records": 3,
+                "skipped_records": 1,
+            },
+        )
+        with patch.dict("sys.modules", {"bioscript._native": fake_native}):
+            self.assertEqual(
+                samtools.view_region_native(
+                    "sample.bam",
+                    "chr1:1-10",
+                    "slice.bam",
+                    index="sample.bam.bai",
+                ),
+                7,
+            )
+            self.assertEqual(
+                calls,
+                [("sample.bam", "sample.bam.bai", "chr1:1-10", "slice.bam")],
+            )
+            self.assertEqual(samtools.depth_native("slice.bam", "chr1:1-10"), {"mean": 2.5})
+            self.assertEqual(
+                samtools.fastq_native(
+                    "slice.bam",
+                    "chr1:1-10",
+                    "r1.fastq.gz",
+                    "r2.fastq.gz",
+                ),
+                {"read1_records": 3, "read2_records": 3, "skipped_records": 1},
+            )
+
+    def test_samtools_native_wrappers_report_missing_extension(self) -> None:
+        with patch.dict("sys.modules", {"bioscript._native": None}):
+            with self.assertRaises(NotImplementedError):
+                samtools.fastq_native(
+                    "slice.bam",
+                    "chr1:1-10",
+                    "r1.fastq.gz",
+                    "r2.fastq.gz",
+                )
 
     def test_bcftools_vcf_helpers(self) -> None:
         self.assertEqual(
