@@ -213,6 +213,75 @@ fn kestrel_call_fastq_native(
     .map_err(to_py_value_error)
 }
 
+#[allow(clippy::too_many_arguments)]
+#[pyfunction]
+fn kestrel_call_fastq_references_native(
+    references: Vec<(String, String, String)>,
+    fastq_paths: Vec<String>,
+    kmer_size: usize,
+    sample_name: &str,
+    source_version: Option<&str>,
+    minimum_difference: Option<u32>,
+    difference_quantile: Option<f32>,
+    anchor_both_ends: Option<bool>,
+    decay_min: Option<f32>,
+    decay_alpha: Option<f32>,
+    peak_scan_length: Option<usize>,
+    scan_limit_factor: Option<f32>,
+    max_gap_size: Option<usize>,
+    recover_right_anchor: Option<bool>,
+    call_ambiguous_regions: Option<bool>,
+    min_kmer_count: Option<u32>,
+    max_haplotypes: Option<usize>,
+    max_bases: Option<usize>,
+    max_repeat_count: Option<usize>,
+    max_saved_states: Option<usize>,
+    locus_depth: Option<u32>,
+) -> PyResult<String> {
+    let references: Vec<bioscript_libs::kestrel::native::NativeReferenceRegion> = references
+        .into_iter()
+        .map(|(name, sequence, md5)| {
+            bioscript_libs::kestrel::native::NativeReferenceRegion::new(name, sequence, md5)
+        })
+        .collect();
+    let detector_config = bioscript_libs::kestrel::native::ActiveRegionDetectorConfig {
+        minimum_difference: minimum_difference.unwrap_or(5),
+        difference_quantile: difference_quantile.unwrap_or(0.90),
+        count_reverse_kmers: true,
+        anchor_both_ends: anchor_both_ends.unwrap_or(true),
+        decay_min: decay_min.unwrap_or(0.55),
+        decay_alpha: decay_alpha.unwrap_or(0.80),
+        peak_scan_length: peak_scan_length.unwrap_or(7),
+        scan_limit_factor: scan_limit_factor.unwrap_or(7.0),
+        max_gap_size: max_gap_size.unwrap_or_else(|| default_alignment_max_gap_size(kmer_size)),
+        recover_right_anchor: recover_right_anchor.unwrap_or(true),
+        call_ambiguous_regions: call_ambiguous_regions.unwrap_or(true),
+    };
+    let assembly_config = bioscript_libs::kestrel::native::HaplotypeAssemblyConfig {
+        min_kmer_count: min_kmer_count.unwrap_or(1),
+        max_haplotypes: max_haplotypes.unwrap_or(40),
+        max_bases: max_bases.unwrap_or(500),
+        max_repeat_count: max_repeat_count.unwrap_or(0),
+        max_saved_states: max_saved_states.unwrap_or(40),
+        locus_depth: locus_depth.unwrap_or(1),
+    };
+    let call_config = bioscript_libs::kestrel::native::NativeKestrelCallConfig::new(
+        source_version.unwrap_or("native"),
+        sample_name,
+        ".",
+    );
+    let paths: Vec<PathBuf> = fastq_paths.into_iter().map(PathBuf::from).collect();
+    bioscript_libs::kestrel::native::call_fastq_paths_to_vcf_references(
+        &references,
+        paths.iter().map(PathBuf::as_path),
+        kmer_size,
+        &detector_config,
+        &assembly_config,
+        &call_config,
+    )
+    .map_err(to_py_value_error)
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(supported_modules, module)?)?;
@@ -221,6 +290,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(samtools_fastq_native, module)?)?;
     module.add_function(wrap_pyfunction!(kestrel_call_sequences_native, module)?)?;
     module.add_function(wrap_pyfunction!(kestrel_call_fastq_native, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        kestrel_call_fastq_references_native,
+        module
+    )?)?;
     Ok(())
 }
 

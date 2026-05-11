@@ -199,7 +199,9 @@ surface requires it.
       FASTQ inputs produced by the BioScript samtools extraction path. A
       multi-reference native VCF path now counts FASTQ reads once, emits all
       reference contig headers, and scans each reference region for variants,
-      which is the next required shape for full VNtyper motif-reference parity. The
+      with Python/PyO3 wrapper access through
+      `bioscript.kestrel.call_fastq_references_native`; this is the next
+      required shape for full VNtyper motif-reference parity. The
       haplotype assembler now tracks repeated k-mers and trims saved states by
       path depth using exposed `max_repeat_count` and `max_saved_states`
       controls. A first opt-in Java parity gate now exists at
