@@ -166,7 +166,7 @@ surface requires it.
       filtering, region utilities, chromosome utilities, and reference registry.
 - [x] Add parity tests that run the upstream Python function and BioScript port
       on the same tiny fixture and compare TSV/JSON values.
-- [ ] Add integration tests against `ports/vntyper/test-data` once copied:
+- [x] Add integration tests against `ports/vntyper/test-data` once copied:
       one positive BAM, one negative BAM, and one FASTQ pair if available.
       Current coverage plans commands for two representative BAMs and one FASTQ
       pair, and a fake-runner test covers the BAM path running slice, index,
@@ -184,8 +184,11 @@ surface requires it.
       --noconfirm samtools bcftools` cannot run non-interactively here because
       sudo requires a terminal password.
       FASTQ-backed Kestrel expected outputs are gated by
-      `test_fastq_expected_outputs.py`; true positive/negative BAM labels still
-      need validation against upstream expected results.
+      `test_fastq_expected_outputs.py`; native BAM-backed positive and negative
+      representative samples are gated by `test_native_bam_pipeline_gate.py`.
+      The native BAM gate verifies sample classification, report shape,
+      screening summary, nonempty Kestrel rows, variant-table linkage, and VNTR
+      coverage fields against the generated expected report set.
 - [x] Run upstream VNtyper tests from the submodule as a reference check when
       Python dependencies and external tools are installed.
 - [x] Run BioScript tests without external tools by using fixed Kestrel VCF
@@ -249,18 +252,17 @@ surface requires it.
 - [x] M5: Native Rust Kestrel feasibility spike:
       reproduce Kestrel VCF output for one tiny fixture or document why the JVM
       adapter remains the practical first target.
-- [ ] M6: Structured report JSON parity for the minimal BAM/Kestrel path.
+- [x] M6: Structured report JSON parity for the minimal BAM/Kestrel path.
       Fake-runner coverage now captures `samtools depth -a` output and feeds
       mean/median/stdev/min/max/uncovered-base fields into the structured JSON;
       FASTQ-backed Kestrel reports are now generated locally, and the runner
-      can use native BioScript samtools wrappers before Kestrel. Real
-      BAM/Kestrel parity still needs validation against copied positive and
-      negative BAM expected labels. A manual native run currently extracts
-      fewer reads from the subset BAM than the copied FASTQ fixtures and
-      produces empty Kestrel calls, so the next fix is matching upstream read
-      extraction semantics (`samtools view -P`, unmapped-read extraction/merge,
-      and name-sorted FASTQ conversion) against a full BAM fixture, or choosing
-      the correct BAM fixture.
+      can use native BioScript samtools wrappers before Kestrel. The opt-in
+      native BAM gate now validates copied positive and negative BAM samples
+      against generated expected reports, including report schema, Kestrel
+      classification, screening summary, variant-table linkage, and populated
+      VNTR coverage metrics. Exact external `samtools`/`bcftools` oracle
+      comparison remains part of M4 because those tools are not installable
+      non-interactively in this environment.
 - [x] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
       logs.
 - [x] M8: FASTQ path works using external fastp/bwa or documented prealigned

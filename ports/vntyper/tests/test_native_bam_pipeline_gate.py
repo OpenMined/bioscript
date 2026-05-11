@@ -63,10 +63,30 @@ class VntyperNativeBamPipelineGateTests(unittest.TestCase):
                     actual_report["algorithm_results"]["kestrel"],
                     expected_report["algorithm_results"]["kestrel"],
                 )
+                self.assertEqual(set(actual_report), set(expected_report))
+                self.assertEqual(len(actual_report["kestrel_variants"]), len(rows))
+                self.assertEqual(actual_report["screening_summary"], expected_report["screening_summary"])
+                self.assertEqual(actual_report["coverage"]["status"], "pass")
+                self.assertTrue(actual_report["coverage"]["quality_pass"])
+                for key in [
+                    "mean",
+                    "median",
+                    "stdev",
+                    "min",
+                    "max",
+                    "region_length",
+                    "uncovered_bases",
+                    "percent_uncovered",
+                ]:
+                    self.assertIsNotNone(actual_report["coverage"][key])
+                self.assertGreater(actual_report["coverage"]["region_length"], 0)
+                self.assertIn("bam", actual_report["input_files"])
+                self.assertIn("vcf", actual_report["input_files"])
                 self.assertEqual(
                     actual_report["metadata"]["alignment_pipeline"],
                     "native bioscript samtools/kestrel",
                 )
+                self.assertEqual(actual_report["metadata"]["detected_assembly"], "hg19")
 
 
 if __name__ == "__main__":
