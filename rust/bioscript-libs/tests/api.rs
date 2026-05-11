@@ -114,6 +114,22 @@ fn pysam_fetch_streams_tiny_cram_fixture() {
 }
 
 #[test]
+fn pysam_fetch_routes_bam_to_native_indexed_backend() {
+    let file = AlignmentFile::open(
+        "missing.bam",
+        "rb",
+        None,
+        Some(PathBuf::from("missing.bam.bai")),
+    )
+    .unwrap();
+    let err = file.fetch("chr_test", Some(999), Some(1001)).unwrap_err();
+    assert!(
+        err.to_string().contains("failed to read BAM index"),
+        "{err}"
+    );
+}
+
+#[test]
 fn pysam_read_tags_and_mutation_are_explicitly_unsupported() {
     let mut read = AlignedSegment::unmapped(Some("read1".to_owned()));
     assert!(
