@@ -356,7 +356,13 @@ fn kestrel_native_kmer_count_map_counts_canonical_bases() {
     assert_eq!(map.kmer_size(), 4);
     assert_eq!(map.get("ACGT").unwrap(), 3);
     assert_eq!(map.get("CGTA").unwrap(), 0);
+    assert_eq!(map.transition_count("ACGT", "CGTN").is_err(), true);
+    assert_eq!(map.transition_count("ACGT", "CGTA").unwrap(), 0);
     assert!(map.get("ACGN").is_err());
+
+    let transitions = KmerCountMap::from_sequences(["AACCG"], 3).unwrap();
+    assert_eq!(transitions.transition_count("AAC", "ACC").unwrap(), 1);
+    assert_eq!(transitions.transition_count("AAC", "CCG").unwrap(), 0);
 }
 
 #[test]
@@ -1232,7 +1238,7 @@ fn kestrel_native_sequences_engine_counts_detects_assembles_and_writes_vcf() {
 }
 
 #[test]
-fn kestrel_native_fastq_engine_counts_detects_assembles_and_writes_vcf() {
+fn kestrel_native_fastq_engine_does_not_bridge_split_reads() {
     let dir = std::env::temp_dir().join(format!(
         "bioscript-kestrel-fastq-engine-test-{}",
         std::process::id()
@@ -1278,7 +1284,10 @@ fn kestrel_native_fastq_engine_counts_detects_assembles_and_writes_vcf() {
     .unwrap();
 
     assert!(vcf.contains("##fileformat=VCF4.2\n"));
-    assert!(vcf.contains("GT:GDP:DP\t1:1:10\n"));
+    assert!(
+        !vcf.lines()
+            .any(|line| !line.is_empty() && !line.starts_with('#'))
+    );
     fs::remove_dir_all(dir).unwrap();
 }
 

@@ -12,6 +12,7 @@ use flate2::read::MultiGzDecoder;
 pub struct KmerCountMap {
     kmer_size: usize,
     counts: BTreeMap<String, u32>,
+    transitions: BTreeMap<(String, String), u32>,
 }
 
 impl KmerCountMap {
@@ -21,10 +22,15 @@ impl KmerCountMap {
     ) -> LibResult<Self> {
         validate_kmer_size(kmer_size)?;
         let mut counts = BTreeMap::new();
+        let mut transitions = BTreeMap::new();
         for sequence in sequences {
-            count_into(&mut counts, sequence, kmer_size)?;
+            count_into(&mut counts, &mut transitions, sequence, kmer_size)?;
         }
-        Ok(Self { kmer_size, counts })
+        Ok(Self {
+            kmer_size,
+            counts,
+            transitions,
+        })
     }
 
     pub fn from_fastq_paths<'a>(
@@ -33,10 +39,15 @@ impl KmerCountMap {
     ) -> LibResult<Self> {
         validate_kmer_size(kmer_size)?;
         let mut counts = BTreeMap::new();
+        let mut transitions = BTreeMap::new();
         for path in paths {
-            count_fastq_path_into(&mut counts, path, kmer_size)?;
+            count_fastq_path_into(&mut counts, &mut transitions, path, kmer_size)?;
         }
-        Ok(Self { kmer_size, counts })
+        Ok(Self {
+            kmer_size,
+            counts,
+            transitions,
+        })
     }
 
     pub fn kmer_size(&self) -> usize {
@@ -51,6 +62,16 @@ impl KmerCountMap {
 
     pub fn counts(&self) -> &BTreeMap<String, u32> {
         &self.counts
+    }
+
+    pub fn has_transition_counts(&self) -> bool {
+        !self.transitions.is_empty()
+    }
+
+    pub fn transition_count(&self, from: &str, to: &str) -> LibResult<u32> {
+        let from = normalize_kmer(from, self.kmer_size)?;
+        let to = normalize_kmer(to, self.kmer_size)?;
+        Ok(*self.transitions.get(&(from, to)).unwrap_or(&0))
     }
 
     pub fn reference_counts(
@@ -93,6 +114,7 @@ pub fn count_fastq_kmers(path: &Path, kmer_size: usize) -> LibResult<BTreeMap<St
 
 fn count_fastq_path_into(
     counts: &mut BTreeMap<String, u32>,
+    transitions: &mut BTreeMap<(String, String), u32>,
     path: &Path,
     kmer_size: usize,
 ) -> LibResult<()> {
@@ -137,13 +159,14 @@ fn count_fastq_path_into(
                 path.display()
             )));
         }
-        count_into(counts, sequence.trim_end(), kmer_size)?;
+        count_into(counts, transitions, sequence.trim_end(), kmer_size)?;
     }
     Ok(())
 }
 
 fn count_into(
     counts: &mut BTreeMap<String, u32>,
+    transitions: &mut BTreeMap<(String, String), u32>,
     sequence: &str,
     kmer_size: usize,
 ) -> LibResult<()> {
@@ -152,14 +175,22 @@ fn count_into(
         return Ok(());
     }
 
+    let mut previous_kmer: Option<String> = None;
     for window in bases.windows(kmer_size) {
         if window.iter().any(|base| *base == b'N') {
+            previous_kmer = None;
             continue;
         }
         let kmer = String::from_utf8(window.to_vec()).map_err(|err| {
             LibError::InvalidArguments(format!("Kestrel k-mer is not valid UTF-8: {err}"))
         })?;
         *counts.entry(kmer).or_insert(0) += 1;
+        let current_kmer = String::from_utf8(window.to_vec()).map_err(|err| {
+            LibError::InvalidArguments(format!("Kestrel k-mer is not valid UTF-8: {err}"))
+        })?;
+        if let Some(previous) = previous_kmer.replace(current_kmer.clone()) {
+            *transitions.entry((previous, current_kmer)).or_insert(0) += 1;
+        }
     }
     Ok(())
 }

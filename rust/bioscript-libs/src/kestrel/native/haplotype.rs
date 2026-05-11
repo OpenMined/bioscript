@@ -103,6 +103,10 @@ fn next_states(
         if depth < min_kmer_count {
             continue;
         }
+        if counts.has_transition_counts() && counts.transition_count(current_kmer, &next_kmer)? == 0
+        {
+            continue;
+        }
         let mut sequence = state.sequence.clone();
         sequence.push(base);
         let mut seen_kmers = state.seen_kmers.clone();

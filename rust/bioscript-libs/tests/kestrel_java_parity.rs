@@ -42,6 +42,19 @@ fn native_kestrel_fastq_output_matches_java_for_tiny_snp_fixture() {
     );
 }
 
+#[test]
+fn native_kestrel_fastq_output_matches_java_for_sparse_split_reads() {
+    let dir = parity_temp_dir("sparse-split-reads");
+    let fastq = b"@r1\nAAAACCC\n+\nIIIIIII\n@r2\nCCCTGGG\n+\nIIIIIII\n@r3\nGGGTTTT\n+\nIIIIIII\n";
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, fastq);
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
 fn run_java_and_native(dir: &Path, fastq_contents: &[u8]) -> (String, String) {
     if std::env::var_os(RUN_ENV).is_none() {
         return (String::new(), String::new());
