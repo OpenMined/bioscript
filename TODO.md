@@ -153,8 +153,10 @@ surface requires it.
       Java `maxGapSize + scanLimitFactor * k` shape; BioScript now ports the
       Java default `AlignmentWeight.getMaxExclusiveGapSize(k)` calculation and
       uses it as the native wrapper default when callers do not provide an
-      explicit gap component. Both left and right scans discard candidates that
-      exceed that limit. Java's
+      explicit gap component. The Java alignment-weight vector parser shape is
+      also ported for default/partial vectors, surrounding bounds, sign
+      normalization, and Java integer literal formats. Both left and right
+      scans discard candidates that exceed that limit. Java's
       default `recoverRightAnchor` behavior is now partially ported as
       `recover_right_anchor`: when the normal recovery threshold is never
       reached inside the scan limit, the native detector searches for a later
