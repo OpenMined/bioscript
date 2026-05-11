@@ -138,10 +138,16 @@ surface requires it.
       `activeregion` data model for anchor k-mers and percentile count
       summaries. A first native `detect_active_regions` candidate scanner now
       computes reference k-mer counts and Java-shaped difference thresholds,
-      then emits anchored depth-drop regions for downstream haplotype work. The
+      then emits anchored and right-open depth-drop regions for downstream
+      haplotype work. The
       native `align_haplotype` and `call_alignment_variants` helpers provide a
       first deterministic reference-vs-haplotype edit surface that emits
       SNP/insertion/deletion calls using the same native VCF normalization path.
+      The upstream compiled Kestrel JUnit reference-reader fixture set has also
+      been ported into Rust tests: native reference parsing now covers FASTA,
+      FASTQ, mixed case, legal IUPAC/gap characters, and Kestrel's deterministic
+      ambiguous-base-to-ACGT k-mer normalization for k sizes 1, 2, 21, 32, and
+      64.
       `call_explicit_haplotypes_to_vcf` now ties explicit haplotype evidence to
       the native aligner, variant caller, and VCF writer for an end-to-end
       non-assembling caller path. The first graph-backed Rust haplotype
