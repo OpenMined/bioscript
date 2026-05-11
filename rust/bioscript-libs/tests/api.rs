@@ -510,6 +510,7 @@ fn kestrel_native_active_region_detector_finds_depth_drop_candidates() {
         minimum_difference: 1,
         difference_quantile: 0.0,
         count_reverse_kmers: false,
+        anchor_both_ends: true,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -537,6 +538,7 @@ fn kestrel_native_active_region_detector_emits_right_open_candidates() {
         minimum_difference: 1,
         difference_quantile: 0.0,
         count_reverse_kmers: false,
+        anchor_both_ends: false,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -547,6 +549,59 @@ fn kestrel_native_active_region_detector_emits_right_open_candidates() {
     assert_eq!(active.left_end_kmer.as_deref(), Some("ACCC"));
     assert_eq!(active.right_end_kmer, None);
     assert_eq!(active.end_index, 15);
+}
+
+#[test]
+fn kestrel_native_active_region_detector_respects_anchor_both_ends() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "AAAACCCCGGGGTTTT".to_owned(),
+    };
+    let counts = KmerCountMap::from_sequences(["AAAA", "AAAC", "AACC", "ACCC"], 4).unwrap();
+
+    let detection = detect_active_regions(
+        &region,
+        &counts,
+        &ActiveRegionDetectorConfig {
+            minimum_difference: 1,
+            difference_quantile: 0.0,
+            count_reverse_kmers: false,
+            anchor_both_ends: true,
+        },
+    )
+    .unwrap();
+    assert!(detection.regions.is_empty());
+}
+
+#[test]
+fn kestrel_native_active_region_detector_emits_left_open_candidates() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "AAAACCCCGGGGTTTT".to_owned(),
+    };
+    let counts = KmerCountMap::from_sequences(["GGGT", "GGTT", "GTTT", "TTTT"], 4).unwrap();
+    let detection = detect_active_regions(
+        &region,
+        &counts,
+        &ActiveRegionDetectorConfig {
+            minimum_difference: 1,
+            difference_quantile: 0.0,
+            count_reverse_kmers: false,
+            anchor_both_ends: false,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        detection.reference_counts,
+        vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1]
+    );
+    assert_eq!(detection.regions.len(), 1);
+    let active = &detection.regions[0];
+    assert!(active.left_end);
+    assert_eq!(active.left_end_kmer, None);
+    assert_eq!(active.right_end_kmer.as_deref(), Some("GGGT"));
+    assert_eq!(active.end_kmer_index, 9);
 }
 
 #[test]
@@ -745,6 +800,7 @@ fn kestrel_native_sequences_engine_counts_detects_assembles_and_writes_vcf() {
             minimum_difference: 1,
             difference_quantile: 0.0,
             count_reverse_kmers: false,
+            anchor_both_ends: true,
         },
         &HaplotypeAssemblyConfig {
             min_kmer_count: 1,
@@ -787,6 +843,7 @@ fn kestrel_native_fastq_engine_counts_detects_assembles_and_writes_vcf() {
             minimum_difference: 1,
             difference_quantile: 0.0,
             count_reverse_kmers: false,
+            anchor_both_ends: true,
         },
         &HaplotypeAssemblyConfig {
             min_kmer_count: 1,
