@@ -8,7 +8,7 @@ mod scan;
 
 pub(crate) use scan::scan_delimited_variants;
 
-const COMMENT_PREFIXES: [&str; 2] = ["#", "//"];
+pub(crate) const COMMENT_PREFIXES: [&str; 2] = ["#", "//"];
 const RSID_ALIASES: &[&str] = &["rsid", "name", "snp", "marker", "id", "snpid"];
 const CHROM_ALIASES: &[&str] = &["chromosome", "chr", "chrom"];
 const POSITION_ALIASES: &[&str] = &[

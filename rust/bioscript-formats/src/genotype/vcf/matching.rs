@@ -4,7 +4,7 @@ use crate::inspect::InferredSex;
 
 use super::ParsedVcfRow;
 
-pub(crate) fn choose_variant_locus_for_assembly(
+pub fn choose_variant_locus_for_assembly(
     variant: &VariantSpec,
     assembly: Option<Assembly>,
 ) -> Option<GenomicLocus> {

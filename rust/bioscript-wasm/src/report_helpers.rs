@@ -122,6 +122,32 @@ pub(super) fn participant_id_from_name(path: &str) -> String {
         .replace([' ', '\t', '\n'], "_")
 }
 
+/// Derive the assay id from a manifest path — matches the CLI's
+/// `bioscript-cli::report_execution::app_assay_id`, which loads the manifest
+/// and returns its `name:` field (panels / assays / variants all carry one).
+/// This function operates on a `PackageWorkspace` so it can find files in the
+/// in-memory map without touching disk.
+///
+/// Previously the wasm derived the id from the manifest filename stem (e.g.
+/// `manifest.yaml` -> `manifest`), which diverged from the CLI's `pgx-1`
+/// (panel `name:` field) and cascaded into the HTML report's
+/// `participant_id × assay_id` keys.
+pub(super) fn app_assay_id_from_workspace(
+    workspace: &PackageWorkspace,
+    manifest_path: &str,
+) -> Result<String, JsError> {
+    match workspace.schema(manifest_path)?.as_str() {
+        "bioscript:panel:1.0" => Ok(workspace.load_panel(manifest_path)?.name),
+        "bioscript:assay:1.0" => Ok(workspace.load_assay(manifest_path)?.name),
+        "bioscript:variant:1.0" | "bioscript:variant" => {
+            Ok(workspace.load_variant(manifest_path)?.name)
+        }
+        other => Err(JsError::new(&format!(
+            "unsupported manifest schema '{other}'"
+        ))),
+    }
+}
+
 pub(super) fn app_assay_id(path: &Path) -> Result<String, JsError> {
     path.file_stem()
         .and_then(|value| value.to_str())
@@ -262,20 +288,20 @@ pub(super) fn input_inspection_json(
             bioscript_formats::DetectedKind::ReferenceFasta => "reference_fasta",
             bioscript_formats::DetectedKind::Unknown => "unknown",
         },
-        "format_confidence": match inspection.confidence {
-            bioscript_formats::DetectionConfidence::Authoritative => "authoritative",
-            bioscript_formats::DetectionConfidence::StrongHeuristic => "strong_heuristic",
-            bioscript_formats::DetectionConfidence::WeakHeuristic => "weak_heuristic",
-            bioscript_formats::DetectionConfidence::Unknown => "unknown",
-        },
+        "format_confidence": detection_confidence_name(inspection.confidence),
         "assembly": inspection.assembly.map(|assembly| match assembly {
             Assembly::Grch37 => "grch37",
             Assembly::Grch38 => "grch38",
         }),
+        "phased": inspection.phased,
         "selected_entry": inspection.selected_entry,
+        "has_index": inspection.has_index,
+        "index_path": inspection.index_path.as_ref().map(|path| path.display().to_string()),
+        "reference_matches": inspection.reference_matches,
         "source": inspection.source.as_ref().map(|source| serde_json::json!({
             "vendor": source.vendor,
             "platform_version": source.platform_version,
+            "confidence": detection_confidence_name(source.confidence),
             "evidence": source.evidence,
         })),
         "inferred_sex": inspection.inferred_sex.as_ref().map(|sex| serde_json::json!({
@@ -288,6 +314,15 @@ pub(super) fn input_inspection_json(
         "warnings": inspection.warnings,
         "duration_ms": inspection.duration_ms,
     })
+}
+
+fn detection_confidence_name(value: bioscript_formats::DetectionConfidence) -> &'static str {
+    match value {
+        bioscript_formats::DetectionConfidence::Authoritative => "authoritative",
+        bioscript_formats::DetectionConfidence::StrongHeuristic => "strong_heuristic",
+        bioscript_formats::DetectionConfidence::WeakHeuristic => "weak_heuristic",
+        bioscript_formats::DetectionConfidence::Unknown => "unknown",
+    }
 }
 
 pub(super) fn yaml_string(value: &serde_yaml::Value, key: &str) -> Option<String> {

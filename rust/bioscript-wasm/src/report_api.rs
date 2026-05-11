@@ -10,7 +10,9 @@ use bioscript_core::{
     VariantSpec,
 };
 use bioscript_formats::{
-    GenotypeLoadOptions, GenotypeStore, InspectOptions, inspect_bytes as inspect_bytes_rs,
+    DetectedKind, DetectionConfidence, FileContainer, FileInspection, GenotypeLoadOptions,
+    GenotypeStore, InferredSex, InspectOptions, SexDetectionConfidence, SexInference,
+    inspect_bytes as inspect_bytes_rs,
 };
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig};
 use bioscript_schema::{
@@ -111,7 +113,7 @@ pub fn run_package_report_bytes(
     };
     let workspace = PackageWorkspace::new(package_files)?;
     let participant_id = participant_id_from_name(input_name);
-    let assay_id = app_assay_id(Path::new(manifest_path))?;
+    let assay_id = app_assay_id_from_workspace(&workspace, manifest_path)?;
     let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
     let findings = workspace.load_manifest_findings(manifest_path)?;
     let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
@@ -225,7 +227,7 @@ pub fn run_package_report_from_cram(
     };
     let workspace = PackageWorkspace::new(package_files)?;
     let participant_id = participant_id_from_name(input_name);
-    let assay_id = app_assay_id(Path::new(manifest_path))?;
+    let assay_id = app_assay_id_from_workspace(&workspace, manifest_path)?;
     let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
     let findings = workspace.load_manifest_findings(manifest_path)?;
     let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
@@ -361,7 +363,7 @@ pub fn run_package_report_from_vcf(
     };
     let workspace = PackageWorkspace::new(package_files)?;
     let participant_id = participant_id_from_name(input_name);
-    let assay_id = app_assay_id(Path::new(manifest_path))?;
+    let assay_id = app_assay_id_from_workspace(&workspace, manifest_path)?;
     let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
     let findings = workspace.load_manifest_findings(manifest_path)?;
     let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
@@ -388,6 +390,7 @@ pub fn run_package_report_from_vcf(
     let lookup = VcfReportLookup {
         reader: std::cell::RefCell::new(indexed),
         label: input_name.to_owned(),
+        detected_assembly: head_inspection.assembly,
     };
 
     if let Some(explicit) = explicit_sex_from_options(&options) {

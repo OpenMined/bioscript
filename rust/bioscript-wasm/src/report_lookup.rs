@@ -182,12 +182,19 @@ pub(super) struct VcfReportLookup<R: std::io::Read + std::io::Seek> {
         noodles::csi::io::IndexedReader<noodles::bgzf::io::Reader<R>, noodles::tabix::Index>,
     >,
     pub(super) label: String,
+    /// Assembly resolved from the VCF header (via `inspect_head_via_js_reader`).
+    /// Matches the CLI's `lookup_indexed_vcf_variants` flow which calls
+    /// `detect_vcf_assembly_from_path`. Without this the wasm picks GRCh38
+    /// over GRCh37 for any panel variant that declares both loci, then
+    /// misses the variant in a GRCh37-coded VCF (NA06985.clean.vcf.gz etc.)
+    /// and falls through to "imputed reference".
+    pub(super) detected_assembly: Option<Assembly>,
 }
 
 impl<R: std::io::Read + std::io::Seek> report_workspace::VariantLookup for VcfReportLookup<R> {
     fn lookup_variant(&self, spec: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
         let mut reader = self.reader.borrow_mut();
-        observe_vcf_variant(&mut reader, &self.label, spec)
+        observe_vcf_variant(&mut reader, &self.label, spec, self.detected_assembly)
     }
 
     fn lookup_variants(
@@ -197,7 +204,12 @@ impl<R: std::io::Read + std::io::Seek> report_workspace::VariantLookup for VcfRe
         let mut reader = self.reader.borrow_mut();
         let mut out = Vec::with_capacity(specs.len());
         for spec in specs {
-            out.push(observe_vcf_variant(&mut reader, &self.label, spec)?);
+            out.push(observe_vcf_variant(
+                &mut reader,
+                &self.label,
+                spec,
+                self.detected_assembly,
+            )?);
         }
         Ok(out)
     }
@@ -210,16 +222,12 @@ fn observe_vcf_variant<R: std::io::Read + std::io::Seek>(
     >,
     label: &str,
     variant: &VariantSpec,
+    detected_assembly: Option<Assembly>,
 ) -> Result<VariantObservation, RuntimeError> {
-    let assembly = variant
-        .grch38
-        .as_ref()
-        .map(|_| Assembly::Grch38)
-        .or_else(|| variant.grch37.as_ref().map(|_| Assembly::Grch37));
-    let raw_locus = variant
-        .grch38
-        .as_ref()
-        .or(variant.grch37.as_ref())
+    // Use the existing CLI helper so wasm picks the same locus the path-based
+    // path does: detected GRCh37 → grch37 first; detected GRCh38 → grch38
+    // first; None → grch37 first (CLI default for variant-only VCFs).
+    let raw_locus = bioscript_formats::choose_variant_locus_for_assembly(variant, detected_assembly)
         .ok_or_else(|| {
             RuntimeError::Io(format!(
                 "variant {} has no GRCh37/GRCh38 locus",
@@ -230,6 +238,15 @@ fn observe_vcf_variant<R: std::io::Read + std::io::Seek>(
                     .unwrap_or("variant")
             ))
         })?;
+    let assembly = detected_assembly.or_else(|| {
+        if variant.grch37.as_ref().is_some_and(|l| l == &raw_locus) {
+            Some(Assembly::Grch37)
+        } else if variant.grch38.as_ref().is_some_and(|l| l == &raw_locus) {
+            Some(Assembly::Grch38)
+        } else {
+            None
+        }
+    });
     let locus = GenomicLocus {
         chrom: raw_locus.chrom.clone(),
         start: raw_locus.start,

@@ -33,6 +33,11 @@ pub(crate) enum QueryBackend {
 pub(crate) struct RsidMapBackend {
     pub(crate) format: GenotypeSourceFormat,
     pub(crate) values: HashMap<String, String>,
+    /// Original input line per rsid, retained so wasm-side `from_bytes` loads
+    /// can emit the same `| source line: …` evidence that the CLI's
+    /// path-backed `DelimitedBackend` does on every lookup. Empty for
+    /// in-memory maps that don't have a line representation.
+    pub(crate) source_lines: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
