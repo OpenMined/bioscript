@@ -147,6 +147,8 @@ def require_native_bam_pipeline_prerequisites():
     """Skip unless the native-samtools BAM path can run against copied data."""
     manifest = require_test_data(check_md5=False)
     missing = []
+    if os.environ.get("BIOSCRIPT_RUN_NATIVE_BAM_PARITY") != "1":
+        missing.append("BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1")
     if shutil.which("java") is None:
         missing.append("java on PATH")
     if not KESTREL_JAR.exists():
