@@ -5,6 +5,8 @@ members = [
     "bioscript-core",
     "bioscript-ffi",
     "bioscript-formats",
+    "bioscript-libs",
+    "bioscript-python",
     "bioscript-runtime",
     "bioscript-schema",
     "bioscript-wasm",

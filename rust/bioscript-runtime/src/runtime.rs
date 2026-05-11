@@ -11,6 +11,8 @@ use monty::{LimitedTracker, MontyObject, MontyRun, NameLookupResult, PrintWriter
 
 mod args;
 mod host_io;
+mod imports;
+mod lib_methods;
 mod methods;
 mod objects;
 mod state;
@@ -21,6 +23,8 @@ mod variants;
 #[cfg(test)]
 use bioscript_core::VariantSpec;
 use host_io::{deepest_existing_ancestor, host_read_text, host_write_text};
+use imports::rewrite_bioscript_imports;
+use lib_methods::host_bioscript_import;
 use objects::bioscript_object;
 #[cfg(test)]
 use objects::{
@@ -80,6 +84,10 @@ impl BioscriptRuntime {
         functions.insert("read_text", host_read_text as HostFunction);
         functions.insert("write_text", host_write_text as HostFunction);
         functions.insert("__bioscript_trace__", host_trace as HostFunction);
+        functions.insert(
+            "__bioscript_import__",
+            host_bioscript_import as HostFunction,
+        );
 
         Ok(Self {
             root: canonical_root,
@@ -117,7 +125,8 @@ impl BioscriptRuntime {
                 ))
             })?
         };
-        let instrumented = instrument_source(&code);
+        let rewritten = rewrite_bioscript_imports(&code)?;
+        let instrumented = instrument_source(&rewritten);
         self.state
             .trace_lines
             .lock()
@@ -249,6 +258,10 @@ impl BioscriptRuntime {
             ("Bioscript", "write_tsv") => self.method_write_tsv(args, kwargs),
             ("Bioscript", "read_text") => self.method_read_text(args, kwargs),
             ("Bioscript", "write_text") => self.method_write_text(args, kwargs),
+            ("PysamModule", "AlignmentFile") => self.method_pysam_alignment_file(args, kwargs),
+            ("PysamAlignmentFile", "fetch") => self.method_pysam_alignment_file_fetch(args, kwargs),
+            ("PyfaidxModule", "Fasta") => self.method_pyfaidx_fasta(args, kwargs),
+            ("VcfModule", "VariantFile") => self.method_vcf_variant_file(args, kwargs),
             ("GenotypeFile", "get") => self.method_genotype_get(args, kwargs),
             ("GenotypeFile", "lookup_variant") => self.method_genotype_lookup_variant(args, kwargs),
             ("GenotypeFile", "lookup_variant_details") => {

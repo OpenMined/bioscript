@@ -6,3 +6,9 @@
 	path = noodles
 	url = git@github.com:madhavajay/noodles.git
 	branch = madhava/streaming-slice-records
+[submodule "vendor/upstream/python/pysam"]
+	path = vendor/upstream/python/pysam
+	url = https://github.com/pysam-developers/pysam.git
+[submodule "vendor/upstream/python/pyfaidx"]
+	path = vendor/upstream/python/pyfaidx
+	url = https://github.com/mdshw5/pyfaidx.git

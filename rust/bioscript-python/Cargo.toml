@@ -1,0 +1,15 @@
+[package]
+name = "bioscript-python"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "_native"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bioscript-libs = { path = "../bioscript-libs" }
+pyo3 = { version = "0.28", features = ["extension-module"] }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }

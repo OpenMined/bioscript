@@ -1,14 +1,11 @@
 [package]
-name = "bioscript-runtime"
+name = "bioscript-libs"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 bioscript-core = { path = "../bioscript-core" }
 bioscript-formats = { path = "../bioscript-formats" }
-bioscript-libs = { path = "../bioscript-libs" }
-getrandom = { version = "0.3", features = ["wasm_js"] }
-monty = { path = "../../monty/crates/monty" }
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
