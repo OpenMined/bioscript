@@ -144,9 +144,12 @@ surface requires it.
       SNP/insertion/deletion calls using the same native VCF normalization path.
       `call_explicit_haplotypes_to_vcf` now ties explicit haplotype evidence to
       the native aligner, variant caller, and VCF writer for an end-to-end
-      non-assembling caller path. The remaining work is the full Java
-      active-region detector heuristics, Kestrel's graph/stateful haplotype
-      builder, and parity against Java Kestrel outputs on VNtyper fixtures.
+      non-assembling caller path. The first graph-backed Rust haplotype
+      assembler now walks counted k-mer paths between active-region anchors and
+      feeds assembled haplotypes into the native VCF caller. The remaining work
+      is the full Java active-region detector heuristics, richer state trimming
+      and repeat handling in Kestrel's haplotype builder, and parity against
+      Java Kestrel outputs on VNtyper fixtures.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
