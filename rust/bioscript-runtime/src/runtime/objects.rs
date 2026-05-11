@@ -25,12 +25,20 @@ pub(crate) fn genotype_file_object(handle_id: u64) -> MontyObject {
     }
 }
 
+pub(crate) fn kestrel_module_object() -> MontyObject {
+    empty_dataclass("KestrelModule", 26)
+}
+
 pub(crate) fn pysam_module_object() -> MontyObject {
     empty_dataclass("PysamModule", 20)
 }
 
 pub(crate) fn pyfaidx_module_object() -> MontyObject {
     empty_dataclass("PyfaidxModule", 21)
+}
+
+pub(crate) fn samtools_module_object() -> MontyObject {
+    empty_dataclass("SamtoolsModule", 27)
 }
 
 pub(crate) fn vcf_module_object() -> MontyObject {

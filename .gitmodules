@@ -12,3 +12,9 @@
 [submodule "vendor/upstream/python/pyfaidx"]
 	path = vendor/upstream/python/pyfaidx
 	url = https://github.com/mdshw5/pyfaidx.git
+[submodule "ports/vntyper/vntyper"]
+	path = ports/vntyper/vntyper
+	url = https://github.com/hassansaei/VNtyper.git
+[submodule "ports/vntyper/kestrel"]
+	path = ports/vntyper/kestrel
+	url = https://github.com/paudano/kestrel.git

@@ -5,9 +5,12 @@
 )]
 
 mod errors;
+pub mod kestrel;
 mod module_registry;
 pub mod pyfaidx;
 pub mod pysam;
+pub mod samtools;
+pub mod tools;
 mod value;
 pub mod vcf;
 
