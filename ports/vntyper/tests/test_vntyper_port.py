@@ -63,8 +63,37 @@ class VntyperPortTests(unittest.TestCase):
         self.assertTrue(report["coverage"]["quality_pass"])
         self.assertEqual(report["coverage"]["status"], "pass")
         self.assertEqual(report["algorithm_results"]["kestrel"], "High_Precision")
+        self.assertEqual(report["algorithm_results"]["advntr"], "none")
+        self.assertFalse(report["cross_match_summary"]["available"])
         self.assertIn("adVNTR genotyping was not performed", report["screening_summary"])
         self.assertEqual(len(report["kestrel_variants"]), 3)
+
+    def test_report_json_includes_optional_advntr_table_and_cross_match(self):
+        rows = vntyper_port.process_kestrel_vcf(str(FIXTURE))
+        advntr_rows = [
+            {
+                "VID": "MUC1-dupC",
+                "Variant": "dupC",
+                "SupportingReads": 42,
+                "MeanCoverage": 80,
+                "Pvalue": 0.001,
+                "RU": "MUC1",
+                "POS": "100",
+                "REF": "C",
+                "ALT": "CC",
+                "Flag": "Not flagged",
+            }
+        ]
+        report = vntyper_port.build_report_json(
+            sample_name="fixture",
+            input_files={"vcf": str(FIXTURE)},
+            kestrel_rows=rows,
+            coverage={"mean": 250},
+            advntr_rows=advntr_rows,
+        )
+        self.assertEqual(report["algorithm_results"]["advntr"], "positive")
+        self.assertEqual(report["advntr_variants"], advntr_rows)
+        self.assertEqual(report["cross_match_summary"]["status"], "concordant_positive")
 
     def test_report_json_contains_metadata_and_fastp_qc(self):
         rows = vntyper_port.process_kestrel_vcf(str(FIXTURE))

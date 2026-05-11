@@ -76,6 +76,24 @@ DEFAULT_REPORT_CONFIG = {
             ],
             "default": "negative",
         },
+        "advntr": {
+            "rules": [
+                {
+                    "conditions": {
+                        "VID": {"operator": "!=", "value": "Negative"},
+                        "Flag": {"operator": "==", "value": "Not flagged"},
+                    },
+                    "result": "positive",
+                },
+                {
+                    "conditions": {
+                        "Flag": {"operator": "not in", "value": ["Not flagged", "Not applicable", "None"]},
+                    },
+                    "result": "positive flagged",
+                },
+            ],
+            "default": "negative",
+        },
     },
     "screening_summary_default": "The screening was negative (no valid Kestrel or adVNTR data).",
     "screening_summary_rules": [
@@ -322,6 +340,7 @@ def build_report_json(
         "screening_summary": screening,
         "kestrel_variants": kestrel_rows,
         "advntr_variants": advntr_rows,
+        "cross_match_summary": build_cross_match_summary(kestrel_result, advntr_result),
         "pipeline_log": pipeline_log or [],
     }
 
@@ -339,6 +358,34 @@ def screening_summary(kestrel_rows, quality_pass):
         quality_pass,
         config,
     )
+
+
+def build_cross_match_summary(kestrel_result, advntr_result):
+    if advntr_result == "none":
+        return {
+            "available": False,
+            "status": "not_performed",
+            "message": "adVNTR genotyping was not performed.",
+        }
+    kestrel_positive = kestrel_result not in ("negative", "none")
+    advntr_positive = advntr_result in ("positive", "positive flagged")
+    if kestrel_positive and advntr_positive:
+        status = "concordant_positive"
+        message = "Kestrel and adVNTR both detected a pathogenic signal."
+    elif not kestrel_positive and not advntr_positive:
+        status = "concordant_negative"
+        message = "Kestrel and adVNTR were both negative."
+    elif kestrel_positive:
+        status = "kestrel_only"
+        message = "Kestrel detected a pathogenic signal that adVNTR did not confirm."
+    else:
+        status = "advntr_only"
+        message = "adVNTR detected a pathogenic signal that Kestrel did not detect."
+    return {
+        "available": True,
+        "status": status,
+        "message": message,
+    }
 
 
 def build_run_metadata(sample_name, input_files, pipeline_version, metadata=None):
