@@ -159,24 +159,32 @@ fn candidate_regions(
                 )?);
                 break;
             }
-        } else if right > left
-            && right - left >= difference_threshold
-            && !config.anchor_both_ends
-            && index >= kmer_size.saturating_sub(1)
-        {
+        } else if right > left && right - left >= difference_threshold {
             if let Some(next_index) =
                 skip_left_peak(counts, index, left, right, difference_threshold, config)
             {
                 index = next_index;
                 continue;
             }
-            if index > scan_limit_length(kmer_size, config)? {
+            let Some(start) = scan_left_start(
+                counts,
+                index,
+                right,
+                kmer_size,
+                difference_threshold,
+                config,
+            )?
+            else {
+                index += 1;
+                continue;
+            };
+            if start.is_none() && (config.anchor_both_ends || index < kmer_size.saturating_sub(1)) {
                 index += 1;
                 continue;
             }
             regions.push(ActiveRegion::new(
                 region,
-                None,
+                start,
                 Some(index),
                 counts,
                 kmer_size,
@@ -187,6 +195,46 @@ fn candidate_regions(
         index += 1;
     }
     Ok(regions)
+}
+
+fn scan_left_start(
+    counts: &[u32],
+    index: usize,
+    anchor_count: u32,
+    kmer_size: usize,
+    difference_threshold: u32,
+    config: &ActiveRegionDetectorConfig,
+) -> LibResult<Option<Option<usize>>> {
+    let scan_limit = scan_limit_length(kmer_size, config)?;
+    if index > scan_limit {
+        return Ok(None);
+    }
+
+    let mut scan_end = index as isize - 1;
+    while scan_end >= 0
+        && (counts[scan_end as usize] as f32)
+            < recovery_threshold(
+                anchor_count,
+                difference_threshold,
+                index - scan_end as usize,
+                kmer_size,
+                config,
+            )?
+    {
+        scan_end -= 1;
+    }
+    if scan_end > 0 {
+        return Ok(None);
+    }
+
+    if config.recover_right_anchor && index < scan_limit {
+        if let Some(anchor) =
+            recover_left_anchor_index(counts, index, kmer_size, difference_threshold)
+        {
+            return Ok(Some(Some(anchor)));
+        }
+    }
+    Ok(Some(None))
 }
 
 fn skip_left_peak(
@@ -214,6 +262,24 @@ fn skip_left_peak(
             return Some(scan_index + 1);
         }
         scan_index += 1;
+    }
+    None
+}
+
+fn recover_left_anchor_index(
+    counts: &[u32],
+    index: usize,
+    kmer_size: usize,
+    difference_threshold: u32,
+) -> Option<usize> {
+    let mut scan_index = index.saturating_sub(kmer_size);
+    while scan_index > 0 {
+        if counts[scan_index - 1] > counts[scan_index]
+            && counts[scan_index - 1] - counts[scan_index] >= difference_threshold
+        {
+            return Some(scan_index);
+        }
+        scan_index -= 1;
     }
     None
 }

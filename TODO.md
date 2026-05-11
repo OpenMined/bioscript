@@ -159,6 +159,9 @@ surface requires it.
       rule is also ported: short isolated count increases can be skipped rather
       than being emitted as left-end active regions, and left-open candidate
       scans now respect the same scan-limit length used by right scans. The
+      left-scan recovery check now also follows Java's discard shape when
+      counts recover before the scan reaches the left end, which prevents those
+      internal recoveries from being emitted as left-end active regions. The
       native `align_haplotype` and `call_alignment_variants` helpers provide a
       first deterministic reference-vs-haplotype edit surface that emits
       SNP/insertion/deletion calls using the same native VCF normalization path.

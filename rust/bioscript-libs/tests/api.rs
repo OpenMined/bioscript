@@ -847,6 +847,45 @@ fn kestrel_native_active_region_detector_limits_left_open_scans() {
 }
 
 #[test]
+fn kestrel_native_active_region_detector_discards_left_scan_recovery_before_left_end() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "AAAACCCCGGGGTTTT".to_owned(),
+    };
+    let mut read_kmers = Vec::new();
+    for _ in 0..5 {
+        read_kmers.push("AAAA");
+        read_kmers.push("AAAC");
+        read_kmers.push("ACCC");
+    }
+    let counts = KmerCountMap::from_sequences(read_kmers, 4).unwrap();
+    let detection = detect_active_regions(
+        &region,
+        &counts,
+        &ActiveRegionDetectorConfig {
+            minimum_difference: 1,
+            difference_quantile: 0.0,
+            count_reverse_kmers: false,
+            anchor_both_ends: false,
+            decay_min: 1.0,
+            decay_alpha: 0.80,
+            peak_scan_length: 0,
+            scan_limit_factor: 7.0,
+            recover_right_anchor: true,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(detection.reference_counts[..4], [5, 5, 0, 5]);
+    assert!(
+        detection
+            .regions
+            .iter()
+            .all(|region| !(region.left_end && region.end_kmer_index == 3))
+    );
+}
+
+#[test]
 fn kestrel_native_difference_threshold_matches_java_quantile_shape() {
     assert_eq!(
         difference_threshold(&[10, 10, 1, 1, 10], 5, 0.90).unwrap(),
