@@ -1,11 +1,12 @@
-use std::path::PathBuf;
+use std::{fs, io::Write, path::PathBuf};
 
 use bioscript_libs::{
     LibError, ModuleName, bcftools,
     kestrel::{
         KestrelRunConfig,
         native::{
-            KestrelVcfWriter, NativeVariantCall, ReferenceRegion, ReferenceSequence, VariantCall,
+            KestrelVcfWriter, KmerCountMap, NativeVariantCall, ReferenceRegion, ReferenceSequence,
+            VariantCall, count_fastq_kmers, count_sequence_kmers,
         },
     },
     pyfaidx::Fasta,
@@ -335,6 +336,61 @@ fn kestrel_native_variants_use_java_vcf_normalization_rules() {
         ),
         (3, "GTA", "G")
     );
+}
+
+#[test]
+fn kestrel_native_kmer_count_map_counts_canonical_bases() {
+    let counts = count_sequence_kmers("ACGTACGTA", 3).unwrap();
+    assert_eq!(counts.get("ACG"), Some(&2));
+    assert_eq!(counts.get("CGT"), Some(&2));
+    assert_eq!(counts.get("GTA"), Some(&2));
+    assert_eq!(counts.get("TAC"), Some(&1));
+
+    let map = KmerCountMap::from_sequences(["acgtnacgt", "ACGT"], 4).unwrap();
+    assert_eq!(map.kmer_size(), 4);
+    assert_eq!(map.get("ACGT").unwrap(), 3);
+    assert_eq!(map.get("CGTA").unwrap(), 0);
+    assert!(map.get("ACGN").is_err());
+}
+
+#[test]
+fn kestrel_native_kmer_count_map_validates_inputs() {
+    assert!(count_sequence_kmers("ACGT", 0).is_err());
+    assert!(count_sequence_kmers("ACGX", 3).is_err());
+
+    let map = KmerCountMap::from_sequences(["ACGT"], 3).unwrap();
+    assert!(map.get("AC").is_err());
+}
+
+#[test]
+fn kestrel_native_kmer_count_map_reads_fastq_inputs() {
+    let dir = std::env::temp_dir().join(format!(
+        "bioscript-kestrel-kmer-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    let plain_path = dir.join("reads.fastq");
+    fs::write(
+        &plain_path,
+        b"@r1\nACGTAC\n+\nIIIIII\n@r2\nTTNNAC\n+\nIIIIII\n",
+    )
+    .unwrap();
+    let gz_path = dir.join("reads.fastq.gz");
+    {
+        let file = fs::File::create(&gz_path).unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        encoder.write_all(b"@r3\nACGT\n+\nIIII\n").unwrap();
+        encoder.finish().unwrap();
+    }
+
+    let map = KmerCountMap::from_fastq_paths([plain_path.as_path(), gz_path.as_path()], 3).unwrap();
+    assert_eq!(map.get("ACG").unwrap(), 2);
+    assert_eq!(map.get("CGT").unwrap(), 2);
+    assert_eq!(map.get("GTA").unwrap(), 1);
+    assert_eq!(map.get("TAC").unwrap(), 1);
+    assert_eq!(count_fastq_kmers(&plain_path, 3).unwrap().get("TTA"), None);
+
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
