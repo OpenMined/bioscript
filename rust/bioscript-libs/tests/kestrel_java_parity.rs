@@ -10,6 +10,8 @@ use bioscript_libs::kestrel::native::{
 };
 
 const RUN_ENV: &str = "BIOSCRIPT_RUN_KESTREL_JAVA_PARITY";
+const LONG_NONREPETITIVE_REFERENCE: &str =
+    "ACGTTGCAACGAGTCCATGCTAGGCTAACCGTATCGGATCCGTAAGCTTGCAAGTCGATGCTAACGTTAGC";
 
 #[test]
 fn native_kestrel_fastq_output_matches_java_for_tiny_no_variant_fixture() {
@@ -124,6 +126,50 @@ fn native_kestrel_fastq_output_matches_java_for_k20_nonrepetitive_snp() {
 }
 
 #[test]
+fn native_kestrel_fastq_output_matches_java_for_k20_nonrepetitive_deletion() {
+    let dir = parity_temp_dir("k20-nonrepetitive-deletion");
+    let read = "ACGTTGCAACGAGTCCATGCTAGGCTAACCGTACGGATCCGTAAGCTTGCAAGTCGATGCTAACGTTAGC";
+    let fastq = repeated_fastq(read, 10);
+    let fixture = KestrelParityFixture::new(
+        "REF",
+        LONG_NONREPETITIVE_REFERENCE,
+        "e50386beaaf4c2113705c82a71502260",
+        &fastq,
+    )
+    .with_kmer_size(20)
+    .with_max_states(80);
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fixture);
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
+#[test]
+fn native_kestrel_fastq_output_matches_java_for_k20_nonrepetitive_insertion() {
+    let dir = parity_temp_dir("k20-nonrepetitive-insertion");
+    let read = "ACGTTGCAACGAGTCCATGCTAGGCTAACCGTTGATATCGGATCCGTAAGCTTGCAAGTCGATGCTAACGTTAGC";
+    let fastq = repeated_fastq(read, 10);
+    let fixture = KestrelParityFixture::new(
+        "REF",
+        LONG_NONREPETITIVE_REFERENCE,
+        "e50386beaaf4c2113705c82a71502260",
+        &fastq,
+    )
+    .with_kmer_size(20)
+    .with_max_states(80);
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fixture);
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
+#[test]
 fn native_kestrel_fastq_output_matches_java_for_sparse_split_reads() {
     let dir = parity_temp_dir("sparse-split-reads");
     let fixture = KestrelParityFixture::new(
@@ -147,6 +193,7 @@ struct KestrelParityFixture<'a> {
     reference_md5: &'a str,
     fastq_contents: &'a [u8],
     kmer_size: usize,
+    max_states: usize,
 }
 
 impl<'a> KestrelParityFixture<'a> {
@@ -162,11 +209,17 @@ impl<'a> KestrelParityFixture<'a> {
             reference_md5,
             fastq_contents,
             kmer_size: 4,
+            max_states: 40,
         }
     }
 
     fn with_kmer_size(mut self, kmer_size: usize) -> Self {
         self.kmer_size = kmer_size;
+        self
+    }
+
+    fn with_max_states(mut self, max_states: usize) -> Self {
+        self.max_states = max_states;
         self
     }
 }
@@ -218,14 +271,12 @@ fn run_java_and_native(dir: &Path, fixture: &KestrelParityFixture<'_>) -> (Strin
             "0",
             "--decaymin",
             "1.0",
-            "--maxalignstates",
-            "40",
-            "--maxhapstates",
-            "40",
-            "--noanchorboth",
-            "--nocountrev",
-            "-r",
         ])
+        .arg("--maxalignstates")
+        .arg(fixture.max_states.to_string())
+        .arg("--maxhapstates")
+        .arg(fixture.max_states.to_string())
+        .args(["--noanchorboth", "--nocountrev", "-r"])
         .arg(&reference_path)
         .arg("-o")
         .arg(&java_vcf_path)
@@ -264,10 +315,10 @@ fn run_java_and_native(dir: &Path, fixture: &KestrelParityFixture<'_>) -> (Strin
         },
         &HaplotypeAssemblyConfig {
             min_kmer_count: 1,
-            max_haplotypes: 40,
+            max_haplotypes: fixture.max_states,
             max_bases: 500,
             max_repeat_count: 0,
-            max_saved_states: 40,
+            max_saved_states: fixture.max_states,
             locus_depth: 1,
         },
         &NativeKestrelCallConfig::new("1.0.2", "sample1", fixture.reference_md5),
@@ -292,6 +343,15 @@ fn parity_temp_dir(name: &str) -> PathBuf {
         "bioscript-kestrel-java-parity-{name}-{}",
         std::process::id()
     ))
+}
+
+fn repeated_fastq(read: &str, copies: usize) -> Vec<u8> {
+    let mut fastq = Vec::new();
+    for read_index in 1..=copies {
+        fastq.extend_from_slice(format!("@r{read_index}\n{read}\n+\n").as_bytes());
+        fastq.extend_from_slice(format!("{}\n", "I".repeat(read.len())).as_bytes());
+    }
+    fastq
 }
 
 fn variant_rows(vcf: &str) -> Vec<&str> {
