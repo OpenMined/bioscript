@@ -204,8 +204,8 @@ surface requires it.
       `BIOSCRIPT_RUN_KESTREL_JAVA_PARITY=1` and a Kestrel jar are available, it
       compares native FASTQ-to-VCF output with Java Kestrel on tiny
       perfect-reference no-variant, MUC1 SNP, nonrepetitive SNP, adjacent
-      nonrepetitive SNPs, a k=20 nonrepetitive SNP, and sparse split-read
-      fixtures.
+      nonrepetitive SNPs, k=20 nonrepetitive SNP/deletion/insertion fixtures,
+      and sparse split-read fixtures.
       The native assembler now tracks observed adjacent k-mer transitions from
       each read/FASTQ record and refuses to bridge k-mers that were never
       adjacent in an input read, which fixes the Java-confirmed sparse
