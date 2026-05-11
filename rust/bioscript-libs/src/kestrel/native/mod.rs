@@ -4,6 +4,7 @@ mod detector;
 mod engine;
 mod haplotype;
 mod kmer;
+mod refreader;
 mod variant;
 mod vcf;
 
@@ -19,5 +20,6 @@ pub use engine::{
 };
 pub use haplotype::{HaplotypeAssemblyConfig, assemble_haplotypes};
 pub use kmer::{KmerCountMap, count_fastq_kmers, count_sequence_kmers};
+pub use refreader::{ReferenceRecord, read_reference_records, reference_kmers};
 pub use variant::{NativeVariantCall, ReferenceRegion, VariantKind};
 pub use vcf::{KestrelVcfWriter, ReferenceSequence, VariantCall};

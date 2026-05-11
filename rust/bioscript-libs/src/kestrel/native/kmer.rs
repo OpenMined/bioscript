@@ -218,8 +218,11 @@ fn normalize_sequence(sequence: &str) -> LibResult<Vec<u8>> {
             b'A' | b'a' => b'A',
             b'C' | b'c' => b'C',
             b'G' | b'g' => b'G',
-            b'T' | b't' => b'T',
-            b'N' | b'n' => b'N',
+            b'T' | b't' | b'U' | b'u' => b'T',
+            b'N' | b'n' | b'R' | b'r' | b'Y' | b'y' | b'S' | b's' | b'W' | b'w' | b'K' | b'k'
+            | b'M' | b'm' | b'B' | b'b' | b'D' | b'd' | b'H' | b'h' | b'V' | b'v' | b'.' | b'-' => {
+                b'N'
+            }
             b'\n' | b'\r' | b'\t' | b' ' => continue,
             _ => {
                 return Err(LibError::InvalidArguments(format!(

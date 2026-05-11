@@ -12,6 +12,7 @@ use bioscript_libs::{
             call_assembled_haplotypes_to_vcf, call_explicit_haplotypes_to_vcf,
             call_fastq_paths_to_vcf, call_sequences_to_vcf, count_fastq_kmers,
             count_sequence_kmers, detect_active_regions, difference_threshold,
+            read_reference_records, reference_kmers,
         },
     },
     pyfaidx::Fasta,
@@ -399,6 +400,46 @@ fn kestrel_native_kmer_count_map_reads_fastq_inputs() {
 }
 
 #[test]
+fn kestrel_native_ports_upstream_reference_reader_resources() {
+    let cases = [
+        ("general.us-ascii.fasta", 10, 3000),
+        ("general.us-ascii.fastq", 10, 3000),
+        ("allchars.us-ascii.fasta", 20, 2000),
+        ("allchars.us-ascii.fastq", 20, 2000),
+    ];
+
+    for (file_name, expected_records, expected_len) in cases {
+        let records = read_reference_records(&kestrel_refreader_fixture(file_name)).unwrap();
+        assert_eq!(records.len(), expected_records, "{file_name}");
+        assert_eq!(records[0].name, "Seq-1", "{file_name}");
+        assert_eq!(records[0].sequence.len(), expected_len, "{file_name}");
+        assert_eq!(
+            records.last().unwrap().sequence.len(),
+            expected_len,
+            "{file_name}"
+        );
+
+        for kmer_size in [1, 2, 21, 32, 64] {
+            let kmers = reference_kmers(&records[0].sequence, kmer_size).unwrap();
+            assert_eq!(kmers.len(), expected_len - kmer_size + 1, "{file_name}");
+            assert!(kmers.iter().all(|kmer| kmer.len() == kmer_size));
+            assert!(kmers.iter().all(|kmer| {
+                kmer.bytes()
+                    .all(|base| matches!(base, b'A' | b'C' | b'G' | b'T'))
+            }));
+        }
+    }
+}
+
+#[test]
+fn kestrel_native_reference_kmers_match_upstream_ambiguous_base_shape() {
+    assert_eq!(
+        reference_kmers("AUn.-r", 2).unwrap(),
+        vec!["AT", "TA", "AC", "CG", "GT"]
+    );
+}
+
+#[test]
 fn kestrel_native_region_stats_match_java_percentiles() {
     let stats = RegionStats::from_counts(&[10, 4, 8, 2, 6], 0, 5).unwrap();
     assert_eq!(stats.min, 2);
@@ -483,6 +524,29 @@ fn kestrel_native_active_region_detector_finds_depth_drop_candidates() {
     assert_eq!(active.end_kmer_index, 9);
     assert_eq!(active.left_end_kmer.as_deref(), Some("ACCC"));
     assert_eq!(active.right_end_kmer.as_deref(), Some("GGGT"));
+}
+
+#[test]
+fn kestrel_native_active_region_detector_emits_right_open_candidates() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "AAAACCCCGGGGTTTT".to_owned(),
+    };
+    let counts = KmerCountMap::from_sequences(["AAAA", "AAAC", "AACC", "ACCC"], 4).unwrap();
+    let config = ActiveRegionDetectorConfig {
+        minimum_difference: 1,
+        difference_quantile: 0.0,
+        count_reverse_kmers: false,
+    };
+
+    let detection = detect_active_regions(&region, &counts, &config).unwrap();
+    assert_eq!(detection.regions.len(), 1);
+    let active = &detection.regions[0];
+    assert_eq!(active.start_kmer_index, 3);
+    assert_eq!(active.end_kmer_index, 12);
+    assert_eq!(active.left_end_kmer.as_deref(), Some("ACCC"));
+    assert_eq!(active.right_end_kmer, None);
+    assert_eq!(active.end_index, 15);
 }
 
 #[test]
@@ -771,4 +835,10 @@ fn samtools_vntyper_subset_builds_allowed_commands() {
     .unwrap();
     assert_eq!(fastq.program(), "samtools");
     assert_eq!(fastq.args()[0], "fastq");
+}
+
+fn kestrel_refreader_fixture(file_name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../ports/vntyper/kestrel/bin/edu/gatech/kestrel/test/files/refreader")
+        .join(file_name)
 }

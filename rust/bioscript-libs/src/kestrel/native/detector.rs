@@ -113,6 +113,16 @@ fn candidate_regions(
                 index = end + 1;
                 continue;
             }
+            if end == counts.len() && end.saturating_sub(index) >= kmer_size.saturating_sub(1) {
+                regions.push(ActiveRegion::new(
+                    region,
+                    Some(index - 1),
+                    None,
+                    counts,
+                    kmer_size,
+                )?);
+                break;
+            }
         }
         index += 1;
     }
