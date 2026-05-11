@@ -159,19 +159,19 @@ surface requires it.
 
 ## Reporting / UI Parity
 
-- [ ] Treat upstream `generate_report.py`, `report_template.html`, and
+- [x] Treat upstream `generate_report.py`, `report_template.html`, and
       `report_config.json` as the reporting reference.
 - [x] Emit a structured BioScript report JSON before generating HTML.
-- [ ] Include run metadata:
+- [x] Include run metadata:
       report date, VNtyper version, input files, alignment pipeline, detected
       assembly/contig, and BAM header warnings.
-- [ ] Include VNTR coverage QC:
+- [x] Include VNTR coverage QC:
       mean, median, stdev, min, max, region length, uncovered bases, percent
       uncovered, and pass/warning status.
-- [ ] Include fastp QC when available:
+- [x] Include fastp QC when available:
       sequencing setup, duplication rate, Q20 rate, Q30 rate, passed-filter read
       rate, and threshold pass/warning status.
-- [ ] Include screening summary logic from `report_config.json`:
+- [x] Include screening summary logic from `report_config.json`:
       Kestrel result, optional adVNTR result, quality pass/fail, and validation
       recommendations.
 - [ ] Include cross-match summary when adVNTR results are present.

@@ -61,8 +61,40 @@ class VntyperPortTests(unittest.TestCase):
 
         self.assertEqual(report["sample_name"], "fixture")
         self.assertTrue(report["coverage"]["quality_pass"])
-        self.assertIn("high-precision pathogenic variant", report["screening_summary"])
+        self.assertEqual(report["coverage"]["status"], "pass")
+        self.assertEqual(report["algorithm_results"]["kestrel"], "High_Precision")
+        self.assertIn("adVNTR genotyping was not performed", report["screening_summary"])
         self.assertEqual(len(report["kestrel_variants"]), 3)
+
+    def test_report_json_contains_metadata_and_fastp_qc(self):
+        rows = vntyper_port.process_kestrel_vcf(str(FIXTURE))
+        report = vntyper_port.build_report_json(
+            sample_name="fixture",
+            input_files={"bam": "fixture.bam"},
+            kestrel_rows=rows,
+            coverage={"mean": 10},
+            fastp={
+                "sequencing_setup": "paired-end",
+                "duplication_rate": 0.01,
+                "q20_rate": 0.99,
+                "q30_rate": 0.95,
+                "passed_filter_read_rate": 0.98,
+                "quality_pass": True,
+            },
+            metadata={
+                "alignment_pipeline": "external samtools/kestrel",
+                "detected_assembly": "hg19",
+                "detected_contig": "chr1",
+                "bam_header_warnings": ["missing PG"],
+                "report_date": "2026-05-11 00:00:00",
+            },
+        )
+        self.assertEqual(report["metadata"]["detected_assembly"], "hg19")
+        self.assertEqual(report["metadata"]["detected_contig"], "chr1")
+        self.assertEqual(report["metadata"]["bam_header_warnings"], ["missing PG"])
+        self.assertEqual(report["coverage"]["status"], "warning")
+        self.assertTrue(report["fastp"]["available"])
+        self.assertEqual(report["fastp"]["sequencing_setup"], "paired-end")
 
     def test_kestrel_fixture_matches_expected_tsv_rows(self):
         rows = vntyper_port.process_kestrel_vcf(str(FIXTURE))
@@ -91,14 +123,33 @@ class VntyperPortTests(unittest.TestCase):
             input_files={"vcf": str(FIXTURE)},
             kestrel_rows=rows,
             coverage={"mean": 250},
+            metadata={
+                "alignment_pipeline": "external samtools/kestrel",
+                "detected_assembly": "hg19",
+                "detected_contig": "chr1",
+                "bam_header_warnings": [],
+                "report_date": "2026-05-11 00:00:00",
+            },
         )
         best = vntyper_port.best_kestrel_call(
             [row for row in rows if row["passes_vntyper_filters"]]
         )
         actual = {
             "screening_summary": report["screening_summary"],
-            "coverage_quality_pass": report["coverage"]["quality_pass"],
+            "coverage": {
+                "quality_pass": report["coverage"]["quality_pass"],
+                "status": report["coverage"]["status"],
+                "threshold": report["coverage"]["threshold"],
+            },
+            "algorithm_results": report["algorithm_results"],
             "kestrel_variant_count": len(report["kestrel_variants"]),
+            "metadata": {
+                "vntyper_version": report["metadata"]["vntyper_version"],
+                "alignment_pipeline": report["metadata"]["alignment_pipeline"],
+                "detected_assembly": report["metadata"]["detected_assembly"],
+                "detected_contig": report["metadata"]["detected_contig"],
+                "bam_header_warnings": report["metadata"]["bam_header_warnings"],
+            },
             "best_call": {
                 "CHROM": best["CHROM"],
                 "POS": best["POS"],
