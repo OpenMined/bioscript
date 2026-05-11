@@ -155,7 +155,9 @@ surface requires it.
       behavior is now partially ported as `recover_right_anchor`: when the
       normal recovery threshold is never reached inside the scan limit, the
       native detector searches for a later abrupt count increase and uses that
-      k-mer as a recovered right anchor. The
+      k-mer as a recovered right anchor. The first left-scan peak suppression
+      rule is also ported: short isolated count increases can be skipped rather
+      than being emitted as left-end active regions. The
       native `align_haplotype` and `call_alignment_variants` helpers provide a
       first deterministic reference-vs-haplotype edit surface that emits
       SNP/insertion/deletion calls using the same native VCF normalization path.

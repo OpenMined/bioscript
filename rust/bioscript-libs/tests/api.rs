@@ -765,6 +765,49 @@ fn kestrel_native_active_region_detector_recovers_right_anchor() {
 }
 
 #[test]
+fn kestrel_native_active_region_detector_skips_left_peak() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "AAAACCCCGGGGTTTT".to_owned(),
+    };
+    let mut read_kmers = Vec::new();
+    for _ in 0..5 {
+        read_kmers.push("CCCC");
+    }
+    for _ in 0..2 {
+        read_kmers.push("CCCG");
+    }
+    let counts = KmerCountMap::from_sequences(read_kmers, 4).unwrap();
+    let config = ActiveRegionDetectorConfig {
+        minimum_difference: 5,
+        difference_quantile: 0.0,
+        count_reverse_kmers: false,
+        anchor_both_ends: false,
+        decay_min: 1.0,
+        decay_alpha: 0.80,
+        peak_scan_length: 7,
+        scan_limit_factor: 7.0,
+        recover_right_anchor: true,
+    };
+
+    let detection = detect_active_regions(&region, &counts, &config).unwrap();
+    assert!(detection.regions.is_empty());
+
+    let without_peak_scan = detect_active_regions(
+        &region,
+        &counts,
+        &ActiveRegionDetectorConfig {
+            peak_scan_length: 0,
+            ..config
+        },
+    )
+    .unwrap();
+    assert_eq!(without_peak_scan.regions.len(), 1);
+    assert!(without_peak_scan.regions[0].left_end);
+    assert_eq!(without_peak_scan.regions[0].end_kmer_index, 4);
+}
+
+#[test]
 fn kestrel_native_difference_threshold_matches_java_quantile_shape() {
     assert_eq!(
         difference_threshold(&[10, 10, 1, 1, 10], 5, 0.90).unwrap(),
