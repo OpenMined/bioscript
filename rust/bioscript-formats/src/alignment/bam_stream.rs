@@ -86,7 +86,7 @@ pub fn write_bam_region(
     Ok(count)
 }
 
-fn build_indexed_reader(
+pub(crate) fn build_indexed_reader(
     path: &Path,
     options: &GenotypeLoadOptions,
 ) -> Result<bam::io::IndexedReader<noodles::bgzf::io::Reader<std::fs::File>>, RuntimeError> {
@@ -177,7 +177,7 @@ impl DepthSummary {
     }
 }
 
-fn build_region(locus: &GenomicLocus) -> Result<Region, RuntimeError> {
+pub(crate) fn build_region(locus: &GenomicLocus) -> Result<Region, RuntimeError> {
     let start = usize::try_from(locus.start)
         .ok()
         .and_then(Position::new)

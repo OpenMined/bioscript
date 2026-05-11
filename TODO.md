@@ -231,8 +231,10 @@ surface requires it.
 - [ ] M6: Structured report JSON parity for the minimal BAM/Kestrel path.
       Fake-runner coverage now captures `samtools depth -a` output and feeds
       mean/median/stdev/min/max/uncovered-base fields into the structured JSON;
-      FASTQ-backed Kestrel reports are now generated locally, but real
-      BAM/Kestrel parity still needs samtools/bcftools or native replacements.
+      FASTQ-backed Kestrel reports are now generated locally. Real
+      BAM/Kestrel parity still needs the BAM-native FASTQ extraction path wired
+      into the runner and either bcftools availability or native VCF
+      sort/index behavior.
 - [x] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
       logs.
 - [x] M8: FASTQ path works using external fastp/bwa or documented prealigned
@@ -242,8 +244,9 @@ surface requires it.
 - [x] M11: Replace selected external-tool behavior with Rust/noodles wrappers
       where the benefit is clear.
       Selected replacements now cover indexed BAM region fetch, indexed BAM
-      depth summary, and BAM region slicing through noodles. Remaining future
-      candidates are FASTQ extraction and VCF sorting/indexing.
+      depth summary, BAM region slicing, and BAM-region-to-paired-FASTQ
+      extraction through noodles. Remaining future candidates are VCF
+      sorting/indexing.
 
 ## Open Decisions
 
