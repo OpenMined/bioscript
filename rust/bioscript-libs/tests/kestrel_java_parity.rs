@@ -5,8 +5,8 @@ use std::{
 };
 
 use bioscript_libs::kestrel::native::{
-    ActiveRegionDetectorConfig, HaplotypeAssemblyConfig, NativeKestrelCallConfig, ReferenceRegion,
-    call_fastq_paths_to_vcf,
+    ActiveRegionDetectorConfig, AlignmentWeight, HaplotypeAssemblyConfig, NativeKestrelCallConfig,
+    ReferenceRegion, call_fastq_paths_to_vcf,
 };
 
 const RUN_ENV: &str = "BIOSCRIPT_RUN_KESTREL_JAVA_PARITY";
@@ -102,6 +102,28 @@ fn native_kestrel_fastq_output_matches_java_for_adjacent_nonrepetitive_snps() {
 }
 
 #[test]
+fn native_kestrel_fastq_output_matches_java_for_k20_nonrepetitive_snp() {
+    let dir = parity_temp_dir("k20-nonrepetitive-snp");
+    let reference = "ACGTTGCAACGAGTCCATGCTAGGCTAACCGTATCGGATCCGTAAGCT";
+    let read = "ACGTTGCAACGAGTCCATGCTAGGTTAACCGTATCGGATCCGTAAGCT";
+    let mut fastq = Vec::new();
+    for read_index in 1..=5 {
+        fastq.extend_from_slice(format!("@r{read_index}\n{read}\n+\n").as_bytes());
+        fastq.extend_from_slice(format!("{}\n", "I".repeat(read.len())).as_bytes());
+    }
+    let fixture =
+        KestrelParityFixture::new("REF", reference, "0f6b419f89dfba198188d4160b1c8329", &fastq)
+            .with_kmer_size(20);
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fixture);
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
+#[test]
 fn native_kestrel_fastq_output_matches_java_for_sparse_split_reads() {
     let dir = parity_temp_dir("sparse-split-reads");
     let fixture = KestrelParityFixture::new(
@@ -124,6 +146,7 @@ struct KestrelParityFixture<'a> {
     reference_sequence: &'a str,
     reference_md5: &'a str,
     fastq_contents: &'a [u8],
+    kmer_size: usize,
 }
 
 impl<'a> KestrelParityFixture<'a> {
@@ -138,7 +161,13 @@ impl<'a> KestrelParityFixture<'a> {
             reference_sequence,
             reference_md5,
             fastq_contents,
+            kmer_size: 4,
         }
+    }
+
+    fn with_kmer_size(mut self, kmer_size: usize) -> Self {
+        self.kmer_size = kmer_size;
+        self
     }
 }
 
@@ -176,9 +205,9 @@ fn run_java_and_native(dir: &Path, fixture: &KestrelParityFixture<'_>) -> (Strin
         .arg("-Xmx512m")
         .arg("-jar")
         .arg(&jar)
+        .arg("-k")
+        .arg(fixture.kmer_size.to_string())
         .args([
-            "-k",
-            "4",
             "--minsize",
             "4",
             "--mincount",
@@ -217,7 +246,7 @@ fn run_java_and_native(dir: &Path, fixture: &KestrelParityFixture<'_>) -> (Strin
             sequence: fixture.reference_sequence.to_owned(),
         },
         [fastq_path.as_path()],
-        4,
+        fixture.kmer_size,
         &ActiveRegionDetectorConfig {
             minimum_difference: 1,
             difference_quantile: 0.0,
@@ -227,7 +256,9 @@ fn run_java_and_native(dir: &Path, fixture: &KestrelParityFixture<'_>) -> (Strin
             decay_alpha: 0.80,
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
-            max_gap_size: 0,
+            max_gap_size: AlignmentWeight::default()
+                .max_exclusive_gap_size(fixture.kmer_size)
+                .unwrap(),
             recover_right_anchor: true,
             call_ambiguous_regions: true,
         },
