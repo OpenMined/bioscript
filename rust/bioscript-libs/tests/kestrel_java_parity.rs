@@ -14,8 +14,13 @@ const RUN_ENV: &str = "BIOSCRIPT_RUN_KESTREL_JAVA_PARITY";
 #[test]
 fn native_kestrel_fastq_output_matches_java_for_tiny_no_variant_fixture() {
     let dir = parity_temp_dir("tiny-no-variant");
-    let (java_vcf, native_vcf) =
-        run_java_and_native(&dir, b"@r1\nAAAACCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n");
+    let fixture = KestrelParityFixture::new(
+        "MUC1",
+        "AAAACCCCGGGGTTTT",
+        "2a9fd43653a81f9ec44e34c7ec038636",
+        b"@r1\nAAAACCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n",
+    );
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fixture);
 
     assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
     assert_eq!(
@@ -33,7 +38,61 @@ fn native_kestrel_fastq_output_matches_java_for_tiny_snp_fixture() {
             format!("@r{read_index}\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n").as_bytes(),
         );
     }
-    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fastq);
+    let fixture = KestrelParityFixture::new(
+        "MUC1",
+        "AAAACCCCGGGGTTTT",
+        "2a9fd43653a81f9ec44e34c7ec038636",
+        &fastq,
+    );
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fixture);
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
+#[test]
+fn native_kestrel_fastq_output_matches_java_for_nonrepetitive_snp_fixture() {
+    let dir = parity_temp_dir("nonrepetitive-snp");
+    let mut fastq = Vec::new();
+    for read_index in 1..=5 {
+        fastq.extend_from_slice(
+            format!("@r{read_index}\nACAGTTCGTAAG\n+\nIIIIIIIIIIII\n").as_bytes(),
+        );
+    }
+    let fixture = KestrelParityFixture::new(
+        "REF",
+        "ACAGTCCGTAAG",
+        "f17cc056a4c30b8661b5585d2641a37a",
+        &fastq,
+    );
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fixture);
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
+#[test]
+fn native_kestrel_fastq_output_matches_java_for_adjacent_nonrepetitive_snps() {
+    let dir = parity_temp_dir("adjacent-nonrepetitive-snps");
+    let mut fastq = Vec::new();
+    for read_index in 1..=5 {
+        fastq.extend_from_slice(
+            format!("@r{read_index}\nACAGTTTGTAAG\n+\nIIIIIIIIIIII\n").as_bytes(),
+        );
+    }
+    let fixture = KestrelParityFixture::new(
+        "REF",
+        "ACAGTCCGTAAG",
+        "f17cc056a4c30b8661b5585d2641a37a",
+        &fastq,
+    );
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fixture);
 
     assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
     assert_eq!(
@@ -45,8 +104,13 @@ fn native_kestrel_fastq_output_matches_java_for_tiny_snp_fixture() {
 #[test]
 fn native_kestrel_fastq_output_matches_java_for_sparse_split_reads() {
     let dir = parity_temp_dir("sparse-split-reads");
-    let fastq = b"@r1\nAAAACCC\n+\nIIIIIII\n@r2\nCCCTGGG\n+\nIIIIIII\n@r3\nGGGTTTT\n+\nIIIIIII\n";
-    let (java_vcf, native_vcf) = run_java_and_native(&dir, fastq);
+    let fixture = KestrelParityFixture::new(
+        "MUC1",
+        "AAAACCCCGGGGTTTT",
+        "2a9fd43653a81f9ec44e34c7ec038636",
+        b"@r1\nAAAACCC\n+\nIIIIIII\n@r2\nCCCTGGG\n+\nIIIIIII\n@r3\nGGGTTTT\n+\nIIIIIII\n",
+    );
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fixture);
 
     assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
     assert_eq!(
@@ -55,7 +119,30 @@ fn native_kestrel_fastq_output_matches_java_for_sparse_split_reads() {
     );
 }
 
-fn run_java_and_native(dir: &Path, fastq_contents: &[u8]) -> (String, String) {
+struct KestrelParityFixture<'a> {
+    reference_name: &'a str,
+    reference_sequence: &'a str,
+    reference_md5: &'a str,
+    fastq_contents: &'a [u8],
+}
+
+impl<'a> KestrelParityFixture<'a> {
+    fn new(
+        reference_name: &'a str,
+        reference_sequence: &'a str,
+        reference_md5: &'a str,
+        fastq_contents: &'a [u8],
+    ) -> Self {
+        Self {
+            reference_name,
+            reference_sequence,
+            reference_md5,
+            fastq_contents,
+        }
+    }
+}
+
+fn run_java_and_native(dir: &Path, fixture: &KestrelParityFixture<'_>) -> (String, String) {
     if std::env::var_os(RUN_ENV).is_none() {
         return (String::new(), String::new());
     }
@@ -75,8 +162,15 @@ fn run_java_and_native(dir: &Path, fastq_contents: &[u8]) -> (String, String) {
     let java_vcf_path = dir.join("java.vcf");
     let java_sam_path = dir.join("java.sam");
 
-    fs::write(&reference_path, b">MUC1\nAAAACCCCGGGGTTTT\n").unwrap();
-    fs::write(&fastq_path, fastq_contents).unwrap();
+    fs::write(
+        &reference_path,
+        format!(
+            ">{}\n{}\n",
+            fixture.reference_name, fixture.reference_sequence
+        ),
+    )
+    .unwrap();
+    fs::write(&fastq_path, fixture.fastq_contents).unwrap();
 
     let status = Command::new("java")
         .arg("-Xmx512m")
@@ -119,8 +213,8 @@ fn run_java_and_native(dir: &Path, fastq_contents: &[u8]) -> (String, String) {
     let java_vcf = fs::read_to_string(&java_vcf_path).unwrap();
     let native_vcf = call_fastq_paths_to_vcf(
         &ReferenceRegion {
-            reference_name: "MUC1".to_owned(),
-            sequence: "AAAACCCCGGGGTTTT".to_owned(),
+            reference_name: fixture.reference_name.to_owned(),
+            sequence: fixture.reference_sequence.to_owned(),
         },
         [fastq_path.as_path()],
         4,
@@ -145,7 +239,7 @@ fn run_java_and_native(dir: &Path, fastq_contents: &[u8]) -> (String, String) {
             max_saved_states: 40,
             locus_depth: 1,
         },
-        &NativeKestrelCallConfig::new("1.0.2", "sample1", "2a9fd43653a81f9ec44e34c7ec038636"),
+        &NativeKestrelCallConfig::new("1.0.2", "sample1", fixture.reference_md5),
     )
     .unwrap();
 

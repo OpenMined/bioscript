@@ -199,7 +199,8 @@ surface requires it.
       `rust/bioscript-libs/tests/kestrel_java_parity.rs`; when
       `BIOSCRIPT_RUN_KESTREL_JAVA_PARITY=1` and a Kestrel jar are available, it
       compares native FASTQ-to-VCF output with Java Kestrel on tiny
-      perfect-reference no-variant, simple SNP, and sparse split-read fixtures.
+      perfect-reference no-variant, MUC1 SNP, nonrepetitive SNP, adjacent
+      nonrepetitive SNPs, and sparse split-read fixtures.
       The native assembler now tracks observed adjacent k-mer transitions from
       each read/FASTQ record and refuses to bridge k-mers that were never
       adjacent in an input read, which fixes the Java-confirmed sparse
