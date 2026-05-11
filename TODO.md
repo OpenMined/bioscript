@@ -245,7 +245,8 @@ surface requires it.
       where the benefit is clear.
       Selected replacements now cover indexed BAM region fetch, indexed BAM
       depth summary, BAM region slicing, and BAM-region-to-paired-FASTQ
-      extraction through noodles. Remaining future candidates are VCF
+      extraction through noodles, with `bioscript-python` native samtools
+      wrappers for CPython tests. Remaining future candidates are VCF
       sorting/indexing.
 
 ## Open Decisions
