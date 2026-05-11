@@ -66,9 +66,10 @@ surface requires it.
       117 files, about 1.2 GiB, including hg19/hg38 subset BAM/BAI files,
       paired FASTQs, and remapped BWA BAM/BAI files across GRCh37/GRCh38,
       hg19/hg38, and Ensembl naming variants.
-- [ ] Add or generate expected Kestrel VCF/TSV outputs; copied data currently
-      contains alignment/FASTQ inputs but no `.vcf`, `.tsv`, or result `.json`
-      files.
+- [ ] Add or generate expected Kestrel VCF/TSV outputs for large integration
+      data; copied data currently contains alignment/FASTQ inputs but no
+      `.vcf`, `.tsv`, or result `.json` files. Tiny expected TSV/JSON fixtures
+      exist for unit tests.
 - [x] Mirror upstream `tests/test_data_config.json` filenames and MD5s in a
       BioScript-side manifest.
 - [x] Add a data validator that checks required files.

@@ -1,0 +1,4 @@
+CHROM	POS	REF	ALT	Estimated_Depth_AlternateVariant	Estimated_Depth_Variant_ActiveRegion	Depth_Score	Confidence	is_valid_frameshift	alt_filter_pass	passes_vntyper_filters
+MUC1	100	C	CGGCA	120.0	10000.0	0.012	High_Precision*	True	True	True
+MUC1	160	ATG	A	50.0	10000.0	0.005	Low_Precision	True	True	True
+MUC1	220	C	CGG	5.0	10000.0	0.0005	Negative	False	True	False
