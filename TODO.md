@@ -127,6 +127,10 @@ surface requires it.
 - [x] Add lightweight `bioscript.vcf` parsing helpers for Kestrel VCF rows.
 - [x] Add TSV/CSV/table helpers if the port would otherwise need a pandas-like
       surface.
+- [x] Add a first native noodles replacement slice:
+      `pysam.AlignmentFile.fetch` now supports indexed BAM inputs through
+      `bioscript-formats::alignment::query_bam_records`, while CRAM continues
+      through the existing noodles CRAM path.
 
 ## Runtime / Security
 
@@ -227,6 +231,9 @@ surface requires it.
 - [x] M10: IGV visualization parity.
 - [ ] M11: Replace selected external-tool behavior with Rust/noodles wrappers
       where the benefit is clear.
+      First slice done for indexed BAM region fetch; remaining candidates are
+      BAM slicing/writing, FASTQ extraction, depth calculation, and VCF
+      sorting/indexing.
 
 ## Open Decisions
 

@@ -83,17 +83,6 @@ impl AlignmentFile {
                 "AlignmentFile.fetch without explicit start and stop",
             ));
         };
-        if self.mode != AlignmentMode::ReadCram {
-            return Err(LibError::unsupported_feature(
-                super::MODULE,
-                "AlignmentFile.fetch for non-CRAM inputs",
-            ));
-        }
-        let Some(reference_file) = self.reference_filename.as_ref() else {
-            return Err(LibError::InvalidArguments(
-                "pysam.AlignmentFile.fetch for CRAM requires reference_filename".to_owned(),
-            ));
-        };
         let locus = GenomicLocus {
             chrom: contig.to_owned(),
             start: i64::try_from(start.saturating_add(1)).map_err(|_| {
@@ -105,17 +94,34 @@ impl AlignmentFile {
                 LibError::InvalidArguments("pysam.AlignmentFile.fetch stop is too large".to_owned())
             })?,
         };
-        let records = alignment::query_cram_records(
-            &self.path,
-            &GenotypeLoadOptions {
-                input_index: self.index_filename.clone(),
-                reference_file: Some(reference_file.clone()),
-                allow_reference_md5_mismatch: true,
-                ..GenotypeLoadOptions::default()
-            },
-            reference_file,
-            &locus,
-        )
+        let records = match self.mode {
+            AlignmentMode::ReadBam | AlignmentMode::Read => alignment::query_bam_records(
+                &self.path,
+                &GenotypeLoadOptions {
+                    input_index: self.index_filename.clone(),
+                    ..GenotypeLoadOptions::default()
+                },
+                &locus,
+            ),
+            AlignmentMode::ReadCram => {
+                let Some(reference_file) = self.reference_filename.as_ref() else {
+                    return Err(LibError::InvalidArguments(
+                        "pysam.AlignmentFile.fetch for CRAM requires reference_filename".to_owned(),
+                    ));
+                };
+                alignment::query_cram_records(
+                    &self.path,
+                    &GenotypeLoadOptions {
+                        input_index: self.index_filename.clone(),
+                        reference_file: Some(reference_file.clone()),
+                        allow_reference_md5_mismatch: true,
+                        ..GenotypeLoadOptions::default()
+                    },
+                    reference_file,
+                    &locus,
+                )
+            }
+        }
         .map_err(|err| LibError::InvalidArguments(err.to_string()))?;
         Ok(AlignmentFetch {
             contig: contig.to_owned(),

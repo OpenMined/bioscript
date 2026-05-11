@@ -9,9 +9,11 @@ use bioscript_core::{GenomicLocus, RuntimeError};
 
 use crate::genotype::GenotypeLoadOptions;
 
+mod bam_stream;
 mod cram_stream;
 mod readers;
 
+pub use bam_stream::query_bam_records;
 pub use readers::{
     build_cram_indexed_reader_from_reader, build_reference_repository_from_readers,
     parse_crai_bytes, parse_fai_bytes, parse_tbi_bytes,
