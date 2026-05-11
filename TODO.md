@@ -156,7 +156,9 @@ surface requires it.
 - [ ] Add integration tests against `ports/vntyper/test-data` once copied:
       one positive BAM, one negative BAM, and one FASTQ pair if available.
       Current coverage plans commands for two representative BAMs and one FASTQ
-      pair, but positive/negative labels still require expected outputs.
+      pair, and a fake-runner test covers the BAM path materializing Kestrel
+      TSV/JSON outputs. Positive/negative labels still require expected
+      outputs.
 - [x] Run upstream VNtyper tests from the submodule as a reference check when
       Python dependencies and external tools are installed.
 - [x] Run BioScript tests without external tools by using fixed Kestrel VCF
@@ -204,6 +206,10 @@ surface requires it.
 - [x] M3: Confidence/depth/frame classification parity with upstream unit
       tests.
 - [ ] M4: BAM path works using external samtools and Kestrel wrappers.
+      The execution layer now exists in
+      `ports/vntyper/bioscript/vntyper_external_pipeline.py` and is covered
+      with an injected fake runner; the real-tool run remains gated on local
+      samtools/bcftools/Kestrel prerequisites and expected labels.
 - [x] M5: Native Rust Kestrel feasibility spike:
       reproduce Kestrel VCF output for one tiny fixture or document why the JVM
       adapter remains the practical first target.
