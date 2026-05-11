@@ -174,11 +174,11 @@ surface requires it.
 - [x] Include screening summary logic from `report_config.json`:
       Kestrel result, optional adVNTR result, quality pass/fail, and validation
       recommendations.
-- [ ] Include cross-match summary when adVNTR results are present.
+- [x] Include cross-match summary when adVNTR results are present.
 - [x] Include Kestrel identified variants table:
       motif, variant, position, REF, ALT, motif sequence, variant depth,
       active-region depth, depth score, confidence, and flag.
-- [ ] Include adVNTR identified variants table when available:
+- [x] Include adVNTR identified variants table when available:
       VID, variant, supporting reads, mean coverage, p-value, RU, POS, REF,
       ALT, and flag.
 - [ ] Preserve interactive HTML features after JSON parity:
