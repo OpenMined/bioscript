@@ -174,8 +174,9 @@ surface requires it.
       A second fake-runner path now covers native BioScript samtools slice,
       FASTQ extraction, and depth followed by Kestrel without requiring
       bcftools. A gated real-data native BAM pipeline test now exists and skips
-      until `bioscript._native`, Java/Kestrel, BAM/BAI inputs, and expected
-      outputs are all available.
+      until explicitly enabled with `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1` and
+      `bioscript._native`, Java/Kestrel, BAM/BAI inputs, and expected outputs
+      are all available.
       FASTQ-backed Kestrel expected outputs are gated by
       `test_fastq_expected_outputs.py`; true positive/negative BAM labels still
       need validation against upstream expected results.
@@ -239,7 +240,11 @@ surface requires it.
       FASTQ-backed Kestrel reports are now generated locally, and the runner
       can use native BioScript samtools wrappers before Kestrel. Real
       BAM/Kestrel parity still needs validation against copied positive and
-      negative BAM expected labels.
+      negative BAM expected labels. A manual native run currently extracts
+      fewer reads from the subset BAM than the copied FASTQ fixtures and
+      produces empty Kestrel calls, so the next fix is matching upstream read
+      extraction semantics for retained mate/unmapped reads or choosing the
+      correct BAM fixture.
 - [x] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
       logs.
 - [x] M8: FASTQ path works using external fastp/bwa or documented prealigned

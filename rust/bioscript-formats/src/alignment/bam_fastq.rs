@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs::File,
     io::{self, BufWriter, Write},
     path::Path,
@@ -27,6 +28,40 @@ pub fn write_bam_region_fastq_pair(
     options: &GenotypeLoadOptions,
     locus: &GenomicLocus,
 ) -> Result<FastqPairSummary, RuntimeError> {
+    let target_names = collect_region_template_names(input_path, options, locus)?;
+    let mut reader = File::open(input_path)
+        .map(bam::io::Reader::new)
+        .map_err(|err| RuntimeError::Io(format!("failed to open BAM: {err}")))?;
+    reader
+        .read_header()
+        .map_err(|err| RuntimeError::Io(format!("failed to read BAM header: {err}")))?;
+    let mut read1 = FastqWriter::create(read1_path)?;
+    let mut read2 = FastqWriter::create(read2_path)?;
+    let mut summary = FastqPairSummary {
+        read1_records: 0,
+        read2_records: 0,
+        skipped_records: 0,
+    };
+
+    for result in reader.records() {
+        let record =
+            result.map_err(|err| RuntimeError::Io(format!("failed to read BAM record: {err}")))?;
+        if !record_in_templates(&record, &target_names) {
+            continue;
+        }
+        emit_fastq_record(&record, &mut read1, &mut read2, &mut summary)?;
+    }
+
+    read1.finish()?;
+    read2.finish()?;
+    Ok(summary)
+}
+
+fn collect_region_template_names(
+    input_path: &Path,
+    options: &GenotypeLoadOptions,
+    locus: &GenomicLocus,
+) -> Result<HashSet<Vec<u8>>, RuntimeError> {
     let mut reader = build_indexed_reader(input_path, options)?;
     let header = reader
         .read_header()
@@ -36,34 +71,43 @@ pub fn write_bam_region_fastq_pair(
         .query(&header, &region)
         .map_err(|err| RuntimeError::Io(format!("failed to query BAM region {region}: {err}")))?;
 
-    let mut read1 = FastqWriter::create(read1_path)?;
-    let mut read2 = FastqWriter::create(read2_path)?;
-    let mut summary = FastqPairSummary {
-        read1_records: 0,
-        read2_records: 0,
-        skipped_records: 0,
-    };
-
+    let mut names = HashSet::new();
     for result in query.records() {
         let record =
             result.map_err(|err| RuntimeError::Io(format!("failed to read BAM record: {err}")))?;
-        let flags = record.flags();
-        if flags.is_secondary() || flags.is_supplementary() {
-            summary.skipped_records += 1;
-        } else if flags.is_first_segment() {
-            write_fastq_record(&mut read1, &record)?;
-            summary.read1_records += 1;
-        } else if flags.is_last_segment() {
-            write_fastq_record(&mut read2, &record)?;
-            summary.read2_records += 1;
-        } else {
-            summary.skipped_records += 1;
+        if let Some(name) = record.name() {
+            let bytes: &[u8] = name.as_ref();
+            names.insert(bytes.to_vec());
         }
     }
+    Ok(names)
+}
 
-    read1.finish()?;
-    read2.finish()?;
-    Ok(summary)
+fn record_in_templates(record: &bam::Record, target_names: &HashSet<Vec<u8>>) -> bool {
+    record
+        .name()
+        .is_some_and(|name| target_names.contains::<[u8]>(name.as_ref()))
+}
+
+fn emit_fastq_record(
+    record: &bam::Record,
+    read1: &mut FastqWriter,
+    read2: &mut FastqWriter,
+    summary: &mut FastqPairSummary,
+) -> Result<(), RuntimeError> {
+    let flags = record.flags();
+    if flags.is_secondary() || flags.is_supplementary() {
+        summary.skipped_records += 1;
+    } else if flags.is_first_segment() {
+        write_fastq_record(read1, record)?;
+        summary.read1_records += 1;
+    } else if flags.is_last_segment() {
+        write_fastq_record(read2, record)?;
+        summary.read2_records += 1;
+    } else {
+        summary.skipped_records += 1;
+    }
+    Ok(())
 }
 
 enum FastqWriter {
@@ -174,7 +218,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn write_bam_region_fastq_pair_splits_segments() -> Result<(), Box<dyn std::error::Error>> {
+    fn write_bam_region_fastq_pair_rescues_mates() -> Result<(), Box<dyn std::error::Error>> {
         let dir =
             std::env::temp_dir().join(format!("bioscript-bam-fastq-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -246,7 +290,7 @@ mod tests {
                 "pair",
                 Flags::SEGMENTED | Flags::LAST_SEGMENT,
                 b"TGCA",
-                1001,
+                1500,
             )?,
         )?;
         writer.write_alignment_record(&header, &record("skip", Flags::empty(), b"AAAA", 1002)?)?;
