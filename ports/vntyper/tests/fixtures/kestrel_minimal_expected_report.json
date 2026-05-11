@@ -1,7 +1,7 @@
 {
   "algorithm_results": {
     "advntr": "none",
-    "kestrel": "High_Precision",
+    "kestrel": "High_Precision_flagged",
     "quality_metrics_pass": true
   },
   "best_call": {
@@ -28,5 +28,5 @@
     "detected_contig": "chr1",
     "vntyper_version": "bioscript-vntyper-port"
   },
-  "screening_summary": "Kestrel detected a high-precision pathogenic variant.<br>Note: adVNTR genotyping was not performed.<br>It is recommended to perform adVNTR and validate the result using orthogonal methods (e.g., SNaPshot, long-read sequencing)."
+  "screening_summary": "Kestrel detected a high-precision pathogenic variant with a flagged result.<br>Note: adVNTR genotyping was not performed.<br>It is recommended to perform adVNTR and validate the finding using orthogonal methods (e.g., SNaPshot, long-read sequencing)."
 }

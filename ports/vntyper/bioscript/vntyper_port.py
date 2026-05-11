@@ -9,6 +9,7 @@ without running samtools or Kestrel.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -37,6 +38,20 @@ DEFAULT_KESTREL_CONFIG = {
         "gg_alt_value": "GG",
         "gg_depth_score_threshold": 0.00469,
         "exclude_alts": [],
+    },
+    "flagging_rules": {
+        "False_Positive_4bp_Insertion": "(REF == 'C') and (ALT == 'CGGCA')",
+        "Low_Depth_Conserved_Motifs": "(Depth_Score < 0.4) and (Motif in ['1', '2', '3', '4', '6', '7', '8', '9'])",
+    },
+    "duplicate_flagging": {
+        "enabled": False,
+        "flag_name": "Potential_Duplicate",
+        "group_by": ["REF", "ALT"],
+        "sort_by": [
+            {"column": "Depth_Score", "ascending": False},
+            {"column": "Motifs", "ascending": True},
+            {"column": "POS", "ascending": True},
+        ],
     },
 }
 
@@ -112,6 +127,14 @@ DEFAULT_REPORT_CONFIG = {
                 "quality_metrics_pass": False,
             },
             "message": "Kestrel detected a high-precision pathogenic variant with quality metrics below threshold, and adVNTR genotyping was not performed.<br>Further validation using alternative methods (e.g., SNaPshot, long-read sequencing) is strongly recommended.",
+        },
+        {
+            "conditions": {
+                "kestrel_result": "High_Precision_flagged",
+                "advntr_result": "none",
+                "quality_metrics_pass": True,
+            },
+            "message": "Kestrel detected a high-precision pathogenic variant with a flagged result.<br>Note: adVNTR genotyping was not performed.<br>It is recommended to perform adVNTR and validate the finding using orthogonal methods (e.g., SNaPshot, long-read sequencing).",
         },
         {
             "conditions": {
@@ -278,20 +301,75 @@ def filter_by_alt_values_and_finalize(rows, kestrel_config=None):
 
 
 def process_kestrel_vcf(vcf_file, kestrel_config=None):
+    config = kestrel_config or DEFAULT_KESTREL_CONFIG
     rows = read_vcf_without_comments(vcf_file)
     rows = split_depth_and_calculate_frame_score(rows)
     rows = split_frame_score(rows)
     rows = extract_frameshifts(rows)
-    rows = calculate_depth_score_and_assign_confidence(rows, kestrel_config)
-    rows = filter_by_alt_values_and_finalize(rows, kestrel_config)
+    rows = calculate_depth_score_and_assign_confidence(rows, config)
+    rows = filter_by_alt_values_and_finalize(rows, config)
+    rows = add_flags(
+        rows,
+        config.get("flagging_rules", {}),
+        duplicates_config=config.get("duplicate_flagging", {}),
+    )
     for row in rows:
         row["passes_vntyper_filters"] = (
             bool(row.get("is_valid_frameshift"))
             and bool(row.get("depth_confidence_pass"))
             and bool(row.get("alt_filter_pass"))
         )
-        row.setdefault("Flag", "Not flagged")
     return rows
+
+
+def regex_match(pattern, value):
+    try:
+        return re.search(pattern, str(value)) is not None
+    except re.error:
+        return False
+
+
+def evaluate_condition(row, condition):
+    env = {key: _condition_value(value) for key, value in row.items()}
+    env["regex_match"] = regex_match
+    try:
+        return bool(eval(condition, {"__builtins__": {}}, env))
+    except Exception:
+        return False
+
+
+def add_flags(rows, flagging_rules, duplicates_config=None):
+    out = []
+    for row in rows:
+        next_row = dict(row)
+        flags = []
+        for flag_name, condition in flagging_rules.items():
+            if evaluate_condition(next_row, condition):
+                flags.append(flag_name)
+        next_row["Flag"] = ", ".join(flags) if flags else "Not flagged"
+        out.append(next_row)
+    return mark_potential_duplicates(out, duplicates_config or {})
+
+
+def mark_potential_duplicates(rows, duplicates_config):
+    if not duplicates_config.get("enabled"):
+        return rows
+    flag_name = duplicates_config.get("flag_name", "Potential_Duplicate")
+    group_by = duplicates_config.get("group_by", [])
+    sort_by = duplicates_config.get("sort_by", [])
+    groups = {}
+    for idx, row in enumerate(rows):
+        key = tuple(row.get(column) for column in group_by)
+        groups.setdefault(key, []).append(idx)
+    out = [dict(row) for row in rows]
+    for indexes in groups.values():
+        if len(indexes) <= 1:
+            continue
+        ranked = sorted(indexes, key=lambda idx: _duplicate_sort_key(out[idx], sort_by))
+        for duplicate_idx in ranked[1:]:
+            existing = out[duplicate_idx].get("Flag", "Not flagged")
+            out[duplicate_idx]["Flag"] = flag_name if existing == "Not flagged" else f"{existing}, {flag_name}"
+    return out
 
 
 def build_report_json(
@@ -482,6 +560,30 @@ def best_kestrel_call(rows):
     if not rows:
         return None
     return sorted(rows, key=lambda row: _float(row.get("Depth_Score", 0)), reverse=True)[0]
+
+
+def _condition_value(value):
+    if value is None or value == "":
+        return None
+    return value
+
+
+def _duplicate_sort_key(row, sort_by):
+    key = []
+    for spec in sort_by:
+        value = row.get(spec.get("column"))
+        if spec.get("ascending", True):
+            key.append(value)
+        else:
+            key.append(_reverse_sort_value(value))
+    return tuple(key)
+
+
+def _reverse_sort_value(value):
+    try:
+        return -float(value)
+    except (TypeError, ValueError):
+        return "".join(chr(255 - ord(char)) for char in str(value))
 
 
 def _float(value):

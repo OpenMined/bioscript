@@ -62,7 +62,7 @@ class VntyperPortTests(unittest.TestCase):
         self.assertEqual(report["sample_name"], "fixture")
         self.assertTrue(report["coverage"]["quality_pass"])
         self.assertEqual(report["coverage"]["status"], "pass")
-        self.assertEqual(report["algorithm_results"]["kestrel"], "High_Precision")
+        self.assertEqual(report["algorithm_results"]["kestrel"], "High_Precision_flagged")
         self.assertEqual(report["algorithm_results"]["advntr"], "none")
         self.assertFalse(report["cross_match_summary"]["available"])
         self.assertIn("adVNTR genotyping was not performed", report["screening_summary"])
