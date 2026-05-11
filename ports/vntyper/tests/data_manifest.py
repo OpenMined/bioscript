@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import unittest
 from pathlib import Path
 
@@ -16,6 +17,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 UPSTREAM_CONFIG = ROOT / "ports" / "vntyper" / "vntyper" / "tests" / "test_data_config.json"
 DATA_ROOT = ROOT / "ports" / "vntyper" / "test-data"
+KESTREL_JAR = ROOT / "ports" / "vntyper" / "kestrel" / "kestrel.jar"
+EXPECTED_OUTPUT_ROOT = DATA_ROOT / "expected"
+EXPECTED_OUTPUTS = [
+    EXPECTED_OUTPUT_ROOT / "positive" / "kestrel" / "output.vcf",
+    EXPECTED_OUTPUT_ROOT / "positive" / "kestrel" / "kestrel_result.tsv",
+    EXPECTED_OUTPUT_ROOT / "negative" / "kestrel" / "output.vcf",
+    EXPECTED_OUTPUT_ROOT / "negative" / "kestrel" / "kestrel_result.tsv",
+]
 
 
 def require_test_data(check_md5=False):
@@ -36,6 +45,35 @@ def require_test_data(check_md5=False):
             f"{first['path']} expected {first['expected']} got {first['actual']}"
         )
     return result
+
+
+def require_full_pipeline_prerequisites():
+    """Skip full external pipeline tests unless tools, data, and expected outputs exist."""
+    manifest = require_test_data(check_md5=False)
+    missing = []
+    if shutil.which("samtools") is None:
+        missing.append("samtools on PATH")
+    if shutil.which("java") is None:
+        missing.append("java on PATH")
+    if not KESTREL_JAR.exists():
+        missing.append(str(KESTREL_JAR))
+    missing_outputs = [str(path) for path in EXPECTED_OUTPUTS if not path.exists()]
+    if missing_outputs:
+        preview = ", ".join(missing_outputs[:3])
+        remaining = len(missing_outputs) - min(len(missing_outputs), 3)
+        suffix = f", plus {remaining} more" if remaining else ""
+        missing.append(f"expected pipeline outputs: {preview}{suffix}")
+    if missing:
+        raise unittest.SkipTest(
+            "VNtyper full pipeline prerequisites are missing: " + "; ".join(missing)
+        )
+    return {
+        "manifest": manifest,
+        "samtools": shutil.which("samtools"),
+        "java": shutil.which("java"),
+        "kestrel_jar": str(KESTREL_JAR),
+        "expected_outputs": [str(path) for path in EXPECTED_OUTPUTS],
+    }
 
 
 def load_manifest():
