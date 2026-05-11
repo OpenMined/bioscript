@@ -18,6 +18,7 @@ pub struct ActiveRegionDetectorConfig {
     pub decay_alpha: f32,
     pub peak_scan_length: usize,
     pub scan_limit_factor: f32,
+    pub max_gap_size: usize,
     pub recover_right_anchor: bool,
     pub call_ambiguous_regions: bool,
 }
@@ -33,6 +34,7 @@ impl Default for ActiveRegionDetectorConfig {
             decay_alpha: 0.80,
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
+            max_gap_size: 0,
             recover_right_anchor: true,
             call_ambiguous_regions: true,
         }
@@ -235,7 +237,7 @@ pub fn scan_limit_length(
 ) -> LibResult<usize> {
     validate_scan_limit(config)?;
     let scaled = (config.scan_limit_factor * kmer_size as f32) as usize;
-    Ok(kmer_size.max(scaled))
+    Ok(kmer_size.max(config.max_gap_size.saturating_add(scaled)))
 }
 
 fn validate_config(config: &ActiveRegionDetectorConfig) -> LibResult<()> {

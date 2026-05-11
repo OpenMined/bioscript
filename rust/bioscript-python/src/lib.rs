@@ -93,6 +93,7 @@ fn kestrel_call_sequences_native(
     decay_alpha: Option<f32>,
     peak_scan_length: Option<usize>,
     scan_limit_factor: Option<f32>,
+    max_gap_size: Option<usize>,
     recover_right_anchor: Option<bool>,
     call_ambiguous_regions: Option<bool>,
     min_kmer_count: Option<u32>,
@@ -115,6 +116,7 @@ fn kestrel_call_sequences_native(
         decay_alpha: decay_alpha.unwrap_or(0.80),
         peak_scan_length: peak_scan_length.unwrap_or(7),
         scan_limit_factor: scan_limit_factor.unwrap_or(7.0),
+        max_gap_size: max_gap_size.unwrap_or(0),
         recover_right_anchor: recover_right_anchor.unwrap_or(true),
         call_ambiguous_regions: call_ambiguous_regions.unwrap_or(true),
     };
@@ -159,6 +161,7 @@ fn kestrel_call_fastq_native(
     decay_alpha: Option<f32>,
     peak_scan_length: Option<usize>,
     scan_limit_factor: Option<f32>,
+    max_gap_size: Option<usize>,
     recover_right_anchor: Option<bool>,
     call_ambiguous_regions: Option<bool>,
     min_kmer_count: Option<u32>,
@@ -181,6 +184,7 @@ fn kestrel_call_fastq_native(
         decay_alpha: decay_alpha.unwrap_or(0.80),
         peak_scan_length: peak_scan_length.unwrap_or(7),
         scan_limit_factor: scan_limit_factor.unwrap_or(7.0),
+        max_gap_size: max_gap_size.unwrap_or(0),
         recover_right_anchor: recover_right_anchor.unwrap_or(true),
         call_ambiguous_regions: call_ambiguous_regions.unwrap_or(true),
     };

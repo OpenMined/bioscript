@@ -515,6 +515,7 @@ fn kestrel_native_active_region_detector_finds_depth_drop_candidates() {
         decay_alpha: 0.80,
         peak_scan_length: 7,
         scan_limit_factor: 7.0,
+        max_gap_size: 0,
         recover_right_anchor: true,
         call_ambiguous_regions: true,
     };
@@ -549,6 +550,7 @@ fn kestrel_native_active_region_detector_emits_right_open_candidates() {
         decay_alpha: 0.80,
         peak_scan_length: 7,
         scan_limit_factor: 7.0,
+        max_gap_size: 0,
         recover_right_anchor: true,
         call_ambiguous_regions: true,
     };
@@ -583,6 +585,7 @@ fn kestrel_native_active_region_detector_respects_anchor_both_ends() {
             decay_alpha: 0.80,
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
+            max_gap_size: 0,
             recover_right_anchor: true,
             call_ambiguous_regions: true,
         },
@@ -610,6 +613,7 @@ fn kestrel_native_active_region_detector_emits_left_open_candidates() {
             decay_alpha: 0.80,
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
+            max_gap_size: 0,
             recover_right_anchor: true,
             call_ambiguous_regions: true,
         },
@@ -656,6 +660,7 @@ fn kestrel_native_active_region_detector_scans_past_short_peaks() {
             decay_alpha: 0.80,
             peak_scan_length: 0,
             scan_limit_factor: 7.0,
+            max_gap_size: 0,
             recover_right_anchor: true,
             call_ambiguous_regions: true,
         },
@@ -676,6 +681,7 @@ fn kestrel_native_active_region_detector_scans_past_short_peaks() {
             decay_alpha: 0.80,
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
+            max_gap_size: 0,
             recover_right_anchor: true,
             call_ambiguous_regions: true,
         },
@@ -705,11 +711,23 @@ fn kestrel_native_active_region_detector_discards_over_limit_scans() {
         decay_alpha: 0.80,
         peak_scan_length: 0,
         scan_limit_factor: 1.0,
+        max_gap_size: 0,
         recover_right_anchor: true,
         call_ambiguous_regions: true,
     };
 
     assert_eq!(scan_limit_length(4, &config).unwrap(), 4);
+    assert_eq!(
+        scan_limit_length(
+            4,
+            &ActiveRegionDetectorConfig {
+                max_gap_size: 3,
+                ..config.clone()
+            }
+        )
+        .unwrap(),
+        7
+    );
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
     assert!(detection.regions.is_empty());
 
@@ -718,6 +736,7 @@ fn kestrel_native_active_region_detector_discards_over_limit_scans() {
             4,
             &ActiveRegionDetectorConfig {
                 scan_limit_factor: f32::INFINITY,
+                max_gap_size: 0,
                 recover_right_anchor: true,
                 call_ambiguous_regions: true,
                 ..config
@@ -750,6 +769,7 @@ fn kestrel_native_active_region_detector_recovers_right_anchor() {
         decay_alpha: 0.80,
         peak_scan_length: 0,
         scan_limit_factor: 7.0,
+        max_gap_size: 0,
         recover_right_anchor: true,
         call_ambiguous_regions: true,
     };
@@ -797,6 +817,7 @@ fn kestrel_native_active_region_detector_skips_left_peak() {
         decay_alpha: 0.80,
         peak_scan_length: 7,
         scan_limit_factor: 7.0,
+        max_gap_size: 0,
         recover_right_anchor: true,
         call_ambiguous_regions: true,
     };
@@ -834,6 +855,7 @@ fn kestrel_native_active_region_detector_limits_left_open_scans() {
         decay_alpha: 0.80,
         peak_scan_length: 0,
         scan_limit_factor: 1.0,
+        max_gap_size: 0,
         recover_right_anchor: true,
         call_ambiguous_regions: true,
     };
@@ -846,6 +868,7 @@ fn kestrel_native_active_region_detector_limits_left_open_scans() {
         &counts,
         &ActiveRegionDetectorConfig {
             scan_limit_factor: 7.0,
+            max_gap_size: 0,
             ..config
         },
     )
@@ -883,6 +906,7 @@ fn kestrel_native_active_region_detector_discards_left_scan_recovery_before_left
             decay_alpha: 0.80,
             peak_scan_length: 0,
             scan_limit_factor: 7.0,
+            max_gap_size: 0,
             recover_right_anchor: true,
             call_ambiguous_regions: true,
         },
@@ -920,6 +944,7 @@ fn kestrel_native_active_region_detector_honors_ambiguous_region_flag() {
         decay_alpha: 0.80,
         peak_scan_length: 7,
         scan_limit_factor: 7.0,
+        max_gap_size: 0,
         recover_right_anchor: true,
         call_ambiguous_regions: true,
     };
@@ -968,6 +993,7 @@ fn kestrel_native_recovery_threshold_matches_java_decay_shape() {
         decay_alpha: 0.80,
         peak_scan_length: 7,
         scan_limit_factor: 7.0,
+        max_gap_size: 0,
         recover_right_anchor: true,
         call_ambiguous_regions: true,
         ..ActiveRegionDetectorConfig::default()
@@ -1185,6 +1211,7 @@ fn kestrel_native_sequences_engine_counts_detects_assembles_and_writes_vcf() {
             decay_alpha: 0.80,
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
+            max_gap_size: 0,
             recover_right_anchor: true,
             call_ambiguous_regions: true,
         },
@@ -1234,6 +1261,7 @@ fn kestrel_native_fastq_engine_counts_detects_assembles_and_writes_vcf() {
             decay_alpha: 0.80,
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
+            max_gap_size: 0,
             recover_right_anchor: true,
             call_ambiguous_regions: true,
         },
