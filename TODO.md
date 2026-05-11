@@ -151,7 +151,10 @@ surface requires it.
       detection, graph haplotype assembly, alignment, variant calling, and VCF
       writing together for small synthetic fixtures, and
       `bioscript.kestrel.call_sequences_native` exposes that path through the
-      Python wrapper/PyO3 layer. The remaining work is the full Java
+      Python wrapper/PyO3 layer. `call_fastq_paths_to_vcf` and
+      `bioscript.kestrel.call_fastq_native` extend the same native caller to
+      FASTQ inputs produced by the BioScript samtools extraction path. The
+      remaining work is the full Java
       active-region detector heuristics, richer state trimming and repeat
       handling in Kestrel's haplotype builder, and parity against Java Kestrel
       outputs on VNtyper fixtures.

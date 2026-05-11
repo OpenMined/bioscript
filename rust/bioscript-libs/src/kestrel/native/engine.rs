@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::LibResult;
 
 use super::{
@@ -87,10 +89,44 @@ pub fn call_sequences_to_vcf<'a>(
     call_config: &NativeKestrelCallConfig,
 ) -> LibResult<String> {
     let counts = KmerCountMap::from_sequences(read_sequences, kmer_size)?;
-    let detection = detect_active_regions(region, &counts, detector_config)?;
+    call_counted_kmers_to_vcf(
+        region,
+        &counts,
+        detector_config,
+        assembly_config,
+        call_config,
+    )
+}
+
+pub fn call_fastq_paths_to_vcf<'a>(
+    region: &ReferenceRegion,
+    fastq_paths: impl IntoIterator<Item = &'a Path>,
+    kmer_size: usize,
+    detector_config: &ActiveRegionDetectorConfig,
+    assembly_config: &HaplotypeAssemblyConfig,
+    call_config: &NativeKestrelCallConfig,
+) -> LibResult<String> {
+    let counts = KmerCountMap::from_fastq_paths(fastq_paths, kmer_size)?;
+    call_counted_kmers_to_vcf(
+        region,
+        &counts,
+        detector_config,
+        assembly_config,
+        call_config,
+    )
+}
+
+pub fn call_counted_kmers_to_vcf(
+    region: &ReferenceRegion,
+    counts: &KmerCountMap,
+    detector_config: &ActiveRegionDetectorConfig,
+    assembly_config: &HaplotypeAssemblyConfig,
+    call_config: &NativeKestrelCallConfig,
+) -> LibResult<String> {
+    let detection = detect_active_regions(region, counts, detector_config)?;
     let mut writer = new_writer(region, call_config)?;
     for active_region in &detection.regions {
-        let haplotypes = assemble_haplotypes(active_region, &counts, assembly_config)?;
+        let haplotypes = assemble_haplotypes(active_region, counts, assembly_config)?;
         add_active_region_haplotypes(
             &mut writer,
             region,
