@@ -4,7 +4,9 @@ use bioscript_libs::{
     LibError, ModuleName, bcftools,
     kestrel::{
         KestrelRunConfig,
-        native::{KestrelVcfWriter, ReferenceSequence, VariantCall},
+        native::{
+            KestrelVcfWriter, NativeVariantCall, ReferenceRegion, ReferenceSequence, VariantCall,
+        },
     },
     pyfaidx::Fasta,
     pysam::{AlignedSegment, AlignmentFile},
@@ -282,6 +284,57 @@ fn kestrel_native_vcf_writer_matches_java_writer_surface() {
         )
     );
     assert!(writer.add_sample("bad sample").is_err());
+}
+
+#[test]
+fn kestrel_native_variants_use_java_vcf_normalization_rules() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "ACGTACGT".to_owned(),
+    };
+    let snp = NativeVariantCall::snp("sample1", 3, "G", "T", 4, 10)
+        .to_vcf_call(&region)
+        .unwrap();
+    assert_eq!(
+        (snp.pos, snp.ref_allele.as_str(), snp.alt_allele.as_str()),
+        (3, "G", "T")
+    );
+
+    let insertion = NativeVariantCall::insertion("sample1", 4, "AA", 5, 10)
+        .to_vcf_call(&region)
+        .unwrap();
+    assert_eq!(
+        (
+            insertion.pos,
+            insertion.ref_allele.as_str(),
+            insertion.alt_allele.as_str()
+        ),
+        (3, "G", "GAA")
+    );
+
+    let start_insertion = NativeVariantCall::insertion("sample1", 1, "TT", 5, 10)
+        .to_vcf_call(&region)
+        .unwrap();
+    assert_eq!(
+        (
+            start_insertion.pos,
+            start_insertion.ref_allele.as_str(),
+            start_insertion.alt_allele.as_str()
+        ),
+        (1, "A", "TTA")
+    );
+
+    let deletion = NativeVariantCall::deletion("sample1", 4, "TA", 6, 10)
+        .to_vcf_call(&region)
+        .unwrap();
+    assert_eq!(
+        (
+            deletion.pos,
+            deletion.ref_allele.as_str(),
+            deletion.alt_allele.as_str()
+        ),
+        (3, "GTA", "G")
+    );
 }
 
 #[test]

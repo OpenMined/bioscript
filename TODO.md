@@ -127,9 +127,11 @@ surface requires it.
       The first native surface now exists in
       `rust/bioscript-libs/src/kestrel/native.rs`: a Rust Kestrel VCF writer
       model that mirrors the Java `writer.vcf` headers, FORMAT fields,
-      multi-sample genotype/depth fields, validation, and record ordering. The
-      remaining work is the actual k-mer counting, active-region detection,
-      haplotype alignment, and variant-calling engine.
+      multi-sample genotype/depth fields, validation, and record ordering.
+      Native SNP/insertion/deletion VCF normalization now mirrors the Java
+      `variant` package rules for VCF POS/REF/ALT anchoring against a reference
+      region. The remaining work is the actual k-mer counting, active-region
+      detection, haplotype alignment, and variant-calling engine.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
