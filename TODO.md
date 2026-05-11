@@ -136,8 +136,11 @@ surface requires it.
       sequence k-mers from in-memory strings, FASTQ, and FASTQ.gz inputs. The
       native `ActiveRegion` and `RegionStats` types now mirror the Java
       `activeregion` data model for anchor k-mers and percentile count
-      summaries. The remaining work is active-region detection, haplotype
-      alignment, and the full variant-calling engine.
+      summaries. A first native `detect_active_regions` candidate scanner now
+      computes reference k-mer counts and Java-shaped difference thresholds,
+      then emits anchored depth-drop regions for downstream haplotype work. The
+      remaining work is the full Java active-region detector heuristics,
+      haplotype alignment, and the full variant-calling engine.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in

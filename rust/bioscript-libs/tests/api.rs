@@ -5,8 +5,9 @@ use bioscript_libs::{
     kestrel::{
         KestrelRunConfig,
         native::{
-            ActiveRegion, KestrelVcfWriter, KmerCountMap, NativeVariantCall, ReferenceRegion,
-            ReferenceSequence, RegionStats, VariantCall, count_fastq_kmers, count_sequence_kmers,
+            ActiveRegion, ActiveRegionDetectorConfig, KestrelVcfWriter, KmerCountMap,
+            NativeVariantCall, ReferenceRegion, ReferenceSequence, RegionStats, VariantCall,
+            count_fastq_kmers, count_sequence_kmers, detect_active_regions, difference_threshold,
         },
     },
     pyfaidx::Fasta,
@@ -433,6 +434,62 @@ fn kestrel_native_active_region_tracks_anchors_and_stats() {
     assert_eq!(left_open.left_end_kmer, None);
 
     assert!(ActiveRegion::new(&region, Some(2), Some(2), &[5, 10, 20], 3).is_err());
+}
+
+#[test]
+fn kestrel_native_reference_counts_support_detector_inputs() {
+    let map = KmerCountMap::from_sequences(["AAAACCCCGGGGTTTT"], 4).unwrap();
+    assert_eq!(
+        map.reference_counts("AAAANCCCC", false).unwrap(),
+        vec![1, 0, 0, 0, 0, 1]
+    );
+
+    let reverse = KmerCountMap::from_sequences(["AAAA"], 4).unwrap();
+    assert_eq!(reverse.reference_counts("TTTT", true).unwrap(), vec![1]);
+}
+
+#[test]
+fn kestrel_native_active_region_detector_finds_depth_drop_candidates() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "AAAACCCCGGGGTTTT".to_owned(),
+    };
+    let counts = KmerCountMap::from_sequences(
+        [
+            "AAAA", "AAAC", "AACC", "ACCC", "GGGT", "GGTT", "GTTT", "TTTT",
+        ],
+        4,
+    )
+    .unwrap();
+    let config = ActiveRegionDetectorConfig {
+        minimum_difference: 1,
+        difference_quantile: 0.0,
+        count_reverse_kmers: false,
+    };
+
+    let detection = detect_active_regions(&region, &counts, &config).unwrap();
+    assert_eq!(detection.difference_threshold, 1);
+    assert_eq!(
+        detection.reference_counts,
+        vec![1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1]
+    );
+    assert_eq!(detection.regions.len(), 1);
+    let active = &detection.regions[0];
+    assert_eq!(active.start_kmer_index, 3);
+    assert_eq!(active.end_kmer_index, 9);
+    assert_eq!(active.left_end_kmer.as_deref(), Some("ACCC"));
+    assert_eq!(active.right_end_kmer.as_deref(), Some("GGGT"));
+}
+
+#[test]
+fn kestrel_native_difference_threshold_matches_java_quantile_shape() {
+    assert_eq!(
+        difference_threshold(&[10, 10, 1, 1, 10], 5, 0.90).unwrap(),
+        6
+    );
+    assert_eq!(difference_threshold(&[10, 10], 5, 0.90).unwrap(), 5);
+    assert!(difference_threshold(&[10, 10, 1], 0, 0.90).is_ok());
+    assert!(difference_threshold(&[10, 10, 1], 1, 1.0).is_err());
 }
 
 #[test]

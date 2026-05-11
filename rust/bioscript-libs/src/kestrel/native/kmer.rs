@@ -52,6 +52,35 @@ impl KmerCountMap {
     pub fn counts(&self) -> &BTreeMap<String, u32> {
         &self.counts
     }
+
+    pub fn reference_counts(
+        &self,
+        sequence: &str,
+        count_reverse_kmers: bool,
+    ) -> LibResult<Vec<u32>> {
+        validate_kmer_size(self.kmer_size)?;
+        let bases = normalize_sequence(sequence)?;
+        if bases.len() < self.kmer_size {
+            return Ok(Vec::new());
+        }
+        let mut counts = Vec::with_capacity(bases.len() - self.kmer_size + 1);
+        for window in bases.windows(self.kmer_size) {
+            if window.iter().any(|base| *base == b'N') {
+                counts.push(0);
+                continue;
+            }
+            let kmer = String::from_utf8(window.to_vec()).map_err(|err| {
+                LibError::InvalidArguments(format!("Kestrel k-mer is not valid UTF-8: {err}"))
+            })?;
+            let mut count = *self.counts.get(&kmer).unwrap_or(&0);
+            if count_reverse_kmers {
+                let revcomp = reverse_complement(window);
+                count += *self.counts.get(&revcomp).unwrap_or(&0);
+            }
+            counts.push(count);
+        }
+        Ok(counts)
+    }
 }
 
 pub fn count_sequence_kmers(sequence: &str, kmer_size: usize) -> LibResult<BTreeMap<String, u32>> {
@@ -202,6 +231,19 @@ fn normalize_sequence(sequence: &str) -> LibResult<Vec<u8>> {
         bases.push(normalized);
     }
     Ok(bases)
+}
+
+fn reverse_complement(kmer: &[u8]) -> String {
+    kmer.iter()
+        .rev()
+        .map(|base| match base {
+            b'A' => 'T',
+            b'C' => 'G',
+            b'G' => 'C',
+            b'T' => 'A',
+            _ => 'N',
+        })
+        .collect()
 }
 
 fn validate_kmer_size(kmer_size: usize) -> LibResult<()> {
