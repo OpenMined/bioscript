@@ -134,8 +134,10 @@ surface requires it.
       `native::{kmer, variant, vcf}` modules, and `native::KmerCountMap`
       provides the first `counter` package equivalent for counting canonical
       sequence k-mers from in-memory strings, FASTQ, and FASTQ.gz inputs. The
-      remaining work is active-region detection, haplotype alignment, and the
-      full variant-calling engine.
+      native `ActiveRegion` and `RegionStats` types now mirror the Java
+      `activeregion` data model for anchor k-mers and percentile count
+      summaries. The remaining work is active-region detection, haplotype
+      alignment, and the full variant-calling engine.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
