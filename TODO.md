@@ -192,7 +192,7 @@ surface requires it.
 
 ## Milestones
 
-- [ ] M1: Upstream source vendored and BioScript port skeleton committed.
+- [x] M1: Upstream source vendored and BioScript port skeleton committed.
 - [x] M2: Kestrel VCF post-processing works in BioScript from fixture VCFs.
 - [ ] M3: Confidence/depth/frame classification parity with upstream unit
       tests.
