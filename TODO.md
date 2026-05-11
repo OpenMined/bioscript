@@ -148,7 +148,10 @@ surface requires it.
       path. The right-scan peak detection heuristic is also partially ported:
       `peak_scan_length` controls stable-recovery scanning and short recovery
       spikes inside a low-count valley no longer prematurely terminate the
-      active region. The
+      active region. The native detector also exposes a Java-shaped
+      `scan_limit_factor` control; until alignment-weight max-gap parity is
+      implemented, BioScript uses `max(k, factor * k)` and discards candidate
+      right scans that exceed that limit. The
       native `align_haplotype` and `call_alignment_variants` helpers provide a
       first deterministic reference-vs-haplotype edit surface that emits
       SNP/insertion/deletion calls using the same native VCF normalization path.

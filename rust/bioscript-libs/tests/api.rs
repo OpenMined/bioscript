@@ -12,7 +12,7 @@ use bioscript_libs::{
             call_assembled_haplotypes_to_vcf, call_explicit_haplotypes_to_vcf,
             call_fastq_paths_to_vcf, call_sequences_to_vcf, count_fastq_kmers,
             count_sequence_kmers, detect_active_regions, difference_threshold,
-            read_reference_records, recovery_threshold, reference_kmers,
+            read_reference_records, recovery_threshold, reference_kmers, scan_limit_length,
         },
     },
     pyfaidx::Fasta,
@@ -514,6 +514,7 @@ fn kestrel_native_active_region_detector_finds_depth_drop_candidates() {
         decay_min: 1.0,
         decay_alpha: 0.80,
         peak_scan_length: 7,
+        scan_limit_factor: 7.0,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -545,6 +546,7 @@ fn kestrel_native_active_region_detector_emits_right_open_candidates() {
         decay_min: 1.0,
         decay_alpha: 0.80,
         peak_scan_length: 7,
+        scan_limit_factor: 7.0,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -576,6 +578,7 @@ fn kestrel_native_active_region_detector_respects_anchor_both_ends() {
             decay_min: 1.0,
             decay_alpha: 0.80,
             peak_scan_length: 7,
+            scan_limit_factor: 7.0,
         },
     )
     .unwrap();
@@ -600,6 +603,7 @@ fn kestrel_native_active_region_detector_emits_left_open_candidates() {
             decay_min: 1.0,
             decay_alpha: 0.80,
             peak_scan_length: 7,
+            scan_limit_factor: 7.0,
         },
     )
     .unwrap();
@@ -643,6 +647,7 @@ fn kestrel_native_active_region_detector_scans_past_short_peaks() {
             decay_min: 1.0,
             decay_alpha: 0.80,
             peak_scan_length: 0,
+            scan_limit_factor: 7.0,
         },
     )
     .unwrap();
@@ -660,6 +665,7 @@ fn kestrel_native_active_region_detector_scans_past_short_peaks() {
             decay_min: 1.0,
             decay_alpha: 0.80,
             peak_scan_length: 7,
+            scan_limit_factor: 7.0,
         },
     )
     .unwrap();
@@ -669,6 +675,40 @@ fn kestrel_native_active_region_detector_scans_past_short_peaks() {
     assert_eq!(active.end_kmer_index, 7);
     assert_eq!(active.left_end_kmer.as_deref(), Some("AAAA"));
     assert_eq!(active.right_end_kmer.as_deref(), Some("CGGG"));
+}
+
+#[test]
+fn kestrel_native_active_region_detector_discards_over_limit_scans() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "AAAACCCCGGGGTTTT".to_owned(),
+    };
+    let counts = KmerCountMap::from_sequences(["AAAA"], 4).unwrap();
+    let config = ActiveRegionDetectorConfig {
+        minimum_difference: 1,
+        difference_quantile: 0.0,
+        count_reverse_kmers: false,
+        anchor_both_ends: false,
+        decay_min: 1.0,
+        decay_alpha: 0.80,
+        peak_scan_length: 0,
+        scan_limit_factor: 1.0,
+    };
+
+    assert_eq!(scan_limit_length(4, &config).unwrap(), 4);
+    let detection = detect_active_regions(&region, &counts, &config).unwrap();
+    assert!(detection.regions.is_empty());
+
+    assert!(
+        scan_limit_length(
+            4,
+            &ActiveRegionDetectorConfig {
+                scan_limit_factor: f32::INFINITY,
+                ..config
+            }
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -697,6 +737,7 @@ fn kestrel_native_recovery_threshold_matches_java_decay_shape() {
         decay_min: 0.50,
         decay_alpha: 0.80,
         peak_scan_length: 7,
+        scan_limit_factor: 7.0,
         ..ActiveRegionDetectorConfig::default()
     };
     assert_eq!(
@@ -911,6 +952,7 @@ fn kestrel_native_sequences_engine_counts_detects_assembles_and_writes_vcf() {
             decay_min: 1.0,
             decay_alpha: 0.80,
             peak_scan_length: 7,
+            scan_limit_factor: 7.0,
         },
         &HaplotypeAssemblyConfig {
             min_kmer_count: 1,
@@ -957,6 +999,7 @@ fn kestrel_native_fastq_engine_counts_detects_assembles_and_writes_vcf() {
             decay_min: 1.0,
             decay_alpha: 0.80,
             peak_scan_length: 7,
+            scan_limit_factor: 7.0,
         },
         &HaplotypeAssemblyConfig {
             min_kmer_count: 1,
