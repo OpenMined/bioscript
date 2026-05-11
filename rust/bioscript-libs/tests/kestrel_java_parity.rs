@@ -13,8 +13,38 @@ const RUN_ENV: &str = "BIOSCRIPT_RUN_KESTREL_JAVA_PARITY";
 
 #[test]
 fn native_kestrel_fastq_output_matches_java_for_tiny_no_variant_fixture() {
+    let dir = parity_temp_dir("tiny-no-variant");
+    let (java_vcf, native_vcf) =
+        run_java_and_native(&dir, b"@r1\nAAAACCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n");
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
+#[test]
+fn native_kestrel_fastq_output_matches_java_for_tiny_snp_fixture() {
+    let dir = parity_temp_dir("tiny-snp");
+    let mut fastq = Vec::new();
+    for read_index in 1..=5 {
+        fastq.extend_from_slice(
+            format!("@r{read_index}\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n").as_bytes(),
+        );
+    }
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fastq);
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
+fn run_java_and_native(dir: &Path, fastq_contents: &[u8]) -> (String, String) {
     if std::env::var_os(RUN_ENV).is_none() {
-        return;
+        return (String::new(), String::new());
     }
 
     let jar = kestrel_jar();
@@ -26,15 +56,14 @@ fn native_kestrel_fastq_output_matches_java_for_tiny_no_variant_fixture() {
         jar.display()
     );
 
-    let dir = parity_temp_dir("tiny-no-variant");
-    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(dir).unwrap();
     let reference_path = dir.join("ref.fa");
     let fastq_path = dir.join("reads.fq");
     let java_vcf_path = dir.join("java.vcf");
     let java_sam_path = dir.join("java.sam");
 
     fs::write(&reference_path, b">MUC1\nAAAACCCCGGGGTTTT\n").unwrap();
-    fs::write(&fastq_path, b"@r1\nAAAACCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n").unwrap();
+    fs::write(&fastq_path, fastq_contents).unwrap();
 
     let status = Command::new("java")
         .arg("-Xmx512m")
@@ -107,11 +136,7 @@ fn native_kestrel_fastq_output_matches_java_for_tiny_no_variant_fixture() {
     )
     .unwrap();
 
-    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
-    assert_eq!(
-        header_without_source(&native_vcf),
-        header_without_source(&java_vcf)
-    );
+    (java_vcf, native_vcf)
 }
 
 fn kestrel_jar() -> PathBuf {
