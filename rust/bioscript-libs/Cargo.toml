@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bioscript-core = { path = "../bioscript-core" }
 bioscript-formats = { path = "../bioscript-formats" }
+flate2 = "1.1.9"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

@@ -130,8 +130,12 @@ surface requires it.
       multi-sample genotype/depth fields, validation, and record ordering.
       Native SNP/insertion/deletion VCF normalization now mirrors the Java
       `variant` package rules for VCF POS/REF/ALT anchoring against a reference
-      region. The remaining work is the actual k-mer counting, active-region
-      detection, haplotype alignment, and variant-calling engine.
+      region. The native Rust code has also been split into focused
+      `native::{kmer, variant, vcf}` modules, and `native::KmerCountMap`
+      provides the first `counter` package equivalent for counting canonical
+      sequence k-mers from in-memory strings, FASTQ, and FASTQ.gz inputs. The
+      remaining work is active-region detection, haplotype alignment, and the
+      full variant-calling engine.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
