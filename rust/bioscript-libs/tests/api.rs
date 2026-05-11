@@ -5,8 +5,8 @@ use bioscript_libs::{
     kestrel::{
         KestrelRunConfig,
         native::{
-            KestrelVcfWriter, KmerCountMap, NativeVariantCall, ReferenceRegion, ReferenceSequence,
-            VariantCall, count_fastq_kmers, count_sequence_kmers,
+            ActiveRegion, KestrelVcfWriter, KmerCountMap, NativeVariantCall, ReferenceRegion,
+            ReferenceSequence, RegionStats, VariantCall, count_fastq_kmers, count_sequence_kmers,
         },
     },
     pyfaidx::Fasta,
@@ -391,6 +391,48 @@ fn kestrel_native_kmer_count_map_reads_fastq_inputs() {
     assert_eq!(count_fastq_kmers(&plain_path, 3).unwrap().get("TTA"), None);
 
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn kestrel_native_region_stats_match_java_percentiles() {
+    let stats = RegionStats::from_counts(&[10, 4, 8, 2, 6], 0, 5).unwrap();
+    assert_eq!(stats.min, 2);
+    assert_eq!(stats.pct25, 4.0);
+    assert_eq!(stats.pct50, 6.0);
+    assert_eq!(stats.pct75, 8.0);
+    assert_eq!(stats.max, 10);
+    assert_eq!(stats.n, 5);
+
+    let interpolated = RegionStats::from_counts(&[10, 20, 30, 40], 0, 4).unwrap();
+    assert_eq!(interpolated.pct25, 17.5);
+    assert_eq!(interpolated.pct50, 25.0);
+    assert_eq!(interpolated.pct75, 32.5);
+    assert!(RegionStats::from_counts(&[1], 1, 1).is_err());
+}
+
+#[test]
+fn kestrel_native_active_region_tracks_anchors_and_stats() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "ACGTACGT".to_owned(),
+    };
+    let active = ActiveRegion::new(&region, Some(1), Some(4), &[5, 10, 20, 30, 40, 50], 3).unwrap();
+    assert_eq!(active.reference_name, "MUC1");
+    assert_eq!(active.start_index, 1);
+    assert_eq!(active.end_index, 6);
+    assert_eq!(active.left_end_kmer.as_deref(), Some("CGT"));
+    assert_eq!(active.right_end_kmer.as_deref(), Some("ACG"));
+    assert!(active.matches_left_end("CGT"));
+    assert!(active.matches_right_end("ACG"));
+    assert_eq!(active.stats.n, 3);
+    assert_eq!(active.stats.min, 10);
+    assert_eq!(active.stats.max, 30);
+
+    let left_open = ActiveRegion::new(&region, None, Some(3), &[5, 10, 20, 30, 40, 50], 3).unwrap();
+    assert!(left_open.left_end);
+    assert_eq!(left_open.left_end_kmer, None);
+
+    assert!(ActiveRegion::new(&region, Some(2), Some(2), &[5, 10, 20], 3).is_err());
 }
 
 #[test]
