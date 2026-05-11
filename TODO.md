@@ -165,9 +165,9 @@ surface requires it.
 - [ ] Add integration tests against `ports/vntyper/test-data` once copied:
       one positive BAM, one negative BAM, and one FASTQ pair if available.
       Current coverage plans commands for two representative BAMs and one FASTQ
-      pair, and a fake-runner test covers the BAM path materializing Kestrel
-      TSV/JSON outputs. Positive/negative labels still require expected
-      outputs.
+      pair, and a fake-runner test covers the BAM path running slice, index,
+      FASTQ extraction, depth, Kestrel, bcftools, and TSV/JSON materialization.
+      Positive/negative labels still require expected outputs.
 - [x] Run upstream VNtyper tests from the submodule as a reference check when
       Python dependencies and external tools are installed.
 - [x] Run BioScript tests without external tools by using fixed Kestrel VCF
