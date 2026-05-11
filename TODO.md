@@ -142,9 +142,11 @@ surface requires it.
       native `align_haplotype` and `call_alignment_variants` helpers provide a
       first deterministic reference-vs-haplotype edit surface that emits
       SNP/insertion/deletion calls using the same native VCF normalization path.
-      The remaining work is the full Java active-region detector heuristics,
-      Kestrel's graph/stateful haplotype builder, and the full variant-calling
-      engine.
+      `call_explicit_haplotypes_to_vcf` now ties explicit haplotype evidence to
+      the native aligner, variant caller, and VCF writer for an end-to-end
+      non-assembling caller path. The remaining work is the full Java
+      active-region detector heuristics, Kestrel's graph/stateful haplotype
+      builder, and parity against Java Kestrel outputs on VNtyper fixtures.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in

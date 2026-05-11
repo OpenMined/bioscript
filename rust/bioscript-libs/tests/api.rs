@@ -5,10 +5,11 @@ use bioscript_libs::{
     kestrel::{
         KestrelRunConfig,
         native::{
-            ActiveRegion, ActiveRegionDetectorConfig, AlignmentOp, KestrelVcfWriter, KmerCountMap,
-            NativeVariantCall, ReferenceRegion, ReferenceSequence, RegionStats, VariantCall,
-            align_haplotype, call_alignment_variants, count_fastq_kmers, count_sequence_kmers,
-            detect_active_regions, difference_threshold,
+            ActiveRegion, ActiveRegionDetectorConfig, AlignmentOp, HaplotypeEvidence,
+            KestrelVcfWriter, KmerCountMap, NativeKestrelCallConfig, NativeVariantCall,
+            ReferenceRegion, ReferenceSequence, RegionStats, VariantCall, align_haplotype,
+            call_alignment_variants, call_explicit_haplotypes_to_vcf, count_fastq_kmers,
+            count_sequence_kmers, detect_active_regions, difference_threshold,
         },
     },
     pyfaidx::Fasta,
@@ -541,6 +542,29 @@ fn kestrel_native_alignment_calls_native_variants() {
         ),
         (3, "G", "GT")
     );
+}
+
+#[test]
+fn kestrel_native_explicit_haplotype_engine_writes_vcf() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "ACGTAC".to_owned(),
+    };
+    let vcf = call_explicit_haplotypes_to_vcf(
+        &region,
+        &[HaplotypeEvidence {
+            sequence: "ATGTTAC".to_owned(),
+            variant_depth: 6,
+            locus_depth: 10,
+        }],
+        &NativeKestrelCallConfig::new("native", "sample1", "md5"),
+    )
+    .unwrap();
+
+    assert!(vcf.contains("##source=Kestrelnative\n"));
+    assert!(vcf.contains("##contig=<ID=MUC1,length=6,md5=md5>\n"));
+    assert!(vcf.contains("MUC1\t2\t.\tC\tT\t.\t.\t.\tGT:GDP:DP\t1:6:10\n"));
+    assert!(vcf.contains("MUC1\t3\t.\tG\tGT\t.\t.\t.\tGT:GDP:DP\t1:6:10\n"));
 }
 
 #[test]
