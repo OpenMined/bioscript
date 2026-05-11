@@ -170,6 +170,10 @@ fn candidate_regions(
                 index = next_index;
                 continue;
             }
+            if index > scan_limit_length(kmer_size, config)? {
+                index += 1;
+                continue;
+            }
             regions.push(ActiveRegion::new(
                 region,
                 None,
