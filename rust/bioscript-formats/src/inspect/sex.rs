@@ -285,6 +285,25 @@ fn update_genotype_text_stats(
     let rsid = row.rsid.as_deref().unwrap_or_default();
     let chrom = normalize_chrom(row.chrom.as_deref().unwrap_or_default());
     let genotype = row.genotype.as_str();
+    if chrom == "X" {
+        let Some(position) = row.position.and_then(|pos| u32::try_from(pos).ok()) else {
+            return Ok(());
+        };
+        if !is_non_par_x(position) || !is_called_genotype_text(genotype) {
+            return Ok(());
+        }
+        stats.x_non_par_sites += 1;
+        let allele_count = genotype_allele_count(genotype);
+        if allele_count == 1 {
+            stats.x_haploid_gt_sites += 1;
+        } else if allele_count == 2 {
+            stats.x_diploid_gt_sites += 1;
+            if is_genotype_text_het(genotype) {
+                stats.x_het_gt_sites += 1;
+            }
+        }
+        return Ok(());
+    }
     if chrom != "Y" {
         return Ok(());
     }
@@ -338,11 +357,18 @@ fn update_vcf_stats(stats: &mut SexStats, line: &str) {
 }
 
 fn normalize_chrom(value: &str) -> String {
-    value
+    let normalized = value
         .trim()
         .trim_start_matches("chr")
         .trim_start_matches("CHR")
-        .to_ascii_uppercase()
+        .to_ascii_uppercase();
+    match normalized.as_str() {
+        "23" => "X".to_owned(),
+        "24" => "Y".to_owned(),
+        "25" => "XY".to_owned(),
+        "26" | "M" => "MT".to_owned(),
+        _ => normalized,
+    }
 }
 
 fn is_called_genotype_text(value: &str) -> bool {
@@ -353,6 +379,22 @@ fn is_called_genotype_text(value: &str) -> bool {
     value
         .chars()
         .all(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
+}
+
+fn genotype_allele_count(value: &str) -> usize {
+    value
+        .chars()
+        .filter(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
+        .count()
+}
+
+fn is_genotype_text_het(value: &str) -> bool {
+    let alleles: Vec<char> = value
+        .chars()
+        .filter(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
+        .map(|ch| ch.to_ascii_uppercase())
+        .collect();
+    alleles.len() == 2 && alleles[0] != alleles[1]
 }
 
 fn is_called_vcf_gt(value: &str) -> bool {
@@ -458,6 +500,44 @@ mod tests {
         assert_eq!(result.sex, InferredSex::Female);
         assert_eq!(result.confidence, SexDetectionConfidence::High);
         assert!(result.evidence.iter().any(|item| item == "called_y_snps=0"));
+    }
+
+    #[test]
+    fn snp_array_numeric_x_and_y_chromosomes_feed_sex_inference() {
+        let mut lines = vec!["rsid\tchromosome\tposition\tallele1\tallele2".to_owned()];
+        lines.extend((0..2000).map(|idx| {
+            let (a, b) = if idx % 4 == 0 { ("A", "G") } else { ("A", "A") };
+            format!("rsX{idx}\t23\t{}\t{a}\t{b}", 3_000_000 + idx)
+        }));
+        lines.extend((0..1000).map(|idx| format!("rsY{idx}\t24\t{}\t0\t0", 3_000_000 + idx)));
+
+        let result = infer_sex_from_text_lines(&lines, DetectedKind::GenotypeText).unwrap();
+        assert_eq!(result.sex, InferredSex::Female);
+        assert_eq!(result.confidence, SexDetectionConfidence::Medium);
+        assert_eq!(result.method, "snp_array_x_y_fingerprint");
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "x_het_gt_sites=500")
+        );
+    }
+
+    #[test]
+    fn snp_array_haploid_non_par_x_detects_male_without_y_rows() {
+        let mut lines = vec!["rsid\tchromosome\tposition\tgenotype".to_owned()];
+        lines.extend((0..2000).map(|idx| format!("rsX{idx}\tX\t{}\tA", 3_000_000 + idx)));
+        lines.extend((0..20).map(|idx| format!("rsDiploidTail{idx}\tX\t{}\tAG", 4_000_000 + idx)));
+
+        let result = infer_sex_from_text_lines(&lines, DetectedKind::GenotypeText).unwrap();
+        assert_eq!(result.sex, InferredSex::Male);
+        assert_eq!(result.confidence, SexDetectionConfidence::Medium);
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "x_haploid_gt_sites=2000")
+        );
     }
 
     #[test]
