@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from bioscript import kestrel
+from bioscript import kestrel, samtools
 
 try:
     from . import vntyper_commands, vntyper_port
@@ -62,6 +62,8 @@ def run_bam_pipeline(
     muc1_reference: str = vntyper_commands.DEFAULT_MUC1_REFERENCE,
     dry_run: bool = False,
     runner: Runner | None = None,
+    use_native_samtools: bool = False,
+    native_samtools: object | None = None,
 ) -> ExternalPipelineResult:
     out_dir = Path(output_dir)
     plan = vntyper_commands.plan_bam_pipeline(
@@ -73,15 +75,11 @@ def run_bam_pipeline(
         kestrel_jar=kestrel_jar,
         muc1_reference=muc1_reference,
     )
-    commands = [
-        plan.samtools_view_command,
-        plan.samtools_index_command,
-        plan.samtools_fastq_command,
-        plan.samtools_depth_command,
-        plan.kestrel_command,
-        plan.bcftools_sort_command,
-        plan.bcftools_index_command,
-    ]
+    commands = (
+        native_samtools_commands(input_bam, plan)
+        if use_native_samtools
+        else external_commands(plan)
+    )
 
     result = ExternalPipelineResult(
         participant_id=plan.participant_id,
@@ -96,15 +94,85 @@ def run_bam_pipeline(
 
     create_output_dirs(result, plan)
     command_runner = runner or subprocess.run
-    depth_output = ""
-    for command in commands:
-        if command == plan.samtools_depth_command:
-            completed = command_runner(command, check=True, capture_output=True, text=True)
-            depth_output = getattr(completed, "stdout", "") or ""
-        else:
-            command_runner(command, check=True)
-    materialize_post_kestrel_outputs(result, input_bam, assembly, coverage_from_depth(depth_output))
+    if use_native_samtools:
+        backend = native_samtools or samtools
+        index = default_bam_index(input_bam)
+        backend.view_region_native(input_bam, plan.bam_region, plan.sliced_bam, index=index)
+        backend.fastq_native(input_bam, plan.bam_region, plan.fastq_1, plan.fastq_2, index=index)
+        coverage = backend.depth_native(input_bam, plan.vntr_region, index=index)
+        command_runner(plan.kestrel_command, check=True)
+        materialize_post_kestrel_outputs(
+            result,
+            input_bam,
+            assembly,
+            coverage,
+            alignment_pipeline="native bioscript samtools/kestrel",
+        )
+    else:
+        depth_output = ""
+        for command in commands:
+            if command == plan.samtools_depth_command:
+                completed = command_runner(command, check=True, capture_output=True, text=True)
+                depth_output = getattr(completed, "stdout", "") or ""
+            else:
+                command_runner(command, check=True)
+        materialize_post_kestrel_outputs(
+            result,
+            input_bam,
+            assembly,
+            coverage_from_depth(depth_output),
+        )
     return result
+
+
+def external_commands(plan: vntyper_commands.VntyperCommandPlan) -> list[list[str]]:
+    return [
+        plan.samtools_view_command,
+        plan.samtools_index_command,
+        plan.samtools_fastq_command,
+        plan.samtools_depth_command,
+        plan.kestrel_command,
+        plan.bcftools_sort_command,
+        plan.bcftools_index_command,
+    ]
+
+
+def native_samtools_commands(
+    input_bam: str,
+    plan: vntyper_commands.VntyperCommandPlan,
+) -> list[list[str]]:
+    index = default_bam_index(input_bam)
+    return [
+        [
+            "bioscript.samtools.view_region_native",
+            input_bam,
+            plan.bam_region,
+            plan.sliced_bam,
+            "--index",
+            index,
+        ],
+        [
+            "bioscript.samtools.fastq_native",
+            input_bam,
+            plan.bam_region,
+            plan.fastq_1,
+            plan.fastq_2,
+            "--index",
+            index,
+        ],
+        [
+            "bioscript.samtools.depth_native",
+            input_bam,
+            plan.vntr_region,
+            "--index",
+            index,
+        ],
+        plan.kestrel_command,
+    ]
+
+
+def default_bam_index(input_bam: str) -> str:
+    return f"{input_bam}.bai"
 
 
 def run_fastq_kestrel(

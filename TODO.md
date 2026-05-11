@@ -171,6 +171,9 @@ surface requires it.
       Current coverage plans commands for two representative BAMs and one FASTQ
       pair, and a fake-runner test covers the BAM path running slice, index,
       FASTQ extraction, depth, Kestrel, bcftools, and TSV/JSON materialization.
+      A second fake-runner path now covers native BioScript samtools slice,
+      FASTQ extraction, and depth followed by Kestrel without requiring
+      bcftools.
       FASTQ-backed Kestrel expected outputs are gated by
       `test_fastq_expected_outputs.py`; true positive/negative BAM labels still
       need validation against upstream expected results.
@@ -231,10 +234,10 @@ surface requires it.
 - [ ] M6: Structured report JSON parity for the minimal BAM/Kestrel path.
       Fake-runner coverage now captures `samtools depth -a` output and feeds
       mean/median/stdev/min/max/uncovered-base fields into the structured JSON;
-      FASTQ-backed Kestrel reports are now generated locally. Real
-      BAM/Kestrel parity still needs the BAM-native FASTQ extraction path wired
-      into the runner and either bcftools availability or native VCF
-      sort/index behavior.
+      FASTQ-backed Kestrel reports are now generated locally, and the runner
+      can use native BioScript samtools wrappers before Kestrel. Real
+      BAM/Kestrel parity still needs validation against copied positive and
+      negative BAM expected labels.
 - [x] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
       logs.
 - [x] M8: FASTQ path works using external fastp/bwa or documented prealigned
