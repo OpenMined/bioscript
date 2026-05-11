@@ -145,7 +145,10 @@ surface requires it.
       active regions when unanchored ends are explicitly allowed. Java's
       exponential recovery-threshold shape is now implemented with `decay_min`
       and `decay_alpha` controls and exposed through the native/Python wrapper
-      path. The
+      path. The right-scan peak detection heuristic is also partially ported:
+      `peak_scan_length` controls stable-recovery scanning and short recovery
+      spikes inside a low-count valley no longer prematurely terminate the
+      active region. The
       native `align_haplotype` and `call_alignment_variants` helpers provide a
       first deterministic reference-vs-haplotype edit surface that emits
       SNP/insertion/deletion calls using the same native VCF normalization path.

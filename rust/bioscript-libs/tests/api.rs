@@ -513,6 +513,7 @@ fn kestrel_native_active_region_detector_finds_depth_drop_candidates() {
         anchor_both_ends: true,
         decay_min: 1.0,
         decay_alpha: 0.80,
+        peak_scan_length: 7,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -543,6 +544,7 @@ fn kestrel_native_active_region_detector_emits_right_open_candidates() {
         anchor_both_ends: false,
         decay_min: 1.0,
         decay_alpha: 0.80,
+        peak_scan_length: 7,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -573,6 +575,7 @@ fn kestrel_native_active_region_detector_respects_anchor_both_ends() {
             anchor_both_ends: true,
             decay_min: 1.0,
             decay_alpha: 0.80,
+            peak_scan_length: 7,
         },
     )
     .unwrap();
@@ -596,6 +599,7 @@ fn kestrel_native_active_region_detector_emits_left_open_candidates() {
             anchor_both_ends: false,
             decay_min: 1.0,
             decay_alpha: 0.80,
+            peak_scan_length: 7,
         },
     )
     .unwrap();
@@ -610,6 +614,61 @@ fn kestrel_native_active_region_detector_emits_left_open_candidates() {
     assert_eq!(active.left_end_kmer, None);
     assert_eq!(active.right_end_kmer.as_deref(), Some("GGGT"));
     assert_eq!(active.end_kmer_index, 9);
+}
+
+#[test]
+fn kestrel_native_active_region_detector_scans_past_short_peaks() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "AAAACCCCGGGGTTTT".to_owned(),
+    };
+    let mut read_kmers = Vec::new();
+    for kmer in [
+        "AAAA", "ACCC", "CGGG", "GGGG", "GGGT", "GGTT", "GTTT", "TTTT",
+    ] {
+        for _ in 0..5 {
+            read_kmers.push(kmer);
+        }
+    }
+    let counts = KmerCountMap::from_sequences(read_kmers, 4).unwrap();
+
+    let without_peak_scan = detect_active_regions(
+        &region,
+        &counts,
+        &ActiveRegionDetectorConfig {
+            minimum_difference: 1,
+            difference_quantile: 0.0,
+            count_reverse_kmers: false,
+            anchor_both_ends: true,
+            decay_min: 1.0,
+            decay_alpha: 0.80,
+            peak_scan_length: 0,
+        },
+    )
+    .unwrap();
+    assert_eq!(without_peak_scan.regions.len(), 1);
+    assert_eq!(without_peak_scan.regions[0].start_kmer_index, 3);
+
+    let with_peak_scan = detect_active_regions(
+        &region,
+        &counts,
+        &ActiveRegionDetectorConfig {
+            minimum_difference: 1,
+            difference_quantile: 0.0,
+            count_reverse_kmers: false,
+            anchor_both_ends: true,
+            decay_min: 1.0,
+            decay_alpha: 0.80,
+            peak_scan_length: 7,
+        },
+    )
+    .unwrap();
+    assert_eq!(with_peak_scan.regions.len(), 1);
+    let active = &with_peak_scan.regions[0];
+    assert_eq!(active.start_kmer_index, 0);
+    assert_eq!(active.end_kmer_index, 7);
+    assert_eq!(active.left_end_kmer.as_deref(), Some("AAAA"));
+    assert_eq!(active.right_end_kmer.as_deref(), Some("CGGG"));
 }
 
 #[test]
@@ -637,6 +696,7 @@ fn kestrel_native_recovery_threshold_matches_java_decay_shape() {
     let decayed = ActiveRegionDetectorConfig {
         decay_min: 0.50,
         decay_alpha: 0.80,
+        peak_scan_length: 7,
         ..ActiveRegionDetectorConfig::default()
     };
     assert_eq!(
@@ -850,6 +910,7 @@ fn kestrel_native_sequences_engine_counts_detects_assembles_and_writes_vcf() {
             anchor_both_ends: true,
             decay_min: 1.0,
             decay_alpha: 0.80,
+            peak_scan_length: 7,
         },
         &HaplotypeAssemblyConfig {
             min_kmer_count: 1,
@@ -895,6 +956,7 @@ fn kestrel_native_fastq_engine_counts_detects_assembles_and_writes_vcf() {
             anchor_both_ends: true,
             decay_min: 1.0,
             decay_alpha: 0.80,
+            peak_scan_length: 7,
         },
         &HaplotypeAssemblyConfig {
             min_kmer_count: 1,
