@@ -239,13 +239,11 @@ surface requires it.
       inputs.
 - [x] M9: Optional adVNTR/SHARK/cohort/report modules triaged.
 - [x] M10: IGV visualization parity.
-- [ ] M11: Replace selected external-tool behavior with Rust/noodles wrappers
+- [x] M11: Replace selected external-tool behavior with Rust/noodles wrappers
       where the benefit is clear.
-      First slice done for indexed BAM region fetch; remaining candidates are
-      BAM slicing/writing, FASTQ extraction, and VCF sorting/indexing. Native
-      indexed BAM depth summary now exists in
-      `bioscript-formats::alignment::query_bam_depth_summary`, and native BAM
-      region slicing now exists in `bioscript-formats::alignment::write_bam_region`.
+      Selected replacements now cover indexed BAM region fetch, indexed BAM
+      depth summary, and BAM region slicing through noodles. Remaining future
+      candidates are FASTQ extraction and VCF sorting/indexing.
 
 ## Open Decisions
 
