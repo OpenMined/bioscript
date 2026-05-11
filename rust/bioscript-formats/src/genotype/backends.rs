@@ -22,11 +22,18 @@ impl RsidMapBackend {
     ) -> Result<VariantObservation, RuntimeError> {
         for rsid in &variant.rsids {
             if let Some(value) = self.values.get(rsid) {
+                let mut evidence = vec![format!("resolved by rsid {rsid}")];
+                // Mirror DelimitedBackend's `| source line: …` evidence so
+                // wasm-side from_bytes loads produce byte-identical reports
+                // to the CLI's path-backed DelimitedBackend.
+                if let Some(source) = self.source_lines.get(rsid) {
+                    evidence.push(format!("source line: {source}"));
+                }
                 return Ok(VariantObservation {
                     backend: self.backend_name().to_owned(),
                     matched_rsid: Some(rsid.clone()),
                     genotype: Some(value.clone()),
-                    evidence: vec![format!("resolved by rsid {rsid}")],
+                    evidence,
                     ..VariantObservation::default()
                 });
             }

@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader},
     path::Path,
 };
 
@@ -94,24 +94,6 @@ pub(crate) fn read_lines_from_reader<R: BufRead>(
         lines.push(buf.trim_end_matches(['\n', '\r']).to_owned());
     }
     Ok(lines)
-}
-
-pub(crate) fn read_zip_entry_limited<R: Read>(
-    reader: &mut R,
-    max_bytes: u64,
-    label: &str,
-) -> Result<Vec<u8>, RuntimeError> {
-    let mut contents = Vec::new();
-    reader
-        .take(max_bytes.saturating_add(1))
-        .read_to_end(&mut contents)
-        .map_err(|err| RuntimeError::Io(format!("failed to read {label}: {err}")))?;
-    if u64::try_from(contents.len()).unwrap_or(u64::MAX) > max_bytes {
-        return Err(RuntimeError::InvalidArguments(format!(
-            "{label} exceeds decompressed limit of {max_bytes} bytes"
-        )));
-    }
-    Ok(contents)
 }
 
 pub(crate) fn detect_source_format(

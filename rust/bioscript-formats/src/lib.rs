@@ -15,11 +15,13 @@ mod prepare;
 
 pub use genotype::{
     BackendCapabilities, GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind,
-    imputed_reference_observation, observe_cram_indel_with_reader, observe_cram_snp_with_reader,
-    observe_vcf_snp_with_reader, observe_vcf_variant_with_reader,
+    choose_variant_locus_for_assembly, imputed_reference_observation,
+    observe_cram_indel_with_reader, observe_cram_snp_with_reader, observe_vcf_snp_with_reader,
+    observe_vcf_variant_with_reader,
 };
 pub use inspect::{
     DetectedKind, DetectionConfidence, FileContainer, FileInspection, InferredSex, InspectOptions,
-    SexDetectionConfidence, SexInference, SourceMetadata, inspect_bytes, inspect_file,
+    SexDetectionConfidence, SexInference, SourceMetadata, infer_sex_from_alignment_reader,
+    infer_sex_from_text_lines, inspect_bytes, inspect_file,
 };
 pub use prepare::{PrepareRequest, PreparedPaths, prepare_indexes, shell_flags};

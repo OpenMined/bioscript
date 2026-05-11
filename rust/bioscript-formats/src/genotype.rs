@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufReader, Cursor},
+    io::{BufRead, BufReader, Cursor},
     path::Path,
 };
 
@@ -16,6 +16,7 @@ mod common;
 mod cram_backend;
 mod delimited;
 mod io;
+mod loaders;
 mod types;
 mod vcf;
 mod vcf_tokens;
@@ -32,7 +33,7 @@ use cram_backend::{
 };
 pub use cram_backend::{observe_cram_indel_with_reader, observe_cram_snp_with_reader};
 pub(crate) use delimited::{
-    DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row,
+    COMMENT_PREFIXES, DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row,
 };
 #[cfg(test)]
 use delimited::{GENOTYPE_ALIASES, split_csv_line, strip_bom, strip_inline_comment};
@@ -44,30 +45,26 @@ use delimited::{
 };
 #[cfg(test)]
 use io::looks_like_vcf_lines;
-use io::{
-    detect_source_format, is_bgzf_path, read_lines_from_reader, read_zip_entry_limited,
-    select_zip_entry,
-};
+use io::{detect_source_format, is_bgzf_path, read_lines_from_reader, select_zip_entry};
 pub use types::{
     BackendCapabilities, GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind,
 };
 use types::{CramBackend, DelimitedBackend, QueryBackend, RsidMapBackend, VcfBackend};
+pub use vcf::{
+    choose_variant_locus_for_assembly, imputed_reference_observation, observe_vcf_snp_with_reader,
+    observe_vcf_variant_with_reader,
+};
 #[cfg(test)]
 use vcf::{
-    choose_variant_locus_for_assembly, detect_vcf_assembly, extract_vcf_sample_genotype,
-    normalize_chromosome_name, parse_vcf_record, vcf_row_matches_variant,
-};
-pub use vcf::{
-    imputed_reference_observation, observe_vcf_snp_with_reader, observe_vcf_variant_with_reader,
+    detect_vcf_assembly, extract_vcf_sample_genotype, normalize_chromosome_name, parse_vcf_record,
+    vcf_row_matches_variant,
 };
 use vcf::{lookup_indexed_vcf_variants, scan_vcf_variants};
-use vcf_tokens::genotype_from_vcf_gt;
+pub(crate) use vcf_tokens::genotype_from_vcf_gt;
 #[cfg(test)]
 use vcf_tokens::{
     is_symbolic_vcf_alt, normalize_sequence_token, vcf_alt_token, vcf_reference_token,
 };
-
-const MAX_ZIP_ENTRY_BYTES: u64 = 128 * 1024 * 1024;
 
 impl GenotypeStore {
     pub fn from_file(path: &Path) -> Result<Self, RuntimeError> {
@@ -102,6 +99,7 @@ impl GenotypeStore {
             backend: QueryBackend::RsidMap(RsidMapBackend {
                 format: GenotypeSourceFormat::Text,
                 values: HashMap::new(),
+                source_lines: HashMap::new(),
             }),
         }
     }
@@ -131,13 +129,11 @@ impl GenotypeStore {
         if lower.ends_with(".zip") {
             return Self::from_zip_bytes(name, bytes);
         }
+        let reader = BufReader::new(Cursor::new(bytes));
         if lower.ends_with(".vcf") {
-            let lines =
-                read_lines_from_reader(BufReader::new(Cursor::new(bytes)), Path::new(name))?;
-            return Self::from_vcf_lines(lines);
+            return Self::from_vcf_reader(reader, name);
         }
-        let lines = read_lines_from_reader(BufReader::new(Cursor::new(bytes)), Path::new(name))?;
-        Self::from_delimited_lines(GenotypeSourceFormat::Text, lines)
+        Self::from_delimited_reader(GenotypeSourceFormat::Text, reader, name)
     }
 
     fn from_zip_bytes(name: &str, bytes: &[u8]) -> Result<Self, RuntimeError> {
@@ -168,22 +164,22 @@ impl GenotypeStore {
                 "zip archive {name} does not contain a supported genotype file"
             ))
         })?;
-        let mut entry = archive.by_name(&selected).map_err(|err| {
+        let entry = archive.by_name(&selected).map_err(|err| {
             RuntimeError::Io(format!(
                 "failed to open genotype entry {selected} in {name}: {err}"
             ))
         })?;
-        let contents = read_zip_entry_limited(
-            &mut entry,
-            MAX_ZIP_ENTRY_BYTES,
-            &format!("genotype entry {selected} in {name}"),
-        )?;
-        let lines =
-            read_lines_from_reader(BufReader::new(Cursor::new(contents)), Path::new(&selected))?;
+        let label = format!("genotype entry {selected} in {name}");
+        // Stream-decompress directly off the zip reader so we never have to
+        // materialize the entire decompressed entry in memory. GenesForGood
+        // exports decompress to >128MB which used to trip the old
+        // `read_zip_entry_limited` cap; the cap is gone because the streaming
+        // parser keeps memory bounded to the rsid map itself.
+        let reader = BufReader::new(entry);
         if selected.to_ascii_lowercase().ends_with(".vcf") {
-            return Self::from_vcf_lines(lines);
+            return Self::from_vcf_reader(reader, &label);
         }
-        Self::from_delimited_lines(GenotypeSourceFormat::Zip, lines)
+        Self::from_delimited_reader(GenotypeSourceFormat::Zip, reader, &label)
     }
 
     fn from_vcf_file(path: &Path, options: &GenotypeLoadOptions) -> Self {
@@ -236,63 +232,20 @@ impl GenotypeStore {
         })
     }
 
-    fn from_vcf_lines(lines: Vec<String>) -> Result<Self, RuntimeError> {
-        let mut values = HashMap::new();
-
-        for line in lines {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with("##") || trimmed.starts_with("#CHROM") {
-                continue;
-            }
-
-            let fields: Vec<&str> = trimmed.split('\t').collect();
-            if fields.len() < 10 {
-                continue;
-            }
-
-            let rsid = fields[2].trim();
-            if rsid.is_empty() || rsid == "." {
-                continue;
-            }
-
-            let reference = fields[3].trim();
-            let alternates: Vec<&str> = fields[4]
-                .split(',')
-                .map(str::trim)
-                .filter(|alt| !alt.is_empty() && *alt != ".")
-                .collect();
-            if reference.is_empty() || alternates.is_empty() {
-                continue;
-            }
-
-            let sample_gt = fields[9].split(':').next().unwrap_or(".");
-            if let Some(genotype) = genotype_from_vcf_gt(sample_gt, reference, &alternates) {
-                values.insert(rsid.to_owned(), genotype);
-            }
-        }
-
-        Ok(Self::from_rsid_map(GenotypeSourceFormat::Vcf, values))
+    fn from_vcf_reader<R: BufRead>(reader: R, label: &str) -> Result<Self, RuntimeError> {
+        loaders::from_vcf_reader(reader, label)
     }
 
-    fn from_delimited_lines(
+    fn from_delimited_reader<R: BufRead>(
         format: GenotypeSourceFormat,
-        lines: Vec<String>,
+        reader: R,
+        label: &str,
     ) -> Result<Self, RuntimeError> {
-        let delimiter = detect_delimiter(&lines);
-        let mut parser = RowParser::new(delimiter);
-        let mut values = HashMap::new();
-        for line in lines {
-            if let Some((rsid, genotype)) = parser.consume_line(&line)? {
-                values.insert(rsid, genotype);
-            }
-        }
-        Ok(Self::from_rsid_map(format, values))
+        loaders::from_delimited_reader(format, reader, label)
     }
 
-    fn from_rsid_map(format: GenotypeSourceFormat, values: HashMap<String, String>) -> Self {
-        Self {
-            backend: QueryBackend::RsidMap(RsidMapBackend { format, values }),
-        }
+    fn from_vcf_lines(lines: Vec<String>) -> Result<Self, RuntimeError> {
+        loaders::from_vcf_lines(lines)
     }
 
     fn from_delimited_file(
@@ -1682,16 +1635,5 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("invalid VCF position"));
-    }
-
-    #[test]
-    fn zip_entry_limited_reader_rejects_oversized_output() {
-        let mut reader = std::io::Cursor::new(b"abcdef".to_vec());
-        let err = read_zip_entry_limited(&mut reader, 5, "test zip entry").unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("test zip entry exceeds decompressed limit of 5 bytes"),
-            "{err}"
-        );
     }
 }

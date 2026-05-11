@@ -1,7 +1,7 @@
 use super::*;
 
 impl PackageWorkspace {
-    pub(super) fn run_manifest_analyses(
+    pub(crate) fn run_manifest_analyses(
         &self,
         manifest_path: &str,
         input_name: &str,

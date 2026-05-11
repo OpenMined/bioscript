@@ -64,7 +64,7 @@ impl PackageWorkspace {
             .map_err(|err| JsError::new(&format!("failed to parse YAML {path}: {err}")))
     }
 
-    fn schema(&self, path: &str) -> Result<String, JsError> {
+    pub(super) fn schema(&self, path: &str) -> Result<String, JsError> {
         self.yaml(path)?
             .get("schema")
             .and_then(serde_yaml::Value::as_str)
@@ -77,17 +77,17 @@ impl PackageWorkspace {
         normalize_package_path(&base.join(relative).display().to_string())
     }
 
-    fn load_variant(&self, path: &str) -> Result<VariantManifest, JsError> {
+    pub(super) fn load_variant(&self, path: &str) -> Result<VariantManifest, JsError> {
         load_variant_manifest_text(path, self.text(path)?)
             .map_err(|err| JsError::new(&format!("load variant {path}: {err}")))
     }
 
-    fn load_panel(&self, path: &str) -> Result<PanelManifest, JsError> {
+    pub(super) fn load_panel(&self, path: &str) -> Result<PanelManifest, JsError> {
         load_panel_manifest_text(path, self.text(path)?)
             .map_err(|err| JsError::new(&format!("load panel {path}: {err}")))
     }
 
-    fn load_assay(&self, path: &str) -> Result<AssayManifest, JsError> {
+    pub(super) fn load_assay(&self, path: &str) -> Result<AssayManifest, JsError> {
         load_assay_manifest_text(path, self.text(path)?)
             .map_err(|err| JsError::new(&format!("load assay {path}: {err}")))
     }
