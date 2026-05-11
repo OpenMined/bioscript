@@ -66,7 +66,7 @@ surface requires it.
       117 files, about 1.2 GiB, including hg19/hg38 subset BAM/BAI files,
       paired FASTQs, and remapped BWA BAM/BAI files across GRCh37/GRCh38,
       hg19/hg38, and Ensembl naming variants.
-- [ ] Add or generate expected Kestrel VCF/TSV outputs for large integration
+- [x] Add or generate expected Kestrel VCF/TSV outputs for large integration
       data; copied data currently contains alignment/FASTQ inputs but no
       `.vcf`, `.tsv`, or result `.json` files. Tiny expected TSV/JSON fixtures
       exist for unit tests. A dry-run generator now exists at
@@ -76,7 +76,8 @@ surface requires it.
       and JSON outputs once local samtools/bcftools/Kestrel prerequisites and
       validated sample labels are available. `--fastq-only` can bootstrap
       Kestrel VCF/TSV/report outputs from existing copied FASTQ pairs without
-      samtools/bcftools.
+      samtools/bcftools. Generated local ignored FASTQ-backed outputs now exist
+      under `ports/vntyper/test-data/expected/{positive,negative}`.
 - [x] Mirror upstream `tests/test_data_config.json` filenames and MD5s in a
       BioScript-side manifest.
 - [x] Add a data validator that checks required files.
@@ -170,7 +171,9 @@ surface requires it.
       Current coverage plans commands for two representative BAMs and one FASTQ
       pair, and a fake-runner test covers the BAM path running slice, index,
       FASTQ extraction, depth, Kestrel, bcftools, and TSV/JSON materialization.
-      Positive/negative labels still require expected outputs.
+      FASTQ-backed Kestrel expected outputs are gated by
+      `test_fastq_expected_outputs.py`; true positive/negative BAM labels still
+      need validation against upstream expected results.
 - [x] Run upstream VNtyper tests from the submodule as a reference check when
       Python dependencies and external tools are installed.
 - [x] Run BioScript tests without external tools by using fixed Kestrel VCF
@@ -228,7 +231,8 @@ surface requires it.
 - [ ] M6: Structured report JSON parity for the minimal BAM/Kestrel path.
       Fake-runner coverage now captures `samtools depth -a` output and feeds
       mean/median/stdev/min/max/uncovered-base fields into the structured JSON;
-      real BAM/Kestrel parity still needs expected large outputs.
+      FASTQ-backed Kestrel reports are now generated locally, but real
+      BAM/Kestrel parity still needs samtools/bcftools or native replacements.
 - [x] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
       logs.
 - [x] M8: FASTQ path works using external fastp/bwa or documented prealigned
