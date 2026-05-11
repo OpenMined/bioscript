@@ -141,6 +141,54 @@ class PortedUpstreamUnitTests(unittest.TestCase):
         self.assertIn("Potential_Duplicate", out[1]["Flag"])
         self.assertNotIn("Potential_Duplicate", out[2]["Flag"])
 
+    def test_motif_uniform_filtering_preserves_non_gg_variants(self):
+        rows = [
+            {"POS": 54, "REF": "C", "ALT": "GC", "Depth_Score": 0.015, "Motif": "X"},
+            {"POS": 54, "REF": "C", "ALT": "GC", "Depth_Score": 0.014, "Motif": "X"},
+            {"POS": 67, "REF": "G", "ALT": "GG", "Depth_Score": 0.008, "Motif": "X"},
+            {"POS": 67, "REF": "G", "ALT": "GG", "Depth_Score": 0.006, "Motif": "X"},
+        ]
+        out = vntyper_port.apply_uniform_filtering_right_motif(
+            rows,
+            exclude_motifs_right=[],
+            alt_for_motif_right_gg="GG",
+            motifs_for_alt_gg=["X"],
+        )
+        self.assertEqual(len(out), 2)
+        gc = [row for row in out if row["ALT"] == "GC"]
+        gg = [row for row in out if row["ALT"] == "GG"]
+        self.assertEqual(gc[0]["Depth_Score"], 0.015)
+        self.assertEqual(gg[0]["Depth_Score"], 0.008)
+
+    def test_motif_uniform_filtering_excludes_conserved_motifs_and_disallowed_gg(self):
+        rows = [
+            {"POS": 67, "REF": "G", "ALT": "GG", "Depth_Score": 0.010, "Motif": "X"},
+            {"POS": 67, "REF": "G", "ALT": "GG", "Depth_Score": 0.008, "Motif": "Q"},
+            {"POS": 67, "REF": "G", "ALT": "GG", "Depth_Score": 0.006, "Motif": "Y"},
+            {"POS": 60, "REF": "C", "ALT": "CT", "Depth_Score": 0.012, "Motif": "X"},
+        ]
+        out = vntyper_port.apply_uniform_filtering_right_motif(
+            rows,
+            exclude_motifs_right=["Q"],
+            alt_for_motif_right_gg="GG",
+            motifs_for_alt_gg=["X"],
+        )
+        self.assertEqual({row["ALT"] for row in out}, {"GG", "CT"})
+        self.assertTrue(all(row["Motif"] == "X" for row in out))
+
+    def test_motif_uniform_filtering_returns_empty_when_all_motifs_excluded(self):
+        rows = [
+            {"POS": 67, "REF": "G", "ALT": "GG", "Depth_Score": 0.010, "Motif": "Q"},
+            {"POS": 67, "REF": "G", "ALT": "GG", "Depth_Score": 0.008, "Motif": "8"},
+        ]
+        out = vntyper_port.apply_uniform_filtering_right_motif(
+            rows,
+            exclude_motifs_right=["Q", "8", "9"],
+            alt_for_motif_right_gg="GG",
+            motifs_for_alt_gg=["X"],
+        )
+        self.assertEqual(out, [])
+
 
 if __name__ == "__main__":
     unittest.main()

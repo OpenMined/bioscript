@@ -372,6 +372,41 @@ def mark_potential_duplicates(rows, duplicates_config):
     return out
 
 
+def apply_uniform_filtering_right_motif(
+    rows,
+    exclude_motifs_right,
+    alt_for_motif_right_gg,
+    motifs_for_alt_gg,
+):
+    if not rows:
+        return []
+    filtered = [dict(row) for row in rows if row.get("Motif") not in exclude_motifs_right]
+    if not filtered:
+        return []
+    filtered = sorted(
+        filtered,
+        key=lambda row: (_float(row.get("Depth_Score", 0)), _float(row.get("POS", 0))),
+        reverse=True,
+    )
+    deduped = []
+    seen = set()
+    for row in filtered:
+        key = (row.get("POS"), row.get("REF"), row.get("ALT"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    if any(row.get("ALT") == alt_for_motif_right_gg for row in deduped):
+        gg_allowed = [
+            row
+            for row in deduped
+            if row.get("ALT") == alt_for_motif_right_gg and row.get("Motif") in motifs_for_alt_gg
+        ]
+        non_gg = [row for row in deduped if row.get("ALT") != alt_for_motif_right_gg]
+        return gg_allowed + non_gg
+    return deduped
+
+
 def build_report_json(
     sample_name,
     input_files,
