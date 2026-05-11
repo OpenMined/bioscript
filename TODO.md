@@ -144,10 +144,10 @@ surface requires it.
 
 ## Test Plan
 
-- [ ] Port upstream unit tests first:
+- [x] Port upstream unit tests first:
       confidence assignment, scoring, flagging, variant parsing, motif
       filtering, region utilities, chromosome utilities, and reference registry.
-- [ ] Add parity tests that run the upstream Python function and BioScript port
+- [x] Add parity tests that run the upstream Python function and BioScript port
       on the same tiny fixture and compare TSV/JSON values.
 - [ ] Add integration tests against `ports/vntyper/test-data` once copied:
       one positive BAM, one negative BAM, and one FASTQ pair if available.
@@ -195,7 +195,7 @@ surface requires it.
 
 - [x] M1: Upstream source vendored and BioScript port skeleton committed.
 - [x] M2: Kestrel VCF post-processing works in BioScript from fixture VCFs.
-- [ ] M3: Confidence/depth/frame classification parity with upstream unit
+- [x] M3: Confidence/depth/frame classification parity with upstream unit
       tests.
 - [ ] M4: BAM path works using external samtools and Kestrel wrappers.
 - [x] M5: Native Rust Kestrel feasibility spike:
