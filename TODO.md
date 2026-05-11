@@ -205,7 +205,8 @@ surface requires it.
       compares native FASTQ-to-VCF output with Java Kestrel on tiny
       perfect-reference no-variant, MUC1 SNP, nonrepetitive SNP, adjacent
       nonrepetitive SNPs, k=20 nonrepetitive SNP/deletion/insertion fixtures,
-      mixed reference/alternate deletion depth, and sparse split-read fixtures.
+      mixed reference/alternate SNP and deletion depth, a mixed insertion
+      no-call, and sparse split-read fixtures.
       The native assembler now tracks observed adjacent k-mer transitions from
       each read/FASTQ record and refuses to bridge k-mers that were never
       adjacent in an input read, which fixes the Java-confirmed sparse
