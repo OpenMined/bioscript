@@ -50,13 +50,19 @@ class VntyperReportTests(unittest.TestCase):
         html = vntyper_report.render_html_report(report)
         self.assertIn("<h2>Screening Summary</h2>", html)
         self.assertIn("<h2>Run Metadata</h2>", html)
-        self.assertIn("<h2>VNTR Coverage QC</h2>", html)
+        self.assertIn("<summary>VNTR Coverage QC</summary>", html)
         self.assertIn("<h2>Kestrel Identified Variants</h2>", html)
-        self.assertIn("<h2>Pipeline Log</h2>", html)
+        self.assertIn("<summary>Pipeline Log</summary>", html)
         self.assertIn("external samtools/kestrel", html)
         self.assertIn("High_Precision*", html)
         self.assertIn("planned samtools view", html)
-        self.assertNotIn("<script", html.lower())
+        self.assertIn('id="variant-search"', html)
+        self.assertIn('id="show-flagged"', html)
+        self.assertIn("sortVariants", html)
+        self.assertIn("filterVariants", html)
+        self.assertIn("confidence-high", html)
+        self.assertIn('title="Not flagged"', html)
+        self.assertIn("<details open>", html)
 
 
 if __name__ == "__main__":
