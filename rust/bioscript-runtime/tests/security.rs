@@ -150,6 +150,83 @@ if __name__ == "__main__":
 }
 
 #[test]
+fn bioscript_library_import_binds_vntyper_tool_modules() {
+    run_script(
+        r#"
+from bioscript import kestrel
+from bioscript import samtools
+
+def main():
+    print(kestrel)
+    print(samtools)
+
+if __name__ == "__main__":
+    main()
+"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn bioscript_vntyper_tool_modules_build_structured_commands() {
+    run_script(
+        r#"
+from bioscript import kestrel
+from bioscript import samtools
+
+def main():
+    kcmd = kestrel.build_command(
+        "kestrel.jar",
+        "muc1.fa",
+        "out.vcf",
+        "out.sam",
+        "tmp",
+        "sample1",
+        "r1.fastq.gz",
+        "r2.fastq.gz",
+    )
+    if kcmd[0] != "java":
+        raise Exception("bad kestrel command")
+    fcmd = samtools.fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz")
+    if fcmd[0] != "samtools":
+        raise Exception("bad samtools command")
+
+if __name__ == "__main__":
+    main()
+"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn bioscript_vcf_read_kestrel_returns_records() {
+    let dir = temp_dir("vcf-read-kestrel");
+    fs::write(
+        dir.join("kestrel.vcf"),
+        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\nMUC1\t100\t.\tC\tCGGCA\t.\tPASS\t.\tGT\tDel:120:10000\n",
+    )
+    .unwrap();
+    run_script_with_inputs(
+        &dir,
+        r#"
+from bioscript import vcf
+
+def main():
+    rows = vcf.read_kestrel("kestrel.vcf")
+    if len(rows) != 1:
+        raise Exception("expected one record")
+    if rows[0]["Sample"] != "Del:120:10000":
+        raise Exception("missing sample")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+}
+
+#[test]
 fn bioscript_pysam_fetch_streams_tiny_cram_fixture() {
     let source =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bioscript-formats/tests/fixtures");

@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use bioscript_core::RuntimeError;
-use bioscript_libs::{ModuleName, pyfaidx::Fasta, pysam::AlignmentFile, vcf};
+use bioscript_libs::{
+    ModuleName, kestrel::KestrelRunConfig, pyfaidx::Fasta, pysam::AlignmentFile, samtools, vcf,
+};
 use monty::MontyObject;
 
 use super::{
@@ -11,8 +13,9 @@ use super::{
         reject_unknown_kwargs,
     },
     objects::{
-        pyfaidx_fasta_object, pyfaidx_module_object, pysam_aligned_segment_object,
-        pysam_alignment_file_object, pysam_module_object, vcf_module_object,
+        kestrel_module_object, pyfaidx_fasta_object, pyfaidx_module_object,
+        pysam_aligned_segment_object, pysam_alignment_file_object, pysam_module_object,
+        samtools_module_object, vcf_module_object,
     },
 };
 
@@ -24,8 +27,10 @@ pub(crate) fn host_bioscript_import(
     reject_kwargs(kwargs, "__bioscript_import__")?;
     let module = expect_string_arg(args, 0, "__bioscript_import__")?;
     match ModuleName::parse(&module).map_err(|err| RuntimeError::Unsupported(err.to_string()))? {
+        ModuleName::Kestrel => Ok(kestrel_module_object()),
         ModuleName::Pysam => Ok(pysam_module_object()),
         ModuleName::Pyfaidx => Ok(pyfaidx_module_object()),
+        ModuleName::Samtools => Ok(samtools_module_object()),
         ModuleName::Vcf => Ok(vcf_module_object()),
     }
 }
@@ -134,6 +139,121 @@ impl BioscriptRuntime {
         Ok(pyfaidx_fasta_object(&raw_path))
     }
 
+    pub(super) fn method_kestrel_build_command(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "kestrel.build_command")?;
+        if args.len() != 9 {
+            return Err(RuntimeError::InvalidArguments(
+                "kestrel.build_command expects jar_path, reference_vntr, output_vcf, output_sam, temp_dir, sample_name, fastq_1, and fastq_2".to_owned(),
+            ));
+        }
+        let config = KestrelRunConfig::vntyper(
+            expect_string_arg(args, 1, "kestrel.build_command")?,
+            expect_string_arg(args, 2, "kestrel.build_command")?,
+            expect_string_arg(args, 3, "kestrel.build_command")?,
+            expect_string_arg(args, 4, "kestrel.build_command")?,
+            expect_string_arg(args, 5, "kestrel.build_command")?,
+            expect_string_arg(args, 6, "kestrel.build_command")?,
+            expect_string_arg(args, 7, "kestrel.build_command")?,
+            expect_string_arg(args, 8, "kestrel.build_command")?,
+        );
+        command_argv_object(
+            config
+                .command()
+                .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
+                .argv(),
+        )
+    }
+
+    pub(super) fn method_samtools_view_region(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "samtools.view_region")?;
+        if args.len() != 5 {
+            return Err(RuntimeError::InvalidArguments(
+                "samtools.view_region expects bam, region, output_bam, and include_unmapped"
+                    .to_owned(),
+            ));
+        }
+        let include_unmapped = expect_bool_arg(args, 4, "samtools.view_region")?;
+        command_argv_object(
+            samtools::view_region(
+                PathBuf::from(expect_string_arg(args, 1, "samtools.view_region")?).as_path(),
+                &expect_string_arg(args, 2, "samtools.view_region")?,
+                PathBuf::from(expect_string_arg(args, 3, "samtools.view_region")?).as_path(),
+                include_unmapped,
+            )
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
+            .argv(),
+        )
+    }
+
+    pub(super) fn method_samtools_fastq(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "samtools.fastq")?;
+        if args.len() != 4 {
+            return Err(RuntimeError::InvalidArguments(
+                "samtools.fastq expects bam, fastq_1, and fastq_2".to_owned(),
+            ));
+        }
+        command_argv_object(
+            samtools::fastq(
+                PathBuf::from(expect_string_arg(args, 1, "samtools.fastq")?).as_path(),
+                PathBuf::from(expect_string_arg(args, 2, "samtools.fastq")?).as_path(),
+                PathBuf::from(expect_string_arg(args, 3, "samtools.fastq")?).as_path(),
+            )
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
+            .argv(),
+        )
+    }
+
+    pub(super) fn method_samtools_depth(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "samtools.depth")?;
+        if args.len() != 3 {
+            return Err(RuntimeError::InvalidArguments(
+                "samtools.depth expects bam and region".to_owned(),
+            ));
+        }
+        command_argv_object(
+            samtools::depth(
+                PathBuf::from(expect_string_arg(args, 1, "samtools.depth")?).as_path(),
+                &expect_string_arg(args, 2, "samtools.depth")?,
+            )
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
+            .argv(),
+        )
+    }
+
+    pub(super) fn method_samtools_index(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "samtools.index")?;
+        if args.len() != 2 {
+            return Err(RuntimeError::InvalidArguments(
+                "samtools.index expects bam".to_owned(),
+            ));
+        }
+        command_argv_object(
+            samtools::index(PathBuf::from(expect_string_arg(args, 1, "samtools.index")?).as_path())
+                .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
+                .argv(),
+        )
+    }
+
     pub(super) fn method_vcf_variant_file(
         &self,
         args: &[MontyObject],
@@ -147,6 +267,62 @@ impl BioscriptRuntime {
         }
         vcf::open_variant_file().map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
         Ok(MontyObject::None)
+    }
+
+    pub(super) fn method_vcf_read_kestrel(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "vcf.read_kestrel")?;
+        if args.len() != 2 {
+            return Err(RuntimeError::InvalidArguments(
+                "vcf.read_kestrel expects path".to_owned(),
+            ));
+        }
+        let raw_path = expect_string_arg(args, 1, "vcf.read_kestrel")?;
+        let path = self.resolve_existing_user_path(&raw_path)?;
+        let records = vcf::read_kestrel_vcf(&path)
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        Ok(MontyObject::List(
+            records
+                .into_iter()
+                .map(|record| {
+                    MontyObject::Dict(
+                        record
+                            .into_iter()
+                            .map(|(key, value)| {
+                                (MontyObject::String(key), MontyObject::String(value))
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+        ))
+    }
+}
+
+fn command_argv_object(argv: Vec<String>) -> Result<MontyObject, RuntimeError> {
+    Ok(MontyObject::List(
+        argv.into_iter().map(MontyObject::String).collect(),
+    ))
+}
+
+fn expect_bool_arg(
+    args: &[MontyObject],
+    index: usize,
+    function_name: &str,
+) -> Result<bool, RuntimeError> {
+    let Some(value) = args.get(index) else {
+        return Err(RuntimeError::InvalidArguments(format!(
+            "{function_name} missing argument at position {index}"
+        )));
+    };
+    match value {
+        MontyObject::Bool(value) => Ok(*value),
+        other => Err(RuntimeError::InvalidArguments(format!(
+            "{function_name} expected bool at position {index}, got {other:?}"
+        ))),
     }
 }
 

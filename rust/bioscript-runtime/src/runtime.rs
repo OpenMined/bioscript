@@ -276,6 +276,12 @@ impl BioscriptRuntime {
             ("PysamAlignmentFile", "fetch") => self.method_pysam_alignment_file_fetch(args, kwargs),
             ("PyfaidxModule", "Fasta") => self.method_pyfaidx_fasta(args, kwargs),
             ("VcfModule", "VariantFile") => self.method_vcf_variant_file(args, kwargs),
+            ("VcfModule", "read_kestrel") => self.method_vcf_read_kestrel(args, kwargs),
+            ("KestrelModule", "build_command") => self.method_kestrel_build_command(args, kwargs),
+            ("SamtoolsModule", "view_region") => self.method_samtools_view_region(args, kwargs),
+            ("SamtoolsModule", "fastq") => self.method_samtools_fastq(args, kwargs),
+            ("SamtoolsModule", "depth") => self.method_samtools_depth(args, kwargs),
+            ("SamtoolsModule", "index") => self.method_samtools_index(args, kwargs),
             ("GenotypeFile", "get") => self.method_genotype_get(args, kwargs),
             ("GenotypeFile", "lookup_variant") => self.method_genotype_lookup_variant(args, kwargs),
             ("GenotypeFile", "lookup_variant_details") => {
