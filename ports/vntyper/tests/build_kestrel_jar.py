@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 KESTREL_ROOT = ROOT / "ports" / "vntyper" / "kestrel"
-DEFAULT_OUTPUT = KESTREL_ROOT / "kestrel.jar"
+DEFAULT_OUTPUT = ROOT / "ports" / "vntyper" / "test-data" / "tools" / "kestrel" / "kestrel.jar"
 MAIN_CLASS = "edu.gatech.kestrel.clui.Main"
 DEPENDENCY_JARS = [
     "kanalyze.jar",

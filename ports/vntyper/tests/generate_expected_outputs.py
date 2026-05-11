@@ -20,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 DATA_ROOT = ROOT / "ports" / "vntyper" / "test-data"
 EXPECTED_ROOT = DATA_ROOT / "expected"
+DEFAULT_KESTREL_JAR = DATA_ROOT / "tools" / "kestrel" / "kestrel.jar"
 VNTYPER_BIOSCRIPT = ROOT / "ports" / "vntyper" / "bioscript" / "vntyper.bs.py"
 PYTHON_ROOT = ROOT / "python"
 BIOSCRIPT_PORT = ROOT / "ports" / "vntyper" / "bioscript"
@@ -35,7 +36,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--positive-sample", required=True, help="Sample basename without .bam")
     parser.add_argument("--negative-sample", required=True, help="Sample basename without .bam")
-    parser.add_argument("--kestrel-jar", default=str(ROOT / "ports" / "vntyper" / "kestrel" / "kestrel.jar"))
+    parser.add_argument("--kestrel-jar", default=str(DEFAULT_KESTREL_JAR))
     parser.add_argument("--assembly", default="hg19")
     parser.add_argument(
         "--write-manifest",
