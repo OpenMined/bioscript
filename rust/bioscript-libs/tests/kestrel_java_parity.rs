@@ -126,6 +126,28 @@ fn native_kestrel_fastq_output_matches_java_for_k20_nonrepetitive_snp() {
 }
 
 #[test]
+fn native_kestrel_fastq_output_matches_java_for_k20_mixed_depth_snp() {
+    let dir = parity_temp_dir("k20-mixed-depth-snp");
+    let snp_read = "ACGTTGCAACGAGTCCATGCTAGGCTAACCGTTTCGGATCCGTAAGCTTGCAAGTCGATGCTAACGTTAGC";
+    let fastq = mixed_fastq(LONG_NONREPETITIVE_REFERENCE, 5, snp_read, 5);
+    let fixture = KestrelParityFixture::new(
+        "REF",
+        LONG_NONREPETITIVE_REFERENCE,
+        "e50386beaaf4c2113705c82a71502260",
+        &fastq,
+    )
+    .with_kmer_size(20)
+    .with_max_states(80);
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fixture);
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
+#[test]
 fn native_kestrel_fastq_output_matches_java_for_k20_nonrepetitive_deletion() {
     let dir = parity_temp_dir("k20-nonrepetitive-deletion");
     let read = "ACGTTGCAACGAGTCCATGCTAGGCTAACCGTACGGATCCGTAAGCTTGCAAGTCGATGCTAACGTTAGC";
@@ -174,6 +196,29 @@ fn native_kestrel_fastq_output_matches_java_for_k20_nonrepetitive_insertion() {
     let dir = parity_temp_dir("k20-nonrepetitive-insertion");
     let read = "ACGTTGCAACGAGTCCATGCTAGGCTAACCGTTGATATCGGATCCGTAAGCTTGCAAGTCGATGCTAACGTTAGC";
     let fastq = repeated_fastq(read, 10);
+    let fixture = KestrelParityFixture::new(
+        "REF",
+        LONG_NONREPETITIVE_REFERENCE,
+        "e50386beaaf4c2113705c82a71502260",
+        &fastq,
+    )
+    .with_kmer_size(20)
+    .with_max_states(80);
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fixture);
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
+#[test]
+fn native_kestrel_fastq_output_matches_java_for_k20_mixed_depth_insertion_no_call() {
+    let dir = parity_temp_dir("k20-mixed-depth-insertion-no-call");
+    let insertion_read =
+        "ACGTTGCAACGAGTCCATGCTAGGCTAACCGTTGATATCGGATCCGTAAGCTTGCAAGTCGATGCTAACGTTAGC";
+    let fastq = mixed_fastq(LONG_NONREPETITIVE_REFERENCE, 5, insertion_read, 5);
     let fixture = KestrelParityFixture::new(
         "REF",
         LONG_NONREPETITIVE_REFERENCE,
