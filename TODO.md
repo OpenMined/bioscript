@@ -203,7 +203,11 @@ surface requires it.
       `bioscript.kestrel.call_fastq_references_native`. Python-side
       `bioscript.kestrel.load_reference_regions` reads multi-record FASTA files
       into `(name, sequence, md5)` triples for that native path, matching the
-      shape of VNtyper motif dictionaries. The Java parity gate now includes a
+      shape of VNtyper motif dictionaries. The VNtyper execution layer now has
+      an opt-in `use_native_kestrel` path for both BAM-derived FASTQs and
+      direct FASTQ inputs; it loads the motif FASTA, runs
+      `call_fastq_references_native`, writes `output.vcf`, and reuses the
+      existing TSV/report materialization. The Java parity gate now includes a
       multi-reference FASTQ fixture that emits all contig headers and calls the
       matching reference record, which is the next required shape for full
       VNtyper motif-reference parity. The

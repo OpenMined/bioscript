@@ -63,7 +63,9 @@ def run_bam_pipeline(
     dry_run: bool = False,
     runner: Runner | None = None,
     use_native_samtools: bool = False,
+    use_native_kestrel: bool = False,
     native_samtools: object | None = None,
+    native_kestrel: object | None = None,
 ) -> ExternalPipelineResult:
     out_dir = Path(output_dir)
     plan = vntyper_commands.plan_bam_pipeline(
@@ -75,10 +77,12 @@ def run_bam_pipeline(
         kestrel_jar=kestrel_jar,
         muc1_reference=muc1_reference,
     )
-    commands = (
-        native_samtools_commands(input_bam, plan)
-        if use_native_samtools
-        else external_commands(plan)
+    commands = pipeline_commands(
+        input_bam,
+        plan,
+        muc1_reference,
+        use_native_samtools,
+        use_native_kestrel,
     )
 
     result = ExternalPipelineResult(
@@ -100,41 +104,74 @@ def run_bam_pipeline(
         backend.view_region_native(input_bam, plan.bam_region, plan.sliced_bam, index=index)
         backend.fastq_native(input_bam, plan.bam_region, plan.fastq_1, plan.fastq_2, index=index)
         coverage = backend.depth_native(input_bam, plan.vntr_region, index=index)
-        command_runner(plan.kestrel_command, check=True)
+        if use_native_kestrel:
+            run_native_kestrel(native_kestrel or kestrel, muc1_reference, plan, result.kestrel_vcf)
+        else:
+            command_runner(plan.kestrel_command, check=True)
         materialize_post_kestrel_outputs(
             result,
             input_bam,
             assembly,
             coverage,
-            alignment_pipeline="native bioscript samtools/kestrel",
+            alignment_pipeline=alignment_pipeline_label(use_native_samtools, use_native_kestrel),
         )
     else:
         depth_output = ""
-        for command in commands:
+        for command in external_commands(plan, include_kestrel=not use_native_kestrel):
             if command == plan.samtools_depth_command:
                 completed = command_runner(command, check=True, capture_output=True, text=True)
                 depth_output = getattr(completed, "stdout", "") or ""
             else:
                 command_runner(command, check=True)
+        if use_native_kestrel:
+            run_native_kestrel(native_kestrel or kestrel, muc1_reference, plan, result.kestrel_vcf)
         materialize_post_kestrel_outputs(
             result,
             input_bam,
             assembly,
             coverage_from_depth(depth_output),
+            alignment_pipeline=alignment_pipeline_label(use_native_samtools, use_native_kestrel),
         )
     return result
 
 
-def external_commands(plan: vntyper_commands.VntyperCommandPlan) -> list[list[str]]:
-    return [
+def pipeline_commands(
+    input_bam: str,
+    plan: vntyper_commands.VntyperCommandPlan,
+    muc1_reference: str,
+    use_native_samtools: bool,
+    use_native_kestrel: bool,
+) -> list[list[str]]:
+    if use_native_samtools:
+        commands = native_samtools_commands(input_bam, plan)
+        if not use_native_kestrel:
+            commands.append(plan.kestrel_command)
+    else:
+        commands = external_commands(plan, include_kestrel=not use_native_kestrel)
+    if use_native_kestrel:
+        commands.append(native_kestrel_command(plan, muc1_reference))
+    return commands
+
+
+def external_commands(
+    plan: vntyper_commands.VntyperCommandPlan,
+    include_kestrel: bool = True,
+) -> list[list[str]]:
+    commands = [
         plan.samtools_view_command,
         plan.samtools_index_command,
         plan.samtools_fastq_command,
         plan.samtools_depth_command,
-        plan.kestrel_command,
-        plan.bcftools_sort_command,
-        plan.bcftools_index_command,
     ]
+    if include_kestrel:
+        commands.extend(
+            [
+                plan.kestrel_command,
+                plan.bcftools_sort_command,
+                plan.bcftools_index_command,
+            ]
+        )
+    return commands
 
 
 def native_samtools_commands(
@@ -167,8 +204,47 @@ def native_samtools_commands(
             "--index",
             index,
         ],
-        plan.kestrel_command,
     ]
+
+
+def native_kestrel_command(
+    plan: vntyper_commands.VntyperCommandPlan,
+    muc1_reference: str,
+) -> list[str]:
+    return [
+        "bioscript.kestrel.call_fastq_references_native",
+        muc1_reference,
+        plan.fastq_1,
+        plan.fastq_2,
+        "-o",
+        plan.kestrel_vcf,
+    ]
+
+
+def run_native_kestrel(
+    backend: object,
+    muc1_reference: str,
+    plan: vntyper_commands.VntyperCommandPlan,
+    output_vcf: str,
+) -> None:
+    references = backend.load_reference_regions(muc1_reference)
+    vcf = backend.call_fastq_references_native(
+        references,
+        [plan.fastq_1, plan.fastq_2],
+        20,
+        sample_name=plan.participant_id,
+    )
+    Path(output_vcf).write_text(vcf, encoding="utf-8")
+
+
+def alignment_pipeline_label(use_native_samtools: bool, use_native_kestrel: bool) -> str:
+    if use_native_samtools and use_native_kestrel:
+        return "native bioscript samtools/kestrel"
+    if use_native_samtools:
+        return "native bioscript samtools/kestrel"
+    if use_native_kestrel:
+        return "external samtools/native bioscript kestrel"
+    return "external samtools/kestrel"
 
 
 def default_bam_index(input_bam: str) -> str:
@@ -184,22 +260,27 @@ def run_fastq_kestrel(
     muc1_reference: str = vntyper_commands.DEFAULT_MUC1_REFERENCE,
     dry_run: bool = False,
     runner: Runner | None = None,
+    use_native_kestrel: bool = False,
+    native_kestrel: object | None = None,
 ) -> ExternalPipelineResult:
     out_dir = Path(output_dir)
     sample = vntyper_commands._safe_sample_name(participant_id)
     kestrel_dir = out_dir / "kestrel"
     kestrel_vcf = str(kestrel_dir / "output.vcf")
     kestrel_sam = str(kestrel_dir / "output.sam")
-    command = kestrel.build_command(
-        kestrel_jar,
-        muc1_reference,
-        kestrel_vcf,
-        kestrel_sam,
-        str(kestrel_dir / "tmp"),
-        sample,
-        fastq_1,
-        fastq_2,
-    )
+    if use_native_kestrel:
+        command = native_kestrel_fastq_command(muc1_reference, fastq_1, fastq_2, kestrel_vcf)
+    else:
+        command = kestrel.build_command(
+            kestrel_jar,
+            muc1_reference,
+            kestrel_vcf,
+            kestrel_sam,
+            str(kestrel_dir / "tmp"),
+            sample,
+            fastq_1,
+            fastq_2,
+        )
     result = ExternalPipelineResult(
         participant_id=sample,
         output_dir=str(out_dir),
@@ -213,17 +294,49 @@ def run_fastq_kestrel(
 
     Path(result.kestrel_vcf).parent.mkdir(parents=True, exist_ok=True)
     Path(kestrel_dir / "tmp").mkdir(parents=True, exist_ok=True)
-    command_runner = runner or subprocess.run
-    command_runner(command, check=True)
+    if use_native_kestrel:
+        plan = SimpleFastqKestrelPlan(sample, muc1_reference, fastq_1, fastq_2)
+        run_native_kestrel(native_kestrel or kestrel, muc1_reference, plan, result.kestrel_vcf)
+    else:
+        command_runner = runner or subprocess.run
+        command_runner(command, check=True)
     materialize_post_kestrel_outputs(
         result,
         f"{fastq_1},{fastq_2}",
         "unknown",
         {},
         input_files={"fastq_1": fastq_1, "fastq_2": fastq_2, "vcf": result.kestrel_vcf},
-        alignment_pipeline="external kestrel from FASTQ",
+        alignment_pipeline=(
+            "native bioscript kestrel from FASTQ"
+            if use_native_kestrel
+            else "external kestrel from FASTQ"
+        ),
     )
     return result
+
+
+@dataclass(frozen=True)
+class SimpleFastqKestrelPlan:
+    participant_id: str
+    muc1_reference: str
+    fastq_1: str
+    fastq_2: str
+
+
+def native_kestrel_fastq_command(
+    muc1_reference: str,
+    fastq_1: str,
+    fastq_2: str,
+    output_vcf: str,
+) -> list[str]:
+    return [
+        "bioscript.kestrel.call_fastq_references_native",
+        muc1_reference,
+        fastq_1,
+        fastq_2,
+        "-o",
+        output_vcf,
+    ]
 
 
 def create_output_dirs(result: ExternalPipelineResult, plan: vntyper_commands.VntyperCommandPlan) -> None:
