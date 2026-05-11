@@ -14,6 +14,8 @@ use super::{DetectedKind, InspectOptions};
 mod alignment_depth;
 mod classify;
 
+pub use alignment_depth::infer_sex_from_alignment_reader;
+
 pub(crate) use alignment_depth::infer_sex_from_alignment_path;
 use classify::{classify_stats, supports_sex_detection, unsupported_sex_inference};
 
@@ -166,7 +168,7 @@ pub(crate) fn infer_sex_from_zip_bytes(
     infer_sex_from_bytes(selected_entry, &entry_bytes, kind)
 }
 
-pub(crate) fn infer_sex_from_text_lines(
+pub fn infer_sex_from_text_lines(
     lines: &[String],
     kind: DetectedKind,
 ) -> Result<SexInference, RuntimeError> {
@@ -194,11 +196,13 @@ fn infer_sex_from_reader<R: BufRead>(
     let mut stats = SexStats::default();
     let mut probe_lines = Vec::new();
     let mut line = String::new();
+    // Treat any I/O error mid-stream (e.g. truncated bgzf head when the
+    // wasm caller only loaded the first N MiB) as end-of-data: classify
+    // whatever we got rather than failing the whole inspection. The CLI
+    // path streams the full file so this is effectively unchanged for it.
     for _ in 0..64 {
         line.clear();
-        let bytes = reader
-            .read_line(&mut line)
-            .map_err(|err| RuntimeError::Io(format!("failed to scan sex markers: {err}")))?;
+        let bytes = reader.read_line(&mut line).unwrap_or_default();
         if bytes == 0 {
             let delimiter = detect_delimiter(&probe_lines);
             let mut column_indexes = None;
@@ -232,9 +236,7 @@ fn infer_sex_from_reader<R: BufRead>(
     }
     for _ in probe_lines.len()..MAX_SEX_DETECTION_LINES {
         line.clear();
-        let bytes = reader
-            .read_line(&mut line)
-            .map_err(|err| RuntimeError::Io(format!("failed to scan sex markers: {err}")))?;
+        let bytes = reader.read_line(&mut line).unwrap_or_default();
         if bytes == 0 {
             break;
         }

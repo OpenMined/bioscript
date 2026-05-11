@@ -10,8 +10,7 @@ use bioscript_core::{
     VariantSpec,
 };
 use bioscript_formats::{
-    GenotypeLoadOptions, GenotypeStore, InferredSex, InspectOptions, SexDetectionConfidence,
-    SexInference, inspect_bytes as inspect_bytes_rs,
+    GenotypeLoadOptions, GenotypeStore, InspectOptions, inspect_bytes as inspect_bytes_rs,
 };
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig};
 use bioscript_schema::{
@@ -24,6 +23,8 @@ use wasm_bindgen::prelude::*;
 
 #[path = "report_helpers.rs"]
 mod report_helpers;
+#[path = "report_input_inspection.rs"]
+mod report_input_inspection;
 #[path = "report_lookup.rs"]
 mod report_lookup;
 #[path = "report_render.rs"]
@@ -32,6 +33,10 @@ mod report_render;
 mod report_workspace;
 
 use report_helpers::*;
+use report_input_inspection::{
+    decompress_vcf_head_lines, explicit_sex_from_options, inspect_head_via_js_reader,
+    vcf_sex_via_tabix,
+};
 use report_lookup::{CramReportLookup, VcfReportLookup};
 use report_render::{
     AppReportJsonInput, app_report_json, match_app_findings, render_app_html_document,
@@ -48,7 +53,7 @@ include!("../../bioscript-cli/src/report_html_helpers.rs");
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PackageFileInput {
+pub(super) struct PackageFileInput {
     path: String,
     contents: String,
     #[serde(default)]
@@ -57,13 +62,18 @@ struct PackageFileInput {
 
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ReportOptionsInput {
+pub(super) struct ReportOptionsInput {
     #[serde(default = "default_analysis_max_duration_ms")]
     analysis_max_duration_ms: u64,
     #[serde(default)]
     detect_sex: bool,
     #[serde(default)]
     filters: Vec<String>,
+    /// Optional explicit sample sex (mirrors the CLI's `--sample-sex` flag).
+    /// When set, takes precedence over inference: the report carries
+    /// `method=explicit_sample_sex` like the CLI.
+    #[serde(default)]
+    sample_sex: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -219,6 +229,12 @@ pub fn run_package_report_from_cram(
     let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
     let findings = workspace.load_manifest_findings(manifest_path)?;
     let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
+    let mut head_inspection = inspect_head_via_js_reader(
+        &cram_read_at,
+        cram_len as u64,
+        input_name,
+        false, // sex detection runs separately below via the indexed reader
+    );
 
     let crai_index = bioscript_formats::alignment::parse_crai_bytes(crai_bytes)
         .map_err(|err| JsError::new(&format!("parse crai: {err:?}")))?;
@@ -241,6 +257,26 @@ pub fn run_package_report_from_cram(
         reader: std::cell::RefCell::new(indexed),
         label: input_name.to_owned(),
     };
+
+    // CRAM sex detection: explicit override wins, otherwise alignment Y/X
+    // coverage analysis through the same reader the variant lookup will use.
+    if let Some(explicit) = explicit_sex_from_options(&options) {
+        head_inspection.inferred_sex = Some(explicit);
+    } else if options.detect_sex {
+        let mut reader_borrow = lookup.reader.borrow_mut();
+        match bioscript_formats::infer_sex_from_alignment_reader(
+            &mut reader_borrow,
+            &lookup.label,
+            true,
+        ) {
+            Ok(inference) => head_inspection.inferred_sex = Some(inference),
+            Err(err) => {
+                head_inspection
+                    .evidence
+                    .push(format!("alignment sex detection failed: {err:?}"));
+            }
+        }
+    }
 
     let mut loader = GenotypeLoadOptions::default();
     loader.format = Some(bioscript_formats::GenotypeSourceFormat::Cram);
@@ -276,7 +312,7 @@ pub fn run_package_report_from_cram(
         analyses: &analyses,
         findings: &matched_findings,
         provenance: &provenance,
-        input_inspection: None,
+        input_inspection: Some(&head_inspection),
         manifest_metadata: &manifest_metadata,
     })];
     let observations_tsv = render_app_observations_tsv(&observations)?;
@@ -329,6 +365,20 @@ pub fn run_package_report_from_vcf(
     let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
     let findings = workspace.load_manifest_findings(manifest_path)?;
     let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
+    // Inspect format/source/assembly from the head, but skip the byte-stream
+    // sex detection — we'll do that via tabix-targeted X non-PAR queries
+    // below, which works on indexed VCFs of any size.
+    let mut head_inspection = inspect_head_via_js_reader(
+        &vcf_read_at,
+        vcf_len as u64,
+        input_name,
+        false,
+    );
+    // Decompress the head once to grab the VCF header lines (## meta + #CHROM
+    // column header) — these are needed by `infer_sex_from_text_lines` to
+    // figure out delimiter / column indexes for the data lines we'll pull
+    // via tabix below.
+    let head_lines = decompress_vcf_head_lines(&vcf_read_at, vcf_len as u64);
 
     let tabix_index = bioscript_formats::alignment::parse_tbi_bytes(tbi_bytes)
         .map_err(|err| JsError::new(&format!("parse tbi: {err:?}")))?;
@@ -339,6 +389,15 @@ pub fn run_package_report_from_vcf(
         reader: std::cell::RefCell::new(indexed),
         label: input_name.to_owned(),
     };
+
+    if let Some(explicit) = explicit_sex_from_options(&options) {
+        head_inspection.inferred_sex = Some(explicit);
+    } else if options.detect_sex {
+        let mut reader_borrow = lookup.reader.borrow_mut();
+        if let Some(inference) = vcf_sex_via_tabix(&mut reader_borrow, &head_lines) {
+            head_inspection.inferred_sex = Some(inference);
+        }
+    }
 
     let mut loader = GenotypeLoadOptions::default();
     loader.format = Some(bioscript_formats::GenotypeSourceFormat::Vcf);
@@ -372,7 +431,7 @@ pub fn run_package_report_from_vcf(
         analyses: &analyses,
         findings: &matched_findings,
         provenance: &provenance,
-        input_inspection: None,
+        input_inspection: Some(&head_inspection),
         manifest_metadata: &manifest_metadata,
     })];
     let observations_tsv = render_app_observations_tsv(&observations)?;

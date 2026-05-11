@@ -285,6 +285,8 @@ fn variant_input_to_spec(variant: &VariantInput) -> Result<VariantSpec, JsError>
         } else {
             None
         },
+        grch37_assembly_ref: None,
+        grch38_assembly_ref: None,
         reference: Some(variant.ref_base.clone()),
         alternate: Some(variant.alt_base.clone()),
         kind,

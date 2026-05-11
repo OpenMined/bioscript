@@ -40,7 +40,10 @@ pub(crate) use heuristics::*;
 pub(crate) use io::*;
 #[cfg(test)]
 pub(crate) use render::*;
-pub use sex::{InferredSex, SexDetectionConfidence, SexInference};
+pub use sex::{
+    InferredSex, SexDetectionConfidence, SexInference, infer_sex_from_alignment_reader,
+    infer_sex_from_text_lines,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileContainer {

@@ -70,7 +70,31 @@ pub(crate) fn infer_sex_from_alignment_path(
         ..GenotypeLoadOptions::default()
     };
 
-    let stats = sample_alignment_sex_windows(path, &load_options, reference_file)?;
+    let stats = sample_alignment_sex_windows_from_path(path, &load_options, reference_file)?;
+    let mut inference = classify_alignment_stats(&stats);
+    if options.input_index.is_none() {
+        inference
+            .evidence
+            .push("CRAM sex detection ran without explicit --input-index".to_owned());
+    }
+    Ok(inference)
+}
+
+/// Reader-based equivalent of `infer_sex_from_alignment_path`. Wasm callers
+/// build the `IndexedReader` from JS-supplied `readAt` callbacks; this lets
+/// them invoke the same Y/X-vs-autosome coverage analysis the CLI uses
+/// without ever touching `std::fs`.
+pub fn infer_sex_from_alignment_reader<R: Read + std::io::Seek>(
+    reader: &mut noodles::cram::io::indexed_reader::IndexedReader<R>,
+    label: &str,
+    allow_reference_md5_mismatch: bool,
+) -> Result<SexInference, RuntimeError> {
+    let stats =
+        sample_alignment_sex_windows_with_reader(reader, label, allow_reference_md5_mismatch)?;
+    Ok(classify_alignment_stats(&stats))
+}
+
+fn classify_alignment_stats(stats: &AlignmentSexStats) -> SexInference {
     let autosome_mean = mean_records(stats.autosome_records, stats.autosome_windows);
     let x_mean = mean_records(stats.x_records, stats.x_windows);
     let y_mean = mean_records(stats.y_records, stats.y_windows);
@@ -91,7 +115,7 @@ pub(crate) fn infer_sex_from_alignment_path(
         (InferredSex::Unknown, SexDetectionConfidence::Low)
     };
 
-    let mut evidence = vec![
+    let evidence = vec![
         format!("autosome_windows={}", stats.autosome_windows),
         format!("autosome_records={}", stats.autosome_records),
         format!("x_windows={}", stats.x_windows),
@@ -104,19 +128,55 @@ pub(crate) fn infer_sex_from_alignment_path(
         format!("x_to_autosome_ratio={x_ratio:.3}"),
         format!("y_to_autosome_ratio={y_ratio:.3}"),
     ];
-    if options.input_index.is_none() {
-        evidence.push("CRAM sex detection ran without explicit --input-index".to_owned());
-    }
 
-    Ok(SexInference {
+    SexInference {
         sex,
         confidence,
         method: "alignment_autosome_x_y_depth_ratio".to_owned(),
         evidence,
-    })
+    }
 }
 
-fn sample_alignment_sex_windows(
+fn sample_alignment_sex_windows_with_reader<R: Read + std::io::Seek>(
+    reader: &mut noodles::cram::io::indexed_reader::IndexedReader<R>,
+    label: &str,
+    allow_reference_md5_mismatch: bool,
+) -> Result<AlignmentSexStats, RuntimeError> {
+    let mut stats = AlignmentSexStats::default();
+    for (chrom, center) in ALIGNMENT_AUTOSOME_WINDOWS {
+        stats.autosome_records += count_alignment_records_in_window(
+            reader,
+            label,
+            chrom,
+            *center,
+            allow_reference_md5_mismatch,
+        )?;
+        stats.autosome_windows += 1;
+    }
+    for center in ALIGNMENT_X_NON_PAR_WINDOWS {
+        stats.x_records += count_alignment_records_in_window(
+            reader,
+            label,
+            "X",
+            *center,
+            allow_reference_md5_mismatch,
+        )?;
+        stats.x_windows += 1;
+    }
+    for center in ALIGNMENT_Y_WINDOWS {
+        stats.y_records += count_alignment_records_in_window(
+            reader,
+            label,
+            "Y",
+            *center,
+            allow_reference_md5_mismatch,
+        )?;
+        stats.y_windows += 1;
+    }
+    Ok(stats)
+}
+
+fn sample_alignment_sex_windows_from_path(
     path: &Path,
     options: &GenotypeLoadOptions,
     reference_file: &Path,

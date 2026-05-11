@@ -20,6 +20,7 @@ pub use genotype::{
 };
 pub use inspect::{
     DetectedKind, DetectionConfidence, FileContainer, FileInspection, InferredSex, InspectOptions,
-    SexDetectionConfidence, SexInference, SourceMetadata, inspect_bytes, inspect_file,
+    SexDetectionConfidence, SexInference, SourceMetadata, infer_sex_from_alignment_reader,
+    infer_sex_from_text_lines, inspect_bytes, inspect_file,
 };
 pub use prepare::{PrepareRequest, PreparedPaths, prepare_indexes, shell_flags};
