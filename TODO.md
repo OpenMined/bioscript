@@ -82,7 +82,7 @@ surface requires it.
 
 - [x] Add `ports/vntyper/bioscript/vntyper.bs.py` or equivalent top-level
       BioScript pipeline entry point.
-- [ ] Add BioScript modules for:
+- [x] Add BioScript modules for:
       region selection, command planning, Kestrel VCF parsing, frameshift
       classification, confidence assignment, and report row generation.
 - [x] Add first BioScript-side post-processing module for Kestrel VCF parsing,
