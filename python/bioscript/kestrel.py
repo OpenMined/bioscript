@@ -207,6 +207,61 @@ def call_fastq_native(
     )
 
 
+def call_fastq_references_native(
+    references: Iterable[tuple[str, str, str]],
+    fastq_paths: Iterable[str],
+    kmer_size: int,
+    *,
+    sample_name: str = "sample1",
+    source_version: str = "native",
+    minimum_difference: int = 5,
+    difference_quantile: float = 0.90,
+    anchor_both_ends: bool = True,
+    decay_min: float = 0.55,
+    decay_alpha: float = 0.80,
+    peak_scan_length: int = 7,
+    scan_limit_factor: float = 7.0,
+    max_gap_size: int | None = None,
+    recover_right_anchor: bool = True,
+    call_ambiguous_regions: bool = True,
+    min_kmer_count: int = 1,
+    max_haplotypes: int = 40,
+    max_bases: int = 500,
+    max_repeat_count: int = 0,
+    max_saved_states: int = 40,
+    locus_depth: int = 1,
+) -> str:
+    """Run the native FASTQ-to-VCF Kestrel path over multiple references."""
+
+    native = _native()
+    reference_rows = [(str(name), str(sequence), str(md5)) for name, sequence, md5 in references]
+    return str(
+        native.kestrel_call_fastq_references_native(
+            reference_rows,
+            [_path_arg(path) for path in fastq_paths],
+            int(kmer_size),
+            sample_name,
+            source_version,
+            int(minimum_difference),
+            float(difference_quantile),
+            bool(anchor_both_ends),
+            float(decay_min),
+            float(decay_alpha),
+            int(peak_scan_length),
+            float(scan_limit_factor),
+            _optional_int(max_gap_size),
+            bool(recover_right_anchor),
+            bool(call_ambiguous_regions),
+            int(min_kmer_count),
+            int(max_haplotypes),
+            int(max_bases),
+            int(max_repeat_count),
+            int(max_saved_states),
+            int(locus_depth),
+        )
+    )
+
+
 def _path_arg(path: str) -> str:
     value = str(Path(path))
     if "\0" in value:

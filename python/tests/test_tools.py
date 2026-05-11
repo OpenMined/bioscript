@@ -142,6 +142,39 @@ class ToolCommandTests(unittest.TestCase):
             )
         self.assertEqual(calls[0][0:5], ("MUC1", "ACGT", ["reads.fastq"], 3, "sample1"))
 
+    def test_kestrel_native_multireference_fastq_wrapper_delegates_to_extension(self) -> None:
+        calls = []
+
+        def call_fastq_references(*args):
+            calls.append(args)
+            return "##fileformat=VCF4.2\n"
+
+        fake_native = SimpleNamespace(kestrel_call_fastq_references_native=call_fastq_references)
+        with patch.dict("sys.modules", {"bioscript._native": fake_native}):
+            self.assertEqual(
+                kestrel.call_fastq_references_native(
+                    [("REF1", "ACGT", "md5-1"), ("REF2", "TGCA", "md5-2")],
+                    ["reads.fastq"],
+                    3,
+                    sample_name="sample1",
+                    minimum_difference=1,
+                    difference_quantile=0.0,
+                    locus_depth=10,
+                ),
+                "##fileformat=VCF4.2\n",
+            )
+        self.assertEqual(
+            calls[0][0:5],
+            (
+                [("REF1", "ACGT", "md5-1"), ("REF2", "TGCA", "md5-2")],
+                ["reads.fastq"],
+                3,
+                "sample1",
+                "native",
+            ),
+        )
+        self.assertEqual(calls[0][-1], 10)
+
     def test_kestrel_native_sequences_wrapper_reports_missing_extension(self) -> None:
         with patch.dict("sys.modules", {"bioscript._native": None}):
             with self.assertRaises(NotImplementedError):
