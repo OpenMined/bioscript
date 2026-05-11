@@ -1,4 +1,4 @@
-use std::cmp::Reverse;
+use std::{cmp::Reverse, collections::BTreeSet};
 
 use crate::{LibError, LibResult};
 
@@ -9,6 +9,8 @@ pub struct HaplotypeAssemblyConfig {
     pub min_kmer_count: u32,
     pub max_haplotypes: usize,
     pub max_bases: usize,
+    pub max_repeat_count: usize,
+    pub max_saved_states: usize,
     pub locus_depth: u32,
 }
 
@@ -18,6 +20,8 @@ impl Default for HaplotypeAssemblyConfig {
             min_kmer_count: 1,
             max_haplotypes: 40,
             max_bases: 500,
+            max_repeat_count: 0,
+            max_saved_states: 40,
             locus_depth: 1,
         }
     }
@@ -44,6 +48,8 @@ pub fn assemble_haplotypes(
     let mut stack = vec![AssemblyState {
         sequence: left_anchor.to_owned(),
         min_depth: counts.get(left_anchor)?,
+        seen_kmers: BTreeSet::from([left_anchor.to_owned()]),
+        repeat_count: 0,
     }];
     let mut haplotypes = Vec::new();
 
@@ -65,8 +71,10 @@ pub fn assemble_haplotypes(
         }
 
         let mut next = next_states(&state, current_kmer, counts, config.min_kmer_count)?;
+        next.retain(|candidate| candidate.repeat_count <= config.max_repeat_count);
         next.sort_by_key(|candidate| Reverse(candidate.min_depth));
         stack.extend(next.into_iter().rev());
+        trim_saved_states(&mut stack, config.max_saved_states);
     }
 
     Ok(haplotypes)
@@ -76,6 +84,8 @@ pub fn assemble_haplotypes(
 struct AssemblyState {
     sequence: String,
     min_depth: u32,
+    seen_kmers: BTreeSet<String>,
+    repeat_count: usize,
 }
 
 fn next_states(
@@ -95,12 +105,24 @@ fn next_states(
         }
         let mut sequence = state.sequence.clone();
         sequence.push(base);
+        let mut seen_kmers = state.seen_kmers.clone();
+        let is_repeat = !seen_kmers.insert(next_kmer);
         states.push(AssemblyState {
             sequence,
             min_depth: state.min_depth.min(depth),
+            seen_kmers,
+            repeat_count: state.repeat_count + usize::from(is_repeat),
         });
     }
     Ok(states)
+}
+
+fn trim_saved_states(stack: &mut Vec<AssemblyState>, max_saved_states: usize) {
+    if stack.len() <= max_saved_states {
+        return;
+    }
+    stack.sort_by_key(|state| Reverse(state.min_depth));
+    stack.truncate(max_saved_states);
 }
 
 fn validate_config(config: &HaplotypeAssemblyConfig) -> LibResult<()> {
@@ -117,6 +139,11 @@ fn validate_config(config: &HaplotypeAssemblyConfig) -> LibResult<()> {
     if config.max_bases == 0 {
         return Err(LibError::InvalidArguments(
             "Kestrel haplotype max_bases must be at least 1".to_owned(),
+        ));
+    }
+    if config.max_saved_states == 0 {
+        return Err(LibError::InvalidArguments(
+            "Kestrel haplotype max_saved_states must be at least 1".to_owned(),
         ));
     }
     Ok(())

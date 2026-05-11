@@ -584,6 +584,8 @@ fn kestrel_native_haplotype_assembler_follows_counted_kmer_paths() {
             min_kmer_count: 1,
             max_haplotypes: 4,
             max_bases: 20,
+            max_repeat_count: 0,
+            max_saved_states: 4,
             locus_depth: 10,
         },
     )
@@ -593,6 +595,46 @@ fn kestrel_native_haplotype_assembler_follows_counted_kmer_paths() {
     assert_eq!(haplotypes[0].sequence, "ACGTTAC");
     assert_eq!(haplotypes[0].variant_depth, 1);
     assert_eq!(haplotypes[0].locus_depth, 10);
+}
+
+#[test]
+fn kestrel_native_haplotype_assembler_limits_repeated_kmers() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "AAAAAA".to_owned(),
+    };
+    let active = ActiveRegion::new(&region, Some(0), Some(1), &[10, 10], 3).unwrap();
+    let counts = KmerCountMap::from_sequences(["AAAAAA"], 3).unwrap();
+    let no_repeats = assemble_haplotypes(
+        &active,
+        &counts,
+        &HaplotypeAssemblyConfig {
+            min_kmer_count: 1,
+            max_haplotypes: 4,
+            max_bases: 8,
+            max_repeat_count: 0,
+            max_saved_states: 4,
+            locus_depth: 10,
+        },
+    )
+    .unwrap();
+    assert!(no_repeats.is_empty());
+
+    let one_repeat = assemble_haplotypes(
+        &active,
+        &counts,
+        &HaplotypeAssemblyConfig {
+            min_kmer_count: 1,
+            max_haplotypes: 4,
+            max_bases: 8,
+            max_repeat_count: 1,
+            max_saved_states: 4,
+            locus_depth: 10,
+        },
+    )
+    .unwrap();
+    assert_eq!(one_repeat.len(), 1);
+    assert_eq!(one_repeat[0].sequence, "AAAA");
 }
 
 #[test]
@@ -611,6 +653,8 @@ fn kestrel_native_assembled_haplotype_engine_writes_vcf() {
             min_kmer_count: 1,
             max_haplotypes: 4,
             max_bases: 20,
+            max_repeat_count: 0,
+            max_saved_states: 4,
             locus_depth: 10,
         },
         &NativeKestrelCallConfig::new("native", "sample1", "md5"),
@@ -642,6 +686,8 @@ fn kestrel_native_sequences_engine_counts_detects_assembles_and_writes_vcf() {
             min_kmer_count: 1,
             max_haplotypes: 4,
             max_bases: 30,
+            max_repeat_count: 0,
+            max_saved_states: 4,
             locus_depth: 10,
         },
         &NativeKestrelCallConfig::new("native", "sample1", "md5"),
@@ -682,6 +728,8 @@ fn kestrel_native_fastq_engine_counts_detects_assembles_and_writes_vcf() {
             min_kmer_count: 1,
             max_haplotypes: 4,
             max_bases: 30,
+            max_repeat_count: 0,
+            max_saved_states: 4,
             locus_depth: 10,
         },
         &NativeKestrelCallConfig::new("native", "sample1", "md5"),
