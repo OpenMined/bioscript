@@ -164,6 +164,12 @@ fn candidate_regions(
             && !config.anchor_both_ends
             && index >= kmer_size.saturating_sub(1)
         {
+            if let Some(next_index) =
+                skip_left_peak(counts, index, left, right, difference_threshold, config)
+            {
+                index = next_index;
+                continue;
+            }
             regions.push(ActiveRegion::new(
                 region,
                 None,
@@ -177,6 +183,35 @@ fn candidate_regions(
         index += 1;
     }
     Ok(regions)
+}
+
+fn skip_left_peak(
+    counts: &[u32],
+    index: usize,
+    left: u32,
+    right: u32,
+    difference_threshold: u32,
+    config: &ActiveRegionDetectorConfig,
+) -> Option<usize> {
+    if config.peak_scan_length == 0 {
+        return None;
+    }
+
+    let java_difference_threshold = difference_threshold.saturating_sub(1);
+    let recovery_value = left + java_difference_threshold;
+    let scan_limit = index
+        .saturating_add(config.peak_scan_length)
+        .min(counts.len());
+    let mut scan_index = index + 1;
+    while scan_index < scan_limit {
+        if counts[scan_index] <= recovery_value
+            && right.saturating_sub(counts[scan_index]) < java_difference_threshold
+        {
+            return Some(scan_index + 1);
+        }
+        scan_index += 1;
+    }
+    None
 }
 
 fn scan_right_end(
