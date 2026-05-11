@@ -35,6 +35,20 @@ pub fn query_bam_records(
     Ok(records)
 }
 
+pub fn query_bam_depth_summary(
+    path: &Path,
+    options: &GenotypeLoadOptions,
+    locus: &GenomicLocus,
+) -> Result<DepthSummary, RuntimeError> {
+    let records = query_bam_records(path, options, locus)?;
+    let span = depth_span(locus)?;
+    let mut depths = vec![0_u32; span];
+    for record in &records {
+        add_record_depth(record, locus.start, &mut depths);
+    }
+    Ok(DepthSummary::from_depths(depths))
+}
+
 fn build_indexed_reader(
     path: &Path,
     options: &GenotypeLoadOptions,
@@ -65,6 +79,67 @@ fn build_indexed_reader(
         .map_err(|err| RuntimeError::Io(format!("failed to open indexed BAM: {err}")))
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct DepthSummary {
+    pub mean: f64,
+    pub median: f64,
+    pub stdev: f64,
+    pub min: u32,
+    pub max: u32,
+    pub region_length: usize,
+    pub uncovered_bases: usize,
+    pub percent_uncovered: f64,
+}
+
+impl DepthSummary {
+    fn from_depths(mut depths: Vec<u32>) -> Self {
+        if depths.is_empty() {
+            return Self {
+                mean: 0.0,
+                median: 0.0,
+                stdev: 0.0,
+                min: 0,
+                max: 0,
+                region_length: 0,
+                uncovered_bases: 0,
+                percent_uncovered: 0.0,
+            };
+        }
+        let region_length = depths.len();
+        let uncovered_bases = depths.iter().filter(|depth| **depth == 0).count();
+        let sum = depths.iter().map(|depth| f64::from(*depth)).sum::<f64>();
+        let mean = sum / region_length as f64;
+        let stdev = (depths
+            .iter()
+            .map(|depth| {
+                let delta = f64::from(*depth) - mean;
+                delta * delta
+            })
+            .sum::<f64>()
+            / region_length as f64)
+            .sqrt();
+        let min = depths.iter().copied().min().unwrap_or(0);
+        let max = depths.iter().copied().max().unwrap_or(0);
+        depths.sort_unstable();
+        let median = if region_length % 2 == 0 {
+            let upper = region_length / 2;
+            (f64::from(depths[upper - 1]) + f64::from(depths[upper])) / 2.0
+        } else {
+            f64::from(depths[region_length / 2])
+        };
+        Self {
+            mean,
+            median,
+            stdev,
+            min,
+            max,
+            region_length,
+            uncovered_bases,
+            percent_uncovered: uncovered_bases as f64 / region_length as f64 * 100.0,
+        }
+    }
+}
+
 fn build_region(locus: &GenomicLocus) -> Result<Region, RuntimeError> {
     let start = usize::try_from(locus.start)
         .ok()
@@ -75,6 +150,48 @@ fn build_region(locus: &GenomicLocus) -> Result<Region, RuntimeError> {
         .and_then(Position::new)
         .ok_or_else(|| RuntimeError::InvalidArguments("BAM query end must be >= 1".to_owned()))?;
     Ok(Region::new(locus.chrom.clone(), start..=end))
+}
+
+fn depth_span(locus: &GenomicLocus) -> Result<usize, RuntimeError> {
+    if locus.end < locus.start {
+        return Err(RuntimeError::InvalidArguments(
+            "BAM depth end must be >= start".to_owned(),
+        ));
+    }
+    usize::try_from(locus.end - locus.start + 1).map_err(|_| {
+        RuntimeError::InvalidArguments("BAM depth region length is too large".to_owned())
+    })
+}
+
+fn add_record_depth(record: &AlignmentRecord, locus_start: i64, depths: &mut [u32]) {
+    if record.is_unmapped || record.start < 1 {
+        return;
+    }
+    let mut reference_position = record.start;
+    for op in &record.cigar {
+        match op.kind {
+            AlignmentOpKind::Match
+            | AlignmentOpKind::SequenceMatch
+            | AlignmentOpKind::SequenceMismatch => {
+                for offset in 0..op.len {
+                    let pos = reference_position + i64::try_from(offset).unwrap_or(i64::MAX);
+                    if let Ok(index) = usize::try_from(pos - locus_start) {
+                        if let Some(depth) = depths.get_mut(index) {
+                            *depth = depth.saturating_add(1);
+                        }
+                    }
+                }
+                reference_position += i64::try_from(op.len).unwrap_or(i64::MAX);
+            }
+            AlignmentOpKind::Deletion | AlignmentOpKind::Skip => {
+                reference_position += i64::try_from(op.len).unwrap_or(i64::MAX);
+            }
+            AlignmentOpKind::Insertion
+            | AlignmentOpKind::SoftClip
+            | AlignmentOpKind::HardClip
+            | AlignmentOpKind::Pad => {}
+        }
+    }
 }
 
 fn convert_record(record: &bam::Record) -> Result<AlignmentRecord, RuntimeError> {
@@ -199,6 +316,41 @@ mod tests {
         assert_eq!(records[0].end, 1003);
         assert_eq!(records[0].cigar[0].kind, AlignmentOpKind::Match);
         assert_eq!(records[0].cigar[0].len, 4);
+        Ok(())
+    }
+
+    #[test]
+    fn query_bam_depth_summary_counts_zero_coverage_positions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir =
+            std::env::temp_dir().join(format!("bioscript-bam-depth-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        let bam_path = dir.join("mini.bam");
+        let bai_path = dir.join("mini.bam.bai");
+        write_fixture_bam(&bam_path)?;
+        let index = bam::fs::index(&bam_path)?;
+        bam::bai::fs::write(&bai_path, &index)?;
+
+        let summary = query_bam_depth_summary(
+            &bam_path,
+            &GenotypeLoadOptions {
+                input_index: Some(bai_path),
+                ..GenotypeLoadOptions::default()
+            },
+            &GenomicLocus {
+                chrom: "chr_test".to_owned(),
+                start: 999,
+                end: 1004,
+            },
+        )?;
+
+        fs::remove_dir_all(&dir)?;
+        assert_eq!(summary.region_length, 6);
+        assert_eq!(summary.uncovered_bases, 2);
+        assert_eq!(summary.min, 0);
+        assert_eq!(summary.max, 1);
+        assert!((summary.mean - (4.0 / 6.0)).abs() < f64::EPSILON);
         Ok(())
     }
 

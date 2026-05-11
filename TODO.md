@@ -242,8 +242,9 @@ surface requires it.
 - [ ] M11: Replace selected external-tool behavior with Rust/noodles wrappers
       where the benefit is clear.
       First slice done for indexed BAM region fetch; remaining candidates are
-      BAM slicing/writing, FASTQ extraction, depth calculation, and VCF
-      sorting/indexing.
+      BAM slicing/writing, FASTQ extraction, and VCF sorting/indexing. Native
+      indexed BAM depth summary now exists in
+      `bioscript-formats::alignment::query_bam_depth_summary`.
 
 ## Open Decisions
 
