@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -89,6 +90,35 @@ def read_vcf(path: str) -> list[dict[str, str]]:
             values = line.split("\t")
             rows.append({key: values[idx] if idx < len(values) else "" for idx, key in enumerate(header)})
     return rows
+
+
+def load_reference_regions(path: str) -> list[tuple[str, str, str]]:
+    """Read FASTA records as native Kestrel reference triples."""
+
+    records: list[tuple[str, str, str]] = []
+    current_name: str | None = None
+    current_parts: list[str] = []
+    with open(path, encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if current_name is not None:
+                    records.append(_reference_region(current_name, current_parts))
+                current_name = line[1:].split()[0]
+                if not current_name:
+                    raise ValueError("FASTA record name cannot be empty")
+                current_parts = []
+                continue
+            if current_name is None:
+                raise ValueError("FASTA sequence appeared before a record header")
+            current_parts.append(line)
+    if current_name is not None:
+        records.append(_reference_region(current_name, current_parts))
+    if not records:
+        raise ValueError(f"FASTA file contains no records: {path}")
+    return records
 
 
 def call_sequences_native(
@@ -273,6 +303,13 @@ def _optional_int(value: int | None) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _reference_region(name: str, sequence_parts: list[str]) -> tuple[str, str, str]:
+    sequence = "".join(sequence_parts)
+    if not sequence:
+        raise ValueError(f"FASTA record contains no sequence: {name}")
+    return (name, sequence, hashlib.md5(sequence.encode("ascii")).hexdigest())
 
 
 def _validate_program(program: str) -> None:
