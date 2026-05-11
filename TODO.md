@@ -111,9 +111,9 @@ surface requires it.
 - [ ] Port the Kestrel Java internals only after the external-tool-backed
       wrapper passes VNtyper parity. Candidate internal packages:
       `counter`, `activeregion`, `align`, `variant`, and `writer.vcf`.
-- [ ] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
+- [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
-- [ ] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
+- [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
       the first milestone.
 - [x] Add lightweight `bioscript.vcf` parsing helpers for Kestrel VCF rows.
 - [x] Add TSV/CSV/table helpers if the port would otherwise need a pandas-like
@@ -155,7 +155,7 @@ surface requires it.
       Python dependencies and external tools are installed.
 - [x] Run BioScript tests without external tools by using fixed Kestrel VCF
       fixtures.
-- [ ] Run full pipeline tests only when Kestrel/samtools/test data are present.
+- [x] Run full pipeline tests only when Kestrel/samtools/test data are present.
 
 ## Reporting / UI Parity
 
@@ -204,7 +204,7 @@ surface requires it.
 - [ ] M6: Structured report JSON parity for the minimal BAM/Kestrel path.
 - [x] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
       logs.
-- [ ] M8: FASTQ path works using external fastp/bwa or documented prealigned
+- [x] M8: FASTQ path works using external fastp/bwa or documented prealigned
       inputs.
 - [x] M9: Optional adVNTR/SHARK/cohort/report modules triaged.
 - [ ] M10: IGV visualization parity.
