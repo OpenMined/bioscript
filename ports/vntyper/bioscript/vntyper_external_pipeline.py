@@ -74,6 +74,7 @@ def run_bam_pipeline(
         plan.samtools_view_command,
         plan.samtools_index_command,
         plan.samtools_fastq_command,
+        plan.samtools_depth_command,
         plan.kestrel_command,
         plan.bcftools_sort_command,
         plan.bcftools_index_command,

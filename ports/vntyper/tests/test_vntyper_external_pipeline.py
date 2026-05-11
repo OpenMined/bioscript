@@ -31,7 +31,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
             dry_run=True,
         )
 
-        self.assertEqual([command[0] for command in result.commands], ["samtools", "samtools", "samtools", "java", "bcftools", "bcftools"])
+        self.assertEqual([command[0] for command in result.commands], ["samtools", "samtools", "samtools", "samtools", "java", "bcftools", "bcftools"])
         self.assertEqual(result.kestrel_vcf, "work/sample1/kestrel/output.vcf")
         self.assertEqual(result.kestrel_tsv, "work/sample1/kestrel/kestrel_result.tsv")
         self.assertEqual(result.report_json, "work/sample1/report.json")
@@ -58,7 +58,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                 runner=fake_runner,
             )
 
-            self.assertEqual([command[0] for command in calls], ["samtools", "samtools", "samtools", "java", "bcftools", "bcftools"])
+            self.assertEqual([command[0] for command in calls], ["samtools", "samtools", "samtools", "samtools", "java", "bcftools", "bcftools"])
             self.assertTrue(Path(result.kestrel_tsv).exists())
             self.assertTrue(Path(result.report_json).exists())
             with open(result.kestrel_tsv, "r", encoding="utf-8") as handle:
@@ -69,7 +69,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                 report = json.load(handle)
             self.assertEqual(report["sample_name"], "sample1")
             self.assertEqual(report["metadata"]["alignment_pipeline"], "external samtools/kestrel")
-            self.assertEqual(len(report["pipeline_log"]), 6)
+            self.assertEqual(len(report["pipeline_log"]), 7)
 
 
 if __name__ == "__main__":
