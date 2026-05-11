@@ -243,12 +243,21 @@ surface requires it.
       reference-consistent case (`AAAACCC`, `CCCTGGG`, `GGGTTTT`) against
       `AAAACCCCGGGGTTTT`. It also assigns VCF DP from the total assembled
       active-region haplotype depth, matching Java's mixed reference/alternate
-      depth shape. A local full VNtyper motif FASTQ probe currently shows that
+      depth shape. The native VCF engine now also scores assembled haplotypes
+      with Java-shaped affine alignment weights and emits only the best-scoring
+      alternate haplotypes for each active region, while preserving all current
+      synthetic Java parity cases. A local full VNtyper motif FASTQ probe
+      currently shows that
       the native path is still not yet proven for the 551-record motif
       dictionary: after replacing the internal k-mer/transition store with
       `HashMap`, a constrained single-reference full-FASTQ run improved from
       about 22 seconds to about 6.3 seconds, and a bounded full-dictionary run
-      also completes in about 6.3 seconds before post-processing. The remaining
+      also completes in about 6.3 seconds before post-processing. After the
+      first alignment-score pruning pass, the representative positive FASTQ
+      native run completes in about 11.8 seconds and drops from the previous
+      5,252 VCF rows / 932 VNtyper-passing rows to 2,191 VCF rows / 205
+      VNtyper-passing rows, but still reports `High_Precision` where the Java
+      expected report is negative. The remaining
       work is the full Java active-region detector heuristics, Java-equivalent
       haplotype-state pruning at `maxhapstates=40`, and broader parity against
       Java Kestrel outputs on larger synthetic and VNtyper fixtures.
