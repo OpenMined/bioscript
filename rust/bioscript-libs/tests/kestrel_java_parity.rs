@@ -148,6 +148,28 @@ fn native_kestrel_fastq_output_matches_java_for_k20_nonrepetitive_deletion() {
 }
 
 #[test]
+fn native_kestrel_fastq_output_matches_java_for_k20_mixed_depth_deletion() {
+    let dir = parity_temp_dir("k20-mixed-depth-deletion");
+    let deletion_read = "ACGTTGCAACGAGTCCATGCTAGGCTAACCGTACGGATCCGTAAGCTTGCAAGTCGATGCTAACGTTAGC";
+    let fastq = mixed_fastq(LONG_NONREPETITIVE_REFERENCE, 5, deletion_read, 5);
+    let fixture = KestrelParityFixture::new(
+        "REF",
+        LONG_NONREPETITIVE_REFERENCE,
+        "e50386beaaf4c2113705c82a71502260",
+        &fastq,
+    )
+    .with_kmer_size(20)
+    .with_max_states(80);
+    let (java_vcf, native_vcf) = run_java_and_native(&dir, &fixture);
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
+#[test]
 fn native_kestrel_fastq_output_matches_java_for_k20_nonrepetitive_insertion() {
     let dir = parity_temp_dir("k20-nonrepetitive-insertion");
     let read = "ACGTTGCAACGAGTCCATGCTAGGCTAACCGTTGATATCGGATCCGTAAGCTTGCAAGTCGATGCTAACGTTAGC";
@@ -350,6 +372,24 @@ fn repeated_fastq(read: &str, copies: usize) -> Vec<u8> {
     for read_index in 1..=copies {
         fastq.extend_from_slice(format!("@r{read_index}\n{read}\n+\n").as_bytes());
         fastq.extend_from_slice(format!("{}\n", "I".repeat(read.len())).as_bytes());
+    }
+    fastq
+}
+
+fn mixed_fastq(
+    first_read: &str,
+    first_copies: usize,
+    second_read: &str,
+    second_copies: usize,
+) -> Vec<u8> {
+    let mut fastq = Vec::new();
+    for read_index in 1..=first_copies {
+        fastq.extend_from_slice(format!("@ref{read_index}\n{first_read}\n+\n").as_bytes());
+        fastq.extend_from_slice(format!("{}\n", "I".repeat(first_read.len())).as_bytes());
+    }
+    for read_index in 1..=second_copies {
+        fastq.extend_from_slice(format!("@alt{read_index}\n{second_read}\n+\n").as_bytes());
+        fastq.extend_from_slice(format!("{}\n", "I".repeat(second_read.len())).as_bytes());
     }
     fastq
 }
