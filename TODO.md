@@ -205,14 +205,16 @@ surface requires it.
       compares native FASTQ-to-VCF output with Java Kestrel on tiny
       perfect-reference no-variant, MUC1 SNP, nonrepetitive SNP, adjacent
       nonrepetitive SNPs, k=20 nonrepetitive SNP/deletion/insertion fixtures,
-      and sparse split-read fixtures.
+      mixed reference/alternate deletion depth, and sparse split-read fixtures.
       The native assembler now tracks observed adjacent k-mer transitions from
       each read/FASTQ record and refuses to bridge k-mers that were never
       adjacent in an input read, which fixes the Java-confirmed sparse
       reference-consistent case (`AAAACCC`, `CCCTGGG`, `GGGTTTT`) against
-      `AAAACCCCGGGGTTTT`. The remaining work is the full Java active-region
-      detector heuristics and broader parity against Java Kestrel outputs on
-      larger synthetic and VNtyper fixtures.
+      `AAAACCCCGGGGTTTT`. It also assigns VCF DP from the total assembled
+      active-region haplotype depth, matching Java's mixed reference/alternate
+      depth shape. The remaining work is the full Java active-region detector
+      heuristics and broader parity against Java Kestrel outputs on larger
+      synthetic and VNtyper fixtures.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in

@@ -77,6 +77,7 @@ pub fn assemble_haplotypes(
         trim_saved_states(&mut stack, config.max_saved_states);
     }
 
+    apply_locus_depth(&mut haplotypes, config.locus_depth);
     Ok(haplotypes)
 }
 
@@ -127,6 +128,18 @@ fn trim_saved_states(stack: &mut Vec<AssemblyState>, max_saved_states: usize) {
     }
     stack.sort_by_key(|state| Reverse(state.min_depth));
     stack.truncate(max_saved_states);
+}
+
+fn apply_locus_depth(haplotypes: &mut [HaplotypeEvidence], minimum_locus_depth: u32) {
+    let total_depth = haplotypes
+        .iter()
+        .fold(0u32, |total, haplotype| {
+            total.saturating_add(haplotype.variant_depth)
+        })
+        .max(minimum_locus_depth);
+    for haplotype in haplotypes {
+        haplotype.locus_depth = total_depth;
+    }
 }
 
 fn validate_config(config: &HaplotypeAssemblyConfig) -> LibResult<()> {

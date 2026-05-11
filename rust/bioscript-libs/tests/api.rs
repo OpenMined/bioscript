@@ -1196,6 +1196,41 @@ fn kestrel_native_haplotype_assembler_follows_counted_kmer_paths() {
 }
 
 #[test]
+fn kestrel_native_haplotype_assembler_uses_total_active_region_depth() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "ACGTAC".to_owned(),
+    };
+    let active = ActiveRegion::new(&region, Some(0), Some(3), &[2, 2, 1, 2], 3).unwrap();
+    let counts = KmerCountMap::from_sequences(["ACGTAC", "ACGTTAC"], 3).unwrap();
+    let haplotypes = assemble_haplotypes(
+        &active,
+        &counts,
+        &HaplotypeAssemblyConfig {
+            min_kmer_count: 1,
+            max_haplotypes: 4,
+            max_bases: 20,
+            max_repeat_count: 0,
+            max_saved_states: 4,
+            locus_depth: 1,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(haplotypes.len(), 2);
+    assert!(
+        haplotypes
+            .iter()
+            .all(|haplotype| haplotype.locus_depth == 2)
+    );
+    assert!(
+        haplotypes
+            .iter()
+            .any(|haplotype| haplotype.sequence == "ACGTTAC" && haplotype.variant_depth == 1)
+    );
+}
+
+#[test]
 fn kestrel_native_haplotype_assembler_limits_repeated_kmers() {
     let region = ReferenceRegion {
         reference_name: "MUC1".to_owned(),
