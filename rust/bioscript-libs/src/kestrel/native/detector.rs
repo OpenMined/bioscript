@@ -12,6 +12,7 @@ pub struct ActiveRegionDetectorConfig {
     pub decay_alpha: f32,
     pub peak_scan_length: usize,
     pub scan_limit_factor: f32,
+    pub recover_right_anchor: bool,
 }
 
 impl Default for ActiveRegionDetectorConfig {
@@ -25,6 +26,7 @@ impl Default for ActiveRegionDetectorConfig {
             decay_alpha: 0.80,
             peak_scan_length: 7,
             scan_limit_factor: 7.0,
+            recover_right_anchor: true,
         }
     }
 }
@@ -210,6 +212,13 @@ fn scan_right_end(
         }
 
         if config.peak_scan_length == 0 {
+            if end == counts.len() && config.recover_right_anchor {
+                if let Some(anchor) =
+                    recover_right_anchor_index(counts, start_index, kmer_size, difference_threshold)
+                {
+                    return Ok(Some(anchor));
+                }
+            }
             return Ok(Some(end));
         }
 
@@ -247,8 +256,34 @@ fn scan_right_end(
             return Ok(Some(last_valley_index));
         }
 
+        if end == counts.len() && config.recover_right_anchor {
+            if let Some(anchor) =
+                recover_right_anchor_index(counts, start_index, kmer_size, difference_threshold)
+            {
+                return Ok(Some(anchor));
+            }
+        }
+
         return Ok(Some(end));
     }
+}
+
+fn recover_right_anchor_index(
+    counts: &[u32],
+    start_index: usize,
+    kmer_size: usize,
+    difference_threshold: u32,
+) -> Option<usize> {
+    let mut index = start_index + kmer_size;
+    while index < counts.len() {
+        if counts[index] > counts[index - 1]
+            && counts[index] - counts[index - 1] >= difference_threshold
+        {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
 }
 
 pub fn scan_limit_length(
