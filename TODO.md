@@ -207,10 +207,15 @@ surface requires it.
       an opt-in `use_native_kestrel` path for both BAM-derived FASTQs and
       direct FASTQ inputs; it loads the motif FASTA, runs
       `call_fastq_references_native`, writes `output.vcf`, and reuses the
-      existing TSV/report materialization. The Java parity gate now includes a
-      multi-reference FASTQ fixture that emits all contig headers and calls the
-      matching reference record, which is the next required shape for full
-      VNtyper motif-reference parity. The
+      existing TSV/report materialization. For development runs, that VNtyper
+      native path uses a bounded haplotype beam (`max_haplotypes=2`,
+      `max_saved_states=2`, `max_bases=120`) so the full 551-record motif
+      dictionary completes on representative FASTQs; a local positive-sample
+      probe now materializes VCF/TSV/report in about 12 seconds, but still
+      classifies the expected-positive sample as negative. The Java parity gate
+      now includes a multi-reference FASTQ fixture that emits all contig
+      headers and calls the matching reference record, which is the next
+      required shape for full VNtyper motif-reference parity. The
       haplotype assembler now tracks repeated k-mers and trims saved states by
       path depth using exposed `max_repeat_count` and `max_saved_states`
       controls. A first opt-in Java parity gate now exists at
@@ -231,11 +236,11 @@ surface requires it.
       the native path is still not yet proven for the 551-record motif
       dictionary: after replacing the internal k-mer/transition store with
       `HashMap`, a constrained single-reference full-FASTQ run improved from
-      about 22 seconds to about 6.3 seconds, while tiny 100-read samples scale
-      acceptably. The remaining work is the full Java active-region detector
-      heuristics, additional k-mer/count-transition optimization or candidate
-      motif prefiltering, and broader parity against Java Kestrel outputs on
-      larger synthetic and VNtyper fixtures.
+      about 22 seconds to about 6.3 seconds, and a bounded full-dictionary run
+      also completes in about 6.3 seconds before post-processing. The remaining
+      work is the full Java active-region detector heuristics, Java-equivalent
+      haplotype-state pruning at `maxhapstates=40`, and broader parity against
+      Java Kestrel outputs on larger synthetic and VNtyper fixtures.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in

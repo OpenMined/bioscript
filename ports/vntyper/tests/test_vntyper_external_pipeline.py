@@ -209,8 +209,8 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                     calls.append(("load_refs", path))
                     return [("MUC1", "ACGT", "md5")]
 
-                def call_fastq_references_native(self, references, fastqs, kmer_size, sample_name):
-                    calls.append(("kestrel", references, fastqs, kmer_size, sample_name))
+                def call_fastq_references_native(self, references, fastqs, kmer_size, **kwargs):
+                    calls.append(("kestrel", references, fastqs, kmer_size, kwargs))
                     return FIXTURE_VCF.read_text(encoding="utf-8")
 
             result = vntyper_external_pipeline.run_bam_pipeline(
@@ -224,6 +224,9 @@ class VntyperExternalPipelineTests(unittest.TestCase):
             )
 
             self.assertEqual([call[0] for call in calls], ["view", "fastq", "depth", "load_refs", "kestrel"])
+            self.assertEqual(calls[-1][4]["max_haplotypes"], 2)
+            self.assertEqual(calls[-1][4]["max_saved_states"], 2)
+            self.assertEqual(calls[-1][4]["max_bases"], 120)
             self.assertTrue(Path(result.kestrel_tsv).exists())
             with open(result.report_json, "r", encoding="utf-8") as handle:
                 report = json.load(handle)
@@ -275,8 +278,8 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                     calls.append(("load_refs", path))
                     return [("MUC1", "ACGT", "md5")]
 
-                def call_fastq_references_native(self, references, fastqs, kmer_size, sample_name):
-                    calls.append(("kestrel", references, fastqs, kmer_size, sample_name))
+                def call_fastq_references_native(self, references, fastqs, kmer_size, **kwargs):
+                    calls.append(("kestrel", references, fastqs, kmer_size, kwargs))
                     return FIXTURE_VCF.read_text(encoding="utf-8")
 
             result = vntyper_external_pipeline.run_fastq_kestrel(
@@ -289,6 +292,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
             )
 
             self.assertEqual([call[0] for call in calls], ["load_refs", "kestrel"])
+            self.assertEqual(calls[-1][4]["max_haplotypes"], 2)
             self.assertTrue(Path(result.kestrel_tsv).exists())
             with open(result.report_json, "r", encoding="utf-8") as handle:
                 report = json.load(handle)
