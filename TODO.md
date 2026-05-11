@@ -223,6 +223,9 @@ surface requires it.
       reproduce Kestrel VCF output for one tiny fixture or document why the JVM
       adapter remains the practical first target.
 - [ ] M6: Structured report JSON parity for the minimal BAM/Kestrel path.
+      Fake-runner coverage now captures `samtools depth -a` output and feeds
+      mean/median/stdev/min/max/uncovered-base fields into the structured JSON;
+      real BAM/Kestrel parity still needs expected large outputs.
 - [x] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
       logs.
 - [x] M8: FASTQ path works using external fastp/bwa or documented prealigned

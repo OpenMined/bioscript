@@ -4,6 +4,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 
@@ -40,16 +41,20 @@ class VntyperExternalPipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             calls = []
 
-            def fake_runner(command, check):
+            def fake_runner(command, check, **kwargs):
                 calls.append(command)
                 if command[0] == "samtools" and command[1] == "view":
                     Path(command[command.index("-o") + 1]).write_bytes(b"bam")
                 if command[0] == "samtools" and command[1] == "fastq":
                     Path(command[command.index("-1") + 1]).write_bytes(b"r1")
                     Path(command[command.index("-2") + 1]).write_bytes(b"r2")
+                if command[0] == "samtools" and command[1] == "depth":
+                    self.assertTrue(kwargs["capture_output"])
+                    return SimpleNamespace(stdout="chr1\t100\t10\nchr1\t101\t0\nchr1\t102\t20\n")
                 if command[0] == "java":
                     shutil.copyfile(FIXTURE_VCF, command[command.index("-o") + 1])
                     Path(command[command.index("-p") + 1]).write_text("@HD\n", encoding="utf-8")
+                return SimpleNamespace(stdout="")
 
             result = vntyper_external_pipeline.run_bam_pipeline(
                 "sample.bam",
@@ -69,7 +74,22 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                 report = json.load(handle)
             self.assertEqual(report["sample_name"], "sample1")
             self.assertEqual(report["metadata"]["alignment_pipeline"], "external samtools/kestrel")
+            self.assertEqual(report["coverage"]["mean"], 10.0)
+            self.assertEqual(report["coverage"]["median"], 10)
+            self.assertEqual(report["coverage"]["min"], 0)
+            self.assertEqual(report["coverage"]["max"], 20)
+            self.assertEqual(report["coverage"]["region_length"], 3)
+            self.assertEqual(report["coverage"]["uncovered_bases"], 1)
             self.assertEqual(len(report["pipeline_log"]), 7)
+
+    def test_coverage_from_depth_ignores_malformed_lines(self):
+        coverage = vntyper_external_pipeline.coverage_from_depth(
+            "chr1\t10\t5\nbad\nchr1\t11\tNA\nchr1\t12\t15\n"
+        )
+
+        self.assertEqual(coverage["mean"], 10.0)
+        self.assertEqual(coverage["median"], 10.0)
+        self.assertEqual(coverage["region_length"], 2)
 
 
 if __name__ == "__main__":

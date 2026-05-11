@@ -98,7 +98,7 @@ def plan_bam_pipeline(
         samtools_view_command=samtools.view_region(input_bam, bam_region, sliced_bam),
         samtools_index_command=samtools.index(sliced_bam),
         samtools_fastq_command=samtools.fastq(sliced_bam, fastq_1, fastq_2),
-        samtools_depth_command=samtools.depth(sliced_bam, vntr_region),
+        samtools_depth_command=samtools.depth(sliced_bam, vntr_region, include_zero=True),
         kestrel_command=kestrel.build_command(
             kestrel_jar,
             muc1_reference,
