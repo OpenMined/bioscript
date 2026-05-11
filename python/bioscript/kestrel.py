@@ -129,6 +129,44 @@ def call_sequences_native(
     )
 
 
+def call_fastq_native(
+    reference_name: str,
+    reference_sequence: str,
+    fastq_paths: Iterable[str],
+    kmer_size: int,
+    *,
+    sample_name: str = "sample1",
+    source_version: str = "native",
+    reference_md5: str = ".",
+    minimum_difference: int = 5,
+    difference_quantile: float = 0.90,
+    min_kmer_count: int = 1,
+    max_haplotypes: int = 40,
+    max_bases: int = 500,
+    locus_depth: int = 1,
+) -> str:
+    """Run the native FASTQ-to-VCF Kestrel path."""
+
+    native = _native()
+    return str(
+        native.kestrel_call_fastq_native(
+            reference_name,
+            reference_sequence,
+            [_path_arg(path) for path in fastq_paths],
+            int(kmer_size),
+            sample_name,
+            source_version,
+            reference_md5,
+            int(minimum_difference),
+            float(difference_quantile),
+            int(min_kmer_count),
+            int(max_haplotypes),
+            int(max_bases),
+            int(locus_depth),
+        )
+    )
+
+
 def _path_arg(path: str) -> str:
     value = str(Path(path))
     if "\0" in value:
