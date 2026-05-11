@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 
 def build_command(
@@ -91,6 +91,44 @@ def read_vcf(path: str) -> list[dict[str, str]]:
     return rows
 
 
+def call_sequences_native(
+    reference_name: str,
+    reference_sequence: str,
+    read_sequences: Iterable[str],
+    kmer_size: int,
+    *,
+    sample_name: str = "sample1",
+    source_version: str = "native",
+    reference_md5: str = ".",
+    minimum_difference: int = 5,
+    difference_quantile: float = 0.90,
+    min_kmer_count: int = 1,
+    max_haplotypes: int = 40,
+    max_bases: int = 500,
+    locus_depth: int = 1,
+) -> str:
+    """Run the native synthetic reads-to-VCF Kestrel path."""
+
+    native = _native()
+    return str(
+        native.kestrel_call_sequences_native(
+            reference_name,
+            reference_sequence,
+            list(read_sequences),
+            int(kmer_size),
+            sample_name,
+            source_version,
+            reference_md5,
+            int(minimum_difference),
+            float(difference_quantile),
+            int(min_kmer_count),
+            int(max_haplotypes),
+            int(max_bases),
+            int(locus_depth),
+        )
+    )
+
+
 def _path_arg(path: str) -> str:
     value = str(Path(path))
     if "\0" in value:
@@ -103,3 +141,11 @@ def _validate_program(program: str) -> None:
         raise ValueError("program cannot be empty")
     if "/" in program or any(ch in program for ch in "|&;<>`$\n\r"):
         raise ValueError(f"program must be a simple executable name: {program!r}")
+
+
+def _native() -> Any:
+    try:
+        from . import _native as native
+    except ImportError as exc:
+        raise NotImplementedError("BioScript native Kestrel backend is not installed") from exc
+    return native

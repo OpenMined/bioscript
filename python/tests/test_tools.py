@@ -65,6 +65,54 @@ class ToolCommandTests(unittest.TestCase):
                 java_program="java;rm",
             )
 
+    def test_kestrel_native_sequences_wrapper_delegates_to_extension(self) -> None:
+        calls = []
+
+        def call_sequences(*args):
+            calls.append(args)
+            return "##fileformat=VCF4.2\n"
+
+        fake_native = SimpleNamespace(kestrel_call_sequences_native=call_sequences)
+        with patch.dict("sys.modules", {"bioscript._native": fake_native}):
+            self.assertEqual(
+                kestrel.call_sequences_native(
+                    "MUC1",
+                    "ACGT",
+                    ["ACGT"],
+                    3,
+                    sample_name="sample1",
+                    minimum_difference=1,
+                    difference_quantile=0.0,
+                    locus_depth=10,
+                ),
+                "##fileformat=VCF4.2\n",
+            )
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "MUC1",
+                    "ACGT",
+                    ["ACGT"],
+                    3,
+                    "sample1",
+                    "native",
+                    ".",
+                    1,
+                    0.0,
+                    1,
+                    40,
+                    500,
+                    10,
+                )
+            ],
+        )
+
+    def test_kestrel_native_sequences_wrapper_reports_missing_extension(self) -> None:
+        with patch.dict("sys.modules", {"bioscript._native": None}):
+            with self.assertRaises(NotImplementedError):
+                kestrel.call_sequences_native("MUC1", "ACGT", ["ACGT"], 3)
+
     def test_samtools_fastq_and_view_region(self) -> None:
         self.assertEqual(
             samtools.fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz"),
