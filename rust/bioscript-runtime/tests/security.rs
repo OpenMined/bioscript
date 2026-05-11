@@ -5,7 +5,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use bioscript_formats::GenotypeLoadOptions;
+use bioscript_core::GenomicLocus;
+use bioscript_formats::{GenotypeLoadOptions, alignment};
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig};
 use monty::{MontyObject, ResourceLimits};
 
@@ -109,6 +110,133 @@ fn pathlib_read_text_is_blocked() {
 fn unsupported_networkish_import_fails() {
     let err = run_script("import urllib\n").unwrap_err();
     assert!(err.contains("No module named 'urllib'"));
+}
+
+#[test]
+fn bioscript_library_import_binds_pysam_module() {
+    run_script(
+        r#"
+from bioscript import pysam
+
+def main():
+    pysam.AlignmentFile("sample.cram", "rc")
+
+if __name__ == "__main__":
+    main()
+"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn bioscript_library_import_supports_alias_and_pyfaidx_constructor() {
+    let dir = temp_dir("pyfaidx-import");
+    fs::write(dir.join("ref.fa"), ">chr_test\nACGT\n").unwrap();
+
+    run_script_with_inputs(
+        &dir,
+        r#"
+from bioscript import pyfaidx as fa
+
+def main():
+    fa.Fasta("ref.fa")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn bioscript_pysam_fetch_streams_tiny_cram_fixture() {
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bioscript-formats/tests/fixtures");
+    let root = temp_dir("pysam-fetch");
+    for fixture in ["mini.cram", "mini.cram.crai", "mini.fa", "mini.fa.fai"] {
+        fs::copy(source.join(fixture), root.join(fixture)).unwrap();
+    }
+    run_script_with_inputs(
+        &root,
+        r#"
+from bioscript import pysam
+
+def main():
+    bam = pysam.AlignmentFile(
+        "mini.cram",
+        "rc",
+        reference_filename="mini.fa",
+        index_filename="mini.cram.crai",
+    )
+    reads = bam.fetch("chr_test", 999, 1001)
+    if len(reads) == 0:
+        raise Exception("expected reads")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn bioscript_pysam_fetch_matches_high_level_alignment_depth() {
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bioscript-formats/tests/fixtures");
+    let root = temp_dir("pysam-depth-parity");
+    for fixture in ["mini.cram", "mini.cram.crai", "mini.fa", "mini.fa.fai"] {
+        fs::copy(source.join(fixture), root.join(fixture)).unwrap();
+    }
+
+    let expected_depth = alignment::query_cram_records(
+        &root.join("mini.cram"),
+        &GenotypeLoadOptions {
+            input_index: Some(root.join("mini.cram.crai")),
+            ..GenotypeLoadOptions::default()
+        },
+        &root.join("mini.fa"),
+        &GenomicLocus {
+            chrom: "chr_test".to_owned(),
+            start: 1000,
+            end: 1000,
+        },
+    )
+    .unwrap()
+    .len();
+
+    run_script_with_inputs(
+        &root,
+        r#"
+from bioscript import pysam
+
+def main():
+    bam = pysam.AlignmentFile(
+        "mini.cram",
+        "rc",
+        reference_filename="mini.fa",
+        index_filename="mini.cram.crai",
+    )
+    reads = bam.fetch("chr_test", 999, 1000)
+    rows = [{"depth": str(len(reads))}]
+    bioscript.write_tsv("pysam-depth.tsv", rows)
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+
+    let output = fs::read_to_string(root.join("pysam-depth.tsv")).unwrap();
+    assert_eq!(output.trim(), format!("depth\n{expected_depth}"));
+}
+
+#[test]
+fn bioscript_library_import_rejects_unknown_module() {
+    let err = run_script("from bioscript import numpy\n").unwrap_err();
+    assert!(err.contains("unknown bioscript library module: numpy"));
 }
 
 #[test]

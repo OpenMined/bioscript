@@ -72,7 +72,7 @@ where
     )
 }
 
-pub(crate) fn query_cram_records(
+pub fn query_cram_records(
     path: &Path,
     options: &GenotypeLoadOptions,
     reference_file: &Path,

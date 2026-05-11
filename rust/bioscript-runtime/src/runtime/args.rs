@@ -34,6 +34,73 @@ pub(crate) fn expect_string_arg(
     }
 }
 
+pub(crate) fn expect_int_arg(
+    args: &[MontyObject],
+    index: usize,
+    function_name: &str,
+) -> Result<i64, RuntimeError> {
+    let Some(value) = args.get(index) else {
+        return Err(RuntimeError::InvalidArguments(format!(
+            "{function_name} missing argument at position {index}"
+        )));
+    };
+    match value {
+        MontyObject::Int(value) => Ok(*value),
+        other => Err(RuntimeError::InvalidArguments(format!(
+            "{function_name} expected int at position {index}, got {other:?}"
+        ))),
+    }
+}
+
+pub(crate) fn optional_string_kwarg(
+    kwargs: &[(MontyObject, MontyObject)],
+    name: &str,
+    function_name: &str,
+) -> Result<Option<String>, RuntimeError> {
+    let mut found = None;
+    for (key, value) in kwargs {
+        let MontyObject::String(key) = key else {
+            return Err(RuntimeError::InvalidArguments(format!(
+                "{function_name} keyword names must be strings"
+            )));
+        };
+        if key == name {
+            if found.is_some() {
+                return Err(RuntimeError::InvalidArguments(format!(
+                    "{function_name} got duplicate keyword argument {name}"
+                )));
+            }
+            let MontyObject::String(value) = value else {
+                return Err(RuntimeError::InvalidArguments(format!(
+                    "{function_name} expected keyword {name} to be str"
+                )));
+            };
+            found = Some(value.clone());
+        }
+    }
+    Ok(found)
+}
+
+pub(crate) fn reject_unknown_kwargs(
+    kwargs: &[(MontyObject, MontyObject)],
+    allowed: &[&str],
+    function_name: &str,
+) -> Result<(), RuntimeError> {
+    for (key, _) in kwargs {
+        let MontyObject::String(key) = key else {
+            return Err(RuntimeError::InvalidArguments(format!(
+                "{function_name} keyword names must be strings"
+            )));
+        };
+        if !allowed.contains(&key.as_str()) {
+            return Err(RuntimeError::InvalidArguments(format!(
+                "{function_name} got unexpected keyword argument {key}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn expect_rows(
     value: &MontyObject,
 ) -> Result<Vec<BTreeMap<String, String>>, RuntimeError> {
