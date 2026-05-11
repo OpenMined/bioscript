@@ -28,7 +28,31 @@ pub(super) fn unsupported_sex_inference() -> SexInference {
 
 fn classify_y_fingerprint_stats(stats: &SexStats) -> SexInference {
     let called_y_pct = called_y_percent(stats);
-    let (sex, confidence) = if stats.total_y_snps > 1000
+    let x_haploid_pct = x_haploid_percent(stats);
+    let x_het_pct = x_het_total_percent(stats);
+    let x_diploid_het_pct = x_diploid_het_percent(stats);
+    let female_like_x =
+        stats.x_non_par_sites >= 1000 && stats.x_diploid_gt_sites >= 1000 && x_het_pct >= 2.0;
+    let male_like_x = stats.x_non_par_sites >= 1000 && x_haploid_pct >= 95.0;
+    let (sex, confidence) = if female_like_x {
+        (
+            InferredSex::Female,
+            if stats.x_non_par_sites >= 10_000 && x_het_pct >= 10.0 {
+                SexDetectionConfidence::High
+            } else {
+                SexDetectionConfidence::Medium
+            },
+        )
+    } else if male_like_x {
+        (
+            InferredSex::Male,
+            if stats.x_non_par_sites >= 10_000 && x_haploid_pct >= 99.0 {
+                SexDetectionConfidence::High
+            } else {
+                SexDetectionConfidence::Medium
+            },
+        )
+    } else if stats.total_y_snps > 1000
         && stats.male_markers_found >= 3
         && stats.male_markers_called == 0
         && called_y_pct < 20.0
@@ -58,8 +82,8 @@ fn classify_y_fingerprint_stats(stats: &SexStats) -> SexInference {
     SexInference {
         sex,
         confidence,
-        method: "y_fingerprint".to_owned(),
-        evidence: y_fingerprint_evidence(stats),
+        method: "snp_array_x_y_fingerprint".to_owned(),
+        evidence: y_fingerprint_evidence(stats, x_haploid_pct, x_het_pct, x_diploid_het_pct),
     }
 }
 
@@ -119,13 +143,25 @@ fn count_as_f64(count: usize) -> f64 {
     f64::from(u32::try_from(count).unwrap_or(u32::MAX))
 }
 
-fn y_fingerprint_evidence(stats: &SexStats) -> Vec<String> {
+fn y_fingerprint_evidence(
+    stats: &SexStats,
+    x_haploid_pct: f64,
+    x_het_pct: f64,
+    x_diploid_het_pct: f64,
+) -> Vec<String> {
     let mut evidence = vec![
         format!("total_y_snps={}", stats.total_y_snps),
         format!("called_y_snps={}", stats.called_y_snps),
         format!("called_y_pct={:.1}", called_y_percent(stats)),
         format!("male_markers_found={}", stats.male_markers_found),
         format!("male_markers_called={}", stats.male_markers_called),
+        format!("x_non_par_sites={}", stats.x_non_par_sites),
+        format!("x_haploid_gt_sites={}", stats.x_haploid_gt_sites),
+        format!("x_diploid_gt_sites={}", stats.x_diploid_gt_sites),
+        format!("x_het_gt_sites={}", stats.x_het_gt_sites),
+        format!("x_haploid_pct={x_haploid_pct:.2}"),
+        format!("x_het_pct={x_het_pct:.2}"),
+        format!("x_diploid_het_pct={x_diploid_het_pct:.2}"),
     ];
     if !stats.y_examples.is_empty() {
         evidence.push(format!("y_examples={}", stats.y_examples.join(",")));
@@ -140,5 +176,29 @@ fn called_y_percent(stats: &SexStats) -> f64 {
         let called_y_snps = u32::try_from(stats.called_y_snps).unwrap_or(u32::MAX);
         let total_y_snps = u32::try_from(stats.total_y_snps).unwrap_or(u32::MAX);
         f64::from(called_y_snps) * 100.0 / f64::from(total_y_snps)
+    }
+}
+
+fn x_haploid_percent(stats: &SexStats) -> f64 {
+    if stats.x_non_par_sites == 0 {
+        0.0
+    } else {
+        count_as_f64(stats.x_haploid_gt_sites) * 100.0 / count_as_f64(stats.x_non_par_sites)
+    }
+}
+
+fn x_het_total_percent(stats: &SexStats) -> f64 {
+    if stats.x_non_par_sites == 0 {
+        0.0
+    } else {
+        count_as_f64(stats.x_het_gt_sites) * 100.0 / count_as_f64(stats.x_non_par_sites)
+    }
+}
+
+fn x_diploid_het_percent(stats: &SexStats) -> f64 {
+    if stats.x_diploid_gt_sites == 0 {
+        0.0
+    } else {
+        count_as_f64(stats.x_het_gt_sites) * 100.0 / count_as_f64(stats.x_diploid_gt_sites)
     }
 }
