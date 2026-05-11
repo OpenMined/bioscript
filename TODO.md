@@ -198,7 +198,7 @@ surface requires it.
 - [ ] M3: Confidence/depth/frame classification parity with upstream unit
       tests.
 - [ ] M4: BAM path works using external samtools and Kestrel wrappers.
-- [ ] M5: Native Rust Kestrel feasibility spike:
+- [x] M5: Native Rust Kestrel feasibility spike:
       reproduce Kestrel VCF output for one tiny fixture or document why the JVM
       adapter remains the practical first target.
 - [ ] M6: Structured report JSON parity for the minimal BAM/Kestrel path.
