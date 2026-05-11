@@ -115,7 +115,7 @@ surface requires it.
 - [ ] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
       the first milestone.
 - [x] Add lightweight `bioscript.vcf` parsing helpers for Kestrel VCF rows.
-- [ ] Add TSV/CSV/table helpers if the port would otherwise need a pandas-like
+- [x] Add TSV/CSV/table helpers if the port would otherwise need a pandas-like
       surface.
 
 ## Runtime / Security
@@ -212,12 +212,12 @@ surface requires it.
 
 ## Open Decisions
 
-- [ ] Whether the first public BioScript API should be command-like:
+- [x] Whether the first public BioScript API should be command-like:
       `vntyper.run(config)` or step-oriented:
       `vntyper.extract_reads`, `vntyper.call_kestrel`, `vntyper.classify`.
-- [ ] Whether Kestrel is stored under `ports/vntyper/test-data/tools`, resolved
+- [x] Whether Kestrel is stored under `ports/vntyper/test-data/tools`, resolved
       from `PATH`, or configured via an environment/runtime option.
-- [ ] Whether pandas-like table operations should become `bioscript.table` or
+- [x] Whether pandas-like table operations should become `bioscript.table` or
       remain VNtyper-local helper functions.
-- [ ] Whether VNtyper references should be copied into BioScript-owned fixtures
+- [x] Whether VNtyper references should be copied into BioScript-owned fixtures
       or read from the upstream submodule reference directory.
