@@ -23,8 +23,13 @@ class BuildKestrelJarTests(unittest.TestCase):
         self.assertIn("kanalyze.jar", classpath)
         self.assertIn("logback-classic-1.1.3.jar", classpath)
 
-    def test_manifest_uses_relative_lib_paths_for_default_output(self):
-        manifest = build_kestrel_jar.manifest_content(build_kestrel_jar.DEFAULT_OUTPUT)
+    def test_default_output_uses_ignored_test_data_tools_directory(self):
+        self.assertIn("ports/vntyper/test-data/tools/kestrel", str(build_kestrel_jar.DEFAULT_OUTPUT))
+
+    def test_manifest_uses_relative_lib_paths_for_kestrel_root_output(self):
+        manifest = build_kestrel_jar.manifest_content(
+            build_kestrel_jar.KESTREL_ROOT / "kestrel.jar"
+        )
 
         self.assertIn("Main-Class: edu.gatech.kestrel.clui.Main", manifest)
         self.assertIn("Class-Path: lib/kanalyze.jar", manifest)

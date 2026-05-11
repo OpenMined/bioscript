@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import unittest
 from pathlib import Path
@@ -17,7 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 UPSTREAM_CONFIG = ROOT / "ports" / "vntyper" / "vntyper" / "tests" / "test_data_config.json"
 DATA_ROOT = ROOT / "ports" / "vntyper" / "test-data"
-KESTREL_JAR = ROOT / "ports" / "vntyper" / "kestrel" / "kestrel.jar"
+DEFAULT_KESTREL_JAR = ROOT / "ports" / "vntyper" / "kestrel" / "kestrel.jar"
+TEST_DATA_KESTREL_JAR = DATA_ROOT / "tools" / "kestrel" / "kestrel.jar"
 MUC1_REFERENCE = (
     ROOT
     / "ports"
@@ -33,6 +35,21 @@ EXPECTED_OUTPUTS = [
     EXPECTED_OUTPUT_ROOT / "negative" / "kestrel" / "output.vcf",
     EXPECTED_OUTPUT_ROOT / "negative" / "kestrel" / "kestrel_result.tsv",
 ]
+
+def resolve_kestrel_jar():
+    env_path = os.environ.get("BIOSCRIPT_KESTREL_JAR")
+    candidates = [
+        Path(env_path) if env_path else None,
+        TEST_DATA_KESTREL_JAR,
+        DEFAULT_KESTREL_JAR,
+    ]
+    return next(
+        (path for path in candidates if path is not None and path.exists()),
+        TEST_DATA_KESTREL_JAR,
+    )
+
+
+KESTREL_JAR = resolve_kestrel_jar()
 
 
 def require_test_data(check_md5=False):

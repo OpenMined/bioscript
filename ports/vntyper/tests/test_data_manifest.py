@@ -1,4 +1,6 @@
 import importlib.util
+import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -41,6 +43,20 @@ class VntyperDataManifestTests(unittest.TestCase):
                 data_manifest.require_test_data(check_md5=False)
         finally:
             data_manifest.validate_manifest = original
+
+    def test_kestrel_jar_can_be_overridden_by_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            jar = Path(tmp) / "kestrel.jar"
+            jar.write_text("jar", encoding="utf-8")
+            original = os.environ.get("BIOSCRIPT_KESTREL_JAR")
+            os.environ["BIOSCRIPT_KESTREL_JAR"] = str(jar)
+            try:
+                self.assertEqual(data_manifest.resolve_kestrel_jar(), jar)
+            finally:
+                if original is None:
+                    os.environ.pop("BIOSCRIPT_KESTREL_JAR", None)
+                else:
+                    os.environ["BIOSCRIPT_KESTREL_JAR"] = original
 
 
 if __name__ == "__main__":

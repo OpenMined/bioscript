@@ -115,8 +115,9 @@ surface requires it.
       `kestrel.read_vcf(...)`.
 - [x] Add a BioScript-owned Kestrel build helper for environments without Ant:
       `ports/vntyper/tests/build_kestrel_jar.py` compiles the vendored Java
-      sources with Java 8 compatibility and packages a local `kestrel.jar` for
-      integration tests.
+      sources with Java 8 compatibility and packages an ignored local
+      `ports/vntyper/test-data/tools/kestrel/kestrel.jar` for integration
+      tests.
 - [ ] Port the Kestrel Java internals only after the external-tool-backed
       wrapper passes VNtyper parity. Candidate internal packages:
       `counter`, `activeregion`, `align`, `variant`, and `writer.vcf`.
