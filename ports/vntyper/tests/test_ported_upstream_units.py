@@ -189,6 +189,23 @@ class PortedUpstreamUnitTests(unittest.TestCase):
         )
         self.assertEqual(out, [])
 
+    def test_motif_filter_and_annotate_splits_left_and_right_motifs(self):
+        rows = [
+            {"CHROM": "5-E", "POS": "17", "REF": "C", "ALT": "CGGGG", "is_valid_frameshift": True},
+            {"CHROM": "5-6", "POS": "67", "REF": "G", "ALT": "GA", "is_valid_frameshift": True},
+            {"CHROM": "5-X", "POS": "67", "REF": "G", "ALT": "GG", "is_valid_frameshift": True},
+            {"CHROM": "MUC1", "POS": "100", "REF": "C", "ALT": "CGGCA", "is_valid_frameshift": True},
+        ]
+
+        out = vntyper_port.motif_filter_and_annotate(rows)
+
+        self.assertEqual(out[0]["Motif"], "E")
+        self.assertTrue(out[0]["motif_filter_pass"])
+        self.assertEqual(out[1]["Motif"], "5")
+        self.assertTrue(out[1]["motif_filter_pass"])
+        self.assertFalse(out[2]["motif_filter_pass"])
+        self.assertNotIn("motif_filter_pass", out[3])
+
 
 if __name__ == "__main__":
     unittest.main()

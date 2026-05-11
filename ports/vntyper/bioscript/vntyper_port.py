@@ -39,6 +39,15 @@ DEFAULT_KESTREL_CONFIG = {
         "gg_depth_score_threshold": 0.00469,
         "exclude_alts": [],
     },
+    "motif_filtering": {
+        "use_uniform_filtering": False,
+        "position_threshold": 60,
+        "exclude_motifs_right": ["8", "9", "7", "6p", "6"],
+        "alt_for_motif_right_gg": "GG",
+        "motifs_for_alt_gg": [],
+        "exclude_alts_combined": ["CCGCC", "CGGCG", "CGGCC"],
+        "exclude_motifs_combined": ["6", "6p", "7"],
+    },
     "flagging_rules": {
         "False_Positive_4bp_Insertion": "(REF == 'C') and (ALT == 'CGGCA')",
         "Low_Depth_Conserved_Motifs": "(Depth_Score < 0.4) and (Motif in ['1', '2', '3', '4', '6', '7', '8', '9'])",
@@ -310,6 +319,7 @@ def process_kestrel_vcf(vcf_file, kestrel_config=None):
     rows = extract_frameshifts(rows)
     rows = calculate_depth_score_and_assign_confidence(rows, config)
     rows = filter_by_alt_values_and_finalize(rows, config)
+    rows = motif_filter_and_annotate(rows, config)
     rows = add_flags(
         rows,
         config.get("flagging_rules", {}),
@@ -320,6 +330,7 @@ def process_kestrel_vcf(vcf_file, kestrel_config=None):
             bool(row.get("is_valid_frameshift"))
             and bool(row.get("depth_confidence_pass"))
             and bool(row.get("alt_filter_pass"))
+            and bool(row.get("motif_filter_pass", True))
         )
     return rows
 
@@ -407,6 +418,52 @@ def apply_uniform_filtering_right_motif(
         non_gg = [row for row in deduped if row.get("ALT") != alt_for_motif_right_gg]
         return gg_allowed + non_gg
     return deduped
+
+
+def motif_filter_and_annotate(rows, kestrel_config=None):
+    config = kestrel_config or DEFAULT_KESTREL_CONFIG
+    motif_filter = config.get("motif_filtering", {})
+    if not motif_filter:
+        return rows
+
+    position_threshold = int(motif_filter.get("position_threshold", 60))
+    exclude_motifs_right = set(motif_filter.get("exclude_motifs_right", []))
+    alt_for_motif_right_gg = motif_filter.get("alt_for_motif_right_gg", "GG")
+    motifs_for_alt_gg = set(motif_filter.get("motifs_for_alt_gg", []))
+    exclude_alts_combined = set(motif_filter.get("exclude_alts_combined", []))
+    exclude_motifs_combined = set(motif_filter.get("exclude_motifs_combined", []))
+
+    out = []
+    for row in rows:
+        next_row = dict(row)
+        motifs = str(next_row.get("Motifs") or next_row.get("CHROM") or "")
+        parts = motifs.split("-")
+        if len(parts) != 2:
+            out.append(next_row)
+            continue
+
+        pos = int(_float(next_row.get("POS", 0)))
+        left, right = parts
+        is_right_motif = pos >= position_threshold
+        motif = left if is_right_motif else right
+        next_row["Motifs"] = motifs
+        next_row["Motif_fasta"] = motifs
+        next_row["POS_fasta"] = pos
+        next_row["Motif"] = motif
+
+        passes = bool(next_row.get("is_valid_frameshift"))
+        if is_right_motif and motif in exclude_motifs_right:
+            passes = False
+        if is_right_motif and next_row.get("ALT") == alt_for_motif_right_gg and motif not in motifs_for_alt_gg:
+            passes = False
+        if next_row.get("ALT") in exclude_alts_combined:
+            passes = False
+        if motif in exclude_motifs_combined:
+            passes = False
+
+        next_row["motif_filter_pass"] = passes
+        out.append(next_row)
+    return out
 
 
 def build_report_json(
