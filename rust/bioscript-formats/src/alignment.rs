@@ -9,10 +9,12 @@ use bioscript_core::{GenomicLocus, RuntimeError};
 
 use crate::genotype::GenotypeLoadOptions;
 
+mod bam_fastq;
 mod bam_stream;
 mod cram_stream;
 mod readers;
 
+pub use bam_fastq::{FastqPairSummary, write_bam_region_fastq_pair};
 pub use bam_stream::{DepthSummary, query_bam_depth_summary, query_bam_records, write_bam_region};
 pub use readers::{
     build_bam_indexed_reader_from_reader, build_cram_indexed_reader_from_reader,
