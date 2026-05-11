@@ -88,6 +88,7 @@ fn kestrel_call_sequences_native(
     reference_md5: Option<&str>,
     minimum_difference: Option<u32>,
     difference_quantile: Option<f32>,
+    anchor_both_ends: Option<bool>,
     min_kmer_count: Option<u32>,
     max_haplotypes: Option<usize>,
     max_bases: Option<usize>,
@@ -102,7 +103,8 @@ fn kestrel_call_sequences_native(
     let detector_config = bioscript_libs::kestrel::native::ActiveRegionDetectorConfig {
         minimum_difference: minimum_difference.unwrap_or(5),
         difference_quantile: difference_quantile.unwrap_or(0.90),
-        count_reverse_kmers: false,
+        count_reverse_kmers: true,
+        anchor_both_ends: anchor_both_ends.unwrap_or(true),
     };
     let assembly_config = bioscript_libs::kestrel::native::HaplotypeAssemblyConfig {
         min_kmer_count: min_kmer_count.unwrap_or(1),
@@ -140,6 +142,7 @@ fn kestrel_call_fastq_native(
     reference_md5: Option<&str>,
     minimum_difference: Option<u32>,
     difference_quantile: Option<f32>,
+    anchor_both_ends: Option<bool>,
     min_kmer_count: Option<u32>,
     max_haplotypes: Option<usize>,
     max_bases: Option<usize>,
@@ -154,7 +157,8 @@ fn kestrel_call_fastq_native(
     let detector_config = bioscript_libs::kestrel::native::ActiveRegionDetectorConfig {
         minimum_difference: minimum_difference.unwrap_or(5),
         difference_quantile: difference_quantile.unwrap_or(0.90),
-        count_reverse_kmers: false,
+        count_reverse_kmers: true,
+        anchor_both_ends: anchor_both_ends.unwrap_or(true),
     };
     let assembly_config = bioscript_libs::kestrel::native::HaplotypeAssemblyConfig {
         min_kmer_count: min_kmer_count.unwrap_or(1),

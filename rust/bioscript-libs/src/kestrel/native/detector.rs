@@ -7,6 +7,7 @@ pub struct ActiveRegionDetectorConfig {
     pub minimum_difference: u32,
     pub difference_quantile: f32,
     pub count_reverse_kmers: bool,
+    pub anchor_both_ends: bool,
 }
 
 impl Default for ActiveRegionDetectorConfig {
@@ -14,7 +15,8 @@ impl Default for ActiveRegionDetectorConfig {
         Self {
             minimum_difference: 5,
             difference_quantile: 0.90,
-            count_reverse_kmers: false,
+            count_reverse_kmers: true,
+            anchor_both_ends: true,
         }
     }
 }
@@ -43,6 +45,7 @@ pub fn detect_active_regions(
         &reference_counts,
         counts.kmer_size(),
         difference_threshold,
+        config.anchor_both_ends,
     )?;
     Ok(ActiveRegionDetection {
         reference_counts,
@@ -86,6 +89,7 @@ fn candidate_regions(
     counts: &[u32],
     kmer_size: usize,
     difference_threshold: u32,
+    anchor_both_ends: bool,
 ) -> LibResult<Vec<ActiveRegion>> {
     if counts.len() < 2 {
         return Ok(Vec::new());
@@ -113,7 +117,10 @@ fn candidate_regions(
                 index = end + 1;
                 continue;
             }
-            if end == counts.len() && end.saturating_sub(index) >= kmer_size.saturating_sub(1) {
+            if !anchor_both_ends
+                && end == counts.len()
+                && end.saturating_sub(index) >= kmer_size.saturating_sub(1)
+            {
                 regions.push(ActiveRegion::new(
                     region,
                     Some(index - 1),
@@ -123,6 +130,20 @@ fn candidate_regions(
                 )?);
                 break;
             }
+        } else if right > left
+            && right - left >= difference_threshold
+            && !anchor_both_ends
+            && index >= kmer_size.saturating_sub(1)
+        {
+            regions.push(ActiveRegion::new(
+                region,
+                None,
+                Some(index),
+                counts,
+                kmer_size,
+            )?);
+            index += 1;
+            continue;
         }
         index += 1;
     }

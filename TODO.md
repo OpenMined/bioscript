@@ -139,7 +139,10 @@ surface requires it.
       summaries. A first native `detect_active_regions` candidate scanner now
       computes reference k-mer counts and Java-shaped difference thresholds,
       then emits anchored and right-open depth-drop regions for downstream
-      haplotype work. The
+      haplotype work. It now also exposes Java-shaped `anchor_both_ends`
+      behavior, defaults reverse-kmer counting and both-end anchoring to the
+      Java detector defaults, and emits left-open candidates for near-left-end
+      active regions when unanchored ends are explicitly allowed. The
       native `align_haplotype` and `call_alignment_variants` helpers provide a
       first deterministic reference-vs-haplotype edit surface that emits
       SNP/insertion/deletion calls using the same native VCF normalization path.
