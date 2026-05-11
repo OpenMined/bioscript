@@ -5,9 +5,10 @@ use bioscript_libs::{
     kestrel::{
         KestrelRunConfig,
         native::{
-            ActiveRegion, ActiveRegionDetectorConfig, KestrelVcfWriter, KmerCountMap,
+            ActiveRegion, ActiveRegionDetectorConfig, AlignmentOp, KestrelVcfWriter, KmerCountMap,
             NativeVariantCall, ReferenceRegion, ReferenceSequence, RegionStats, VariantCall,
-            count_fastq_kmers, count_sequence_kmers, detect_active_regions, difference_threshold,
+            align_haplotype, call_alignment_variants, count_fastq_kmers, count_sequence_kmers,
+            detect_active_regions, difference_threshold,
         },
     },
     pyfaidx::Fasta,
@@ -490,6 +491,56 @@ fn kestrel_native_difference_threshold_matches_java_quantile_shape() {
     assert_eq!(difference_threshold(&[10, 10], 5, 0.90).unwrap(), 5);
     assert!(difference_threshold(&[10, 10, 1], 0, 0.90).is_ok());
     assert!(difference_threshold(&[10, 10, 1], 1, 1.0).is_err());
+}
+
+#[test]
+fn kestrel_native_alignment_emits_edit_operations() {
+    let alignment = align_haplotype("ACGTAC", "ACGTTAC").unwrap();
+    assert_eq!(
+        alignment.ops,
+        vec![
+            AlignmentOp::Match(3),
+            AlignmentOp::Insertion(1),
+            AlignmentOp::Match(3)
+        ]
+    );
+
+    let deletion = align_haplotype("ACGTAC", "ACAC").unwrap();
+    assert_eq!(
+        deletion.ops,
+        vec![
+            AlignmentOp::Match(2),
+            AlignmentOp::Deletion(2),
+            AlignmentOp::Match(2)
+        ]
+    );
+    assert!(align_haplotype("ACGT", "ACGX").is_err());
+}
+
+#[test]
+fn kestrel_native_alignment_calls_native_variants() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "ACGTACGT".to_owned(),
+    };
+    let alignment = align_haplotype("ACGTAC", "ATGTTAC").unwrap();
+    let variants = call_alignment_variants("sample1", &alignment, 1, 6, 10).unwrap();
+    assert_eq!(variants.len(), 2);
+
+    let snp = variants[0].to_vcf_call(&region).unwrap();
+    assert_eq!(
+        (snp.pos, snp.ref_allele.as_str(), snp.alt_allele.as_str()),
+        (2, "C", "T")
+    );
+    let insertion = variants[1].to_vcf_call(&region).unwrap();
+    assert_eq!(
+        (
+            insertion.pos,
+            insertion.ref_allele.as_str(),
+            insertion.alt_allele.as_str()
+        ),
+        (3, "G", "GT")
+    );
 }
 
 #[test]

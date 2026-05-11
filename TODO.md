@@ -139,8 +139,12 @@ surface requires it.
       summaries. A first native `detect_active_regions` candidate scanner now
       computes reference k-mer counts and Java-shaped difference thresholds,
       then emits anchored depth-drop regions for downstream haplotype work. The
-      remaining work is the full Java active-region detector heuristics,
-      haplotype alignment, and the full variant-calling engine.
+      native `align_haplotype` and `call_alignment_variants` helpers provide a
+      first deterministic reference-vs-haplotype edit surface that emits
+      SNP/insertion/deletion calls using the same native VCF normalization path.
+      The remaining work is the full Java active-region detector heuristics,
+      Kestrel's graph/stateful haplotype builder, and the full variant-calling
+      engine.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
