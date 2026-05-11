@@ -9,6 +9,7 @@ samtools, bcftools, or Kestrel.
 from __future__ import annotations
 
 import csv
+import statistics
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,9 +94,14 @@ def run_bam_pipeline(
 
     create_output_dirs(result, plan)
     command_runner = runner or subprocess.run
+    depth_output = ""
     for command in commands:
-        command_runner(command, check=True)
-    materialize_post_kestrel_outputs(result, input_bam, assembly)
+        if command == plan.samtools_depth_command:
+            completed = command_runner(command, check=True, capture_output=True, text=True)
+            depth_output = getattr(completed, "stdout", "") or ""
+        else:
+            command_runner(command, check=True)
+    materialize_post_kestrel_outputs(result, input_bam, assembly, coverage_from_depth(depth_output))
     return result
 
 
@@ -106,7 +112,12 @@ def create_output_dirs(result: ExternalPipelineResult, plan: vntyper_commands.Vn
     Path(plan.kestrel_vcf).parent.mkdir(parents=True, exist_ok=True)
 
 
-def materialize_post_kestrel_outputs(result: ExternalPipelineResult, input_bam: str, assembly: str) -> None:
+def materialize_post_kestrel_outputs(
+    result: ExternalPipelineResult,
+    input_bam: str,
+    assembly: str,
+    coverage: dict[str, float | int] | None = None,
+) -> None:
     if not Path(result.kestrel_vcf).exists():
         raise FileNotFoundError(f"Kestrel VCF was not produced: {result.kestrel_vcf}")
     rows = vntyper_port.process_kestrel_vcf(result.kestrel_vcf)
@@ -115,7 +126,7 @@ def materialize_post_kestrel_outputs(result: ExternalPipelineResult, input_bam: 
         sample_name=result.participant_id,
         input_files={"bam": input_bam, "vcf": result.kestrel_vcf},
         kestrel_rows=rows,
-        coverage={},
+        coverage=coverage or {},
         metadata={
             "alignment_pipeline": "external samtools/kestrel",
             "detected_assembly": assembly,
@@ -123,6 +134,31 @@ def materialize_post_kestrel_outputs(result: ExternalPipelineResult, input_bam: 
         pipeline_log=[{"command": command} for command in result.commands],
     )
     vntyper_port.write_report_json(result.report_json, report)
+
+
+def coverage_from_depth(depth_output: str) -> dict[str, float | int]:
+    depths = []
+    for raw_line in depth_output.splitlines():
+        fields = raw_line.split("\t")
+        if len(fields) < 3:
+            continue
+        try:
+            depths.append(int(fields[2]))
+        except ValueError:
+            continue
+    if not depths:
+        return {}
+    zero_count = sum(1 for depth in depths if depth == 0)
+    return {
+        "mean": statistics.fmean(depths),
+        "median": statistics.median(depths),
+        "stdev": statistics.pstdev(depths),
+        "min": min(depths),
+        "max": max(depths),
+        "region_length": len(depths),
+        "uncovered_bases": zero_count,
+        "percent_uncovered": zero_count / len(depths) * 100,
+    }
 
 
 def write_kestrel_result_tsv(path: str, rows: list[dict[str, object]]) -> None:

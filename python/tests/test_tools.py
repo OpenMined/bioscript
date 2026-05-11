@@ -72,6 +72,10 @@ class ToolCommandTests(unittest.TestCase):
             samtools.view_region("sample.bam", "chr1:1-10", "slice.bam"),
             ["samtools", "view", "-b", "sample.bam", "chr1:1-10", "-o", "slice.bam"],
         )
+        self.assertEqual(
+            samtools.depth("slice.bam", "chr1:1-10", include_zero=True),
+            ["samtools", "depth", "-a", "-r", "chr1:1-10", "slice.bam"],
+        )
 
     def test_bcftools_vcf_helpers(self) -> None:
         self.assertEqual(

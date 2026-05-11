@@ -44,6 +44,10 @@ class VntyperCommandPlanTests(unittest.TestCase):
                 "work/sample1_sliced.bam",
             ],
         )
+        self.assertEqual(
+            plan.samtools_depth_command,
+            ["samtools", "depth", "-a", "-r", "chr1:155160500-155162000", "work/sample1_sliced.bam"],
+        )
         self.assertIn("-ssample1", plan.kestrel_command)
         self.assertEqual(plan.bcftools_index_command, ["bcftools", "index", "-t", "work/kestrel/output.sorted.vcf.gz"])
 

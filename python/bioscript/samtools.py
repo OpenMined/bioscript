@@ -16,8 +16,12 @@ def fastq(bam: str, fastq_1: str, fastq_2: str) -> list[str]:
     return ["samtools", "fastq", "-1", _path_arg(fastq_1), "-2", _path_arg(fastq_2), _path_arg(bam)]
 
 
-def depth(bam: str, region: str) -> list[str]:
-    return ["samtools", "depth", "-r", region, _path_arg(bam)]
+def depth(bam: str, region: str, include_zero: bool = False) -> list[str]:
+    args = ["samtools", "depth"]
+    if include_zero:
+        args.append("-a")
+    args.extend(["-r", region, _path_arg(bam)])
+    return args
 
 
 def index(bam: str) -> list[str]:
