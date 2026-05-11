@@ -103,8 +103,10 @@ def build_payload(positive_sample: str, negative_sample: str, assembly: str, kes
             "expected_outputs": [
                 "positive/kestrel/output.vcf",
                 "positive/kestrel/kestrel_result.tsv",
+                "positive/report.json",
                 "negative/kestrel/output.vcf",
                 "negative/kestrel/kestrel_result.tsv",
+                "negative/report.json",
             ],
         },
     }

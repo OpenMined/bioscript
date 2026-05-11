@@ -153,6 +153,7 @@ def run_fastq_kestrel(
         "unknown",
         {},
         input_files={"fastq_1": fastq_1, "fastq_2": fastq_2, "vcf": result.kestrel_vcf},
+        alignment_pipeline="external kestrel from FASTQ",
     )
     return result
 
@@ -170,6 +171,7 @@ def materialize_post_kestrel_outputs(
     assembly: str,
     coverage: dict[str, float | int] | None = None,
     input_files: dict[str, str] | None = None,
+    alignment_pipeline: str = "external samtools/kestrel",
 ) -> None:
     if not Path(result.kestrel_vcf).exists():
         raise FileNotFoundError(f"Kestrel VCF was not produced: {result.kestrel_vcf}")
@@ -181,7 +183,7 @@ def materialize_post_kestrel_outputs(
         kestrel_rows=rows,
         coverage=coverage or {},
         metadata={
-            "alignment_pipeline": "external samtools/kestrel",
+            "alignment_pipeline": alignment_pipeline,
             "detected_assembly": assembly,
         },
         pipeline_log=[{"command": command} for command in result.commands],

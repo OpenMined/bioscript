@@ -116,6 +116,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                 report = json.load(handle)
             self.assertEqual(report["input_files"]["fastq_1"], "sample_R1.fastq.gz")
             self.assertEqual(report["input_files"]["fastq_2"], "sample_R2.fastq.gz")
+            self.assertEqual(report["metadata"]["alignment_pipeline"], "external kestrel from FASTQ")
 
 
 if __name__ == "__main__":

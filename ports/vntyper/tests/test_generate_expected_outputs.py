@@ -28,8 +28,10 @@ class GenerateExpectedOutputsTests(unittest.TestCase):
             [
                 "positive/kestrel/output.vcf",
                 "positive/kestrel/kestrel_result.tsv",
+                "positive/report.json",
                 "negative/kestrel/output.vcf",
                 "negative/kestrel/kestrel_result.tsv",
+                "negative/report.json",
             ],
         )
         self.assertEqual(len(payload["samples"]), 2)

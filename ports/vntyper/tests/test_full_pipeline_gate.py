@@ -30,7 +30,7 @@ class VntyperFullPipelineGateTests(unittest.TestCase):
                 "All_Pairwise_and_Self_Merged_MUC1_motifs_filtered.fa"
             )
         )
-        self.assertGreaterEqual(len(self.prereqs["expected_outputs"]), 4)
+        self.assertGreaterEqual(len(self.prereqs["expected_outputs"]), 6)
 
 
 if __name__ == "__main__":

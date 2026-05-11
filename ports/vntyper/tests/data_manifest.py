@@ -32,8 +32,10 @@ EXPECTED_OUTPUT_ROOT = DATA_ROOT / "expected"
 EXPECTED_OUTPUTS = [
     EXPECTED_OUTPUT_ROOT / "positive" / "kestrel" / "output.vcf",
     EXPECTED_OUTPUT_ROOT / "positive" / "kestrel" / "kestrel_result.tsv",
+    EXPECTED_OUTPUT_ROOT / "positive" / "report.json",
     EXPECTED_OUTPUT_ROOT / "negative" / "kestrel" / "output.vcf",
     EXPECTED_OUTPUT_ROOT / "negative" / "kestrel" / "kestrel_result.tsv",
+    EXPECTED_OUTPUT_ROOT / "negative" / "report.json",
 ]
 
 def resolve_kestrel_jar():
@@ -100,6 +102,35 @@ def require_full_pipeline_prerequisites():
         "manifest": manifest,
         "samtools": shutil.which("samtools"),
         "bcftools": shutil.which("bcftools"),
+        "java": shutil.which("java"),
+        "kestrel_jar": str(KESTREL_JAR),
+        "muc1_reference": str(MUC1_REFERENCE),
+        "expected_outputs": [str(path) for path in EXPECTED_OUTPUTS],
+    }
+
+
+def require_fastq_kestrel_expected_outputs():
+    """Skip unless FASTQ-generated Kestrel expected outputs are present."""
+    manifest = require_test_data(check_md5=False)
+    missing = []
+    if shutil.which("java") is None:
+        missing.append("java on PATH")
+    if not KESTREL_JAR.exists():
+        missing.append(str(KESTREL_JAR))
+    if not MUC1_REFERENCE.exists():
+        missing.append(str(MUC1_REFERENCE))
+    missing_outputs = [str(path) for path in EXPECTED_OUTPUTS if not path.exists()]
+    if missing_outputs:
+        preview = ", ".join(missing_outputs[:3])
+        remaining = len(missing_outputs) - min(len(missing_outputs), 3)
+        suffix = f", plus {remaining} more" if remaining else ""
+        missing.append(f"FASTQ Kestrel expected outputs: {preview}{suffix}")
+    if missing:
+        raise unittest.SkipTest(
+            "VNtyper FASTQ Kestrel expected outputs are missing: " + "; ".join(missing)
+        )
+    return {
+        "manifest": manifest,
         "java": shutil.which("java"),
         "kestrel_jar": str(KESTREL_JAR),
         "muc1_reference": str(MUC1_REFERENCE),
