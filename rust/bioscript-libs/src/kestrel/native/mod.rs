@@ -10,7 +10,10 @@ mod variant;
 mod vcf;
 
 pub use active_region::{ActiveRegion, RegionStats};
-pub use alignment::{AlignmentOp, NativeAlignment, align_haplotype, call_alignment_variants};
+pub use alignment::{
+    AlignmentOp, NativeAlignment, align_haplotype, call_alignment_variants, score_alignment,
+    score_haplotype_alignment,
+};
 pub use alignment_weight::AlignmentWeight;
 pub use detector::{
     ActiveRegionDetection, ActiveRegionDetectorConfig, detect_active_regions, difference_threshold,
