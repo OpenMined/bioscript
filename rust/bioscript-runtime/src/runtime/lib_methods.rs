@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use bioscript_core::RuntimeError;
 use bioscript_libs::{
-    ModuleName, kestrel::KestrelRunConfig, pyfaidx::Fasta, pysam::AlignmentFile, samtools, vcf,
+    ModuleName, bcftools, kestrel::KestrelRunConfig, pyfaidx::Fasta, pysam::AlignmentFile,
+    samtools, vcf,
 };
 use monty::MontyObject;
 
@@ -13,7 +14,7 @@ use super::{
         reject_unknown_kwargs,
     },
     objects::{
-        kestrel_module_object, pyfaidx_fasta_object, pyfaidx_module_object,
+        bcftools_module_object, kestrel_module_object, pyfaidx_fasta_object, pyfaidx_module_object,
         pysam_aligned_segment_object, pysam_alignment_file_object, pysam_module_object,
         samtools_module_object, vcf_module_object,
     },
@@ -27,6 +28,7 @@ pub(crate) fn host_bioscript_import(
     reject_kwargs(kwargs, "__bioscript_import__")?;
     let module = expect_string_arg(args, 0, "__bioscript_import__")?;
     match ModuleName::parse(&module).map_err(|err| RuntimeError::Unsupported(err.to_string()))? {
+        ModuleName::Bcftools => Ok(bcftools_module_object()),
         ModuleName::Kestrel => Ok(kestrel_module_object()),
         ModuleName::Pysam => Ok(pysam_module_object()),
         ModuleName::Pyfaidx => Ok(pyfaidx_module_object()),
@@ -36,6 +38,90 @@ pub(crate) fn host_bioscript_import(
 }
 
 impl BioscriptRuntime {
+    pub(super) fn method_bcftools_sort(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bcftools.sort")?;
+        if args.len() != 3 {
+            return Err(RuntimeError::InvalidArguments(
+                "bcftools.sort expects input_vcf and output_vcf_gz".to_owned(),
+            ));
+        }
+        command_argv_object(
+            bcftools::sort(
+                PathBuf::from(expect_string_arg(args, 1, "bcftools.sort")?).as_path(),
+                PathBuf::from(expect_string_arg(args, 2, "bcftools.sort")?).as_path(),
+            )
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
+            .argv(),
+        )
+    }
+
+    pub(super) fn method_bcftools_index(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bcftools.index")?;
+        if args.len() != 2 {
+            return Err(RuntimeError::InvalidArguments(
+                "bcftools.index expects vcf_gz".to_owned(),
+            ));
+        }
+        command_argv_object(
+            bcftools::index(PathBuf::from(expect_string_arg(args, 1, "bcftools.index")?).as_path())
+                .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
+                .argv(),
+        )
+    }
+
+    pub(super) fn method_bcftools_view_filter(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bcftools.view_filter")?;
+        if args.len() != 4 {
+            return Err(RuntimeError::InvalidArguments(
+                "bcftools.view_filter expects input_vcf, output_vcf_gz, and include_expr"
+                    .to_owned(),
+            ));
+        }
+        command_argv_object(
+            bcftools::view_filter(
+                PathBuf::from(expect_string_arg(args, 1, "bcftools.view_filter")?).as_path(),
+                PathBuf::from(expect_string_arg(args, 2, "bcftools.view_filter")?).as_path(),
+                &expect_string_arg(args, 3, "bcftools.view_filter")?,
+            )
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
+            .argv(),
+        )
+    }
+
+    pub(super) fn method_bcftools_norm(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bcftools.norm")?;
+        if args.len() != 4 {
+            return Err(RuntimeError::InvalidArguments(
+                "bcftools.norm expects input_vcf, reference_fasta, and output_vcf_gz".to_owned(),
+            ));
+        }
+        command_argv_object(
+            bcftools::norm(
+                PathBuf::from(expect_string_arg(args, 1, "bcftools.norm")?).as_path(),
+                PathBuf::from(expect_string_arg(args, 2, "bcftools.norm")?).as_path(),
+                PathBuf::from(expect_string_arg(args, 3, "bcftools.norm")?).as_path(),
+            )
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
+            .argv(),
+        )
+    }
+
     pub(super) fn method_pysam_alignment_file(
         &self,
         args: &[MontyObject],

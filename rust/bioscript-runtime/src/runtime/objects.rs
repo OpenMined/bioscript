@@ -29,6 +29,10 @@ pub(crate) fn kestrel_module_object() -> MontyObject {
     empty_dataclass("KestrelModule", 26)
 }
 
+pub(crate) fn bcftools_module_object() -> MontyObject {
+    empty_dataclass("BcftoolsModule", 28)
+}
+
 pub(crate) fn pysam_module_object() -> MontyObject {
     empty_dataclass("PysamModule", 20)
 }

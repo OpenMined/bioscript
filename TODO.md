@@ -99,7 +99,7 @@ surface requires it.
       layer with safe command construction.
 - [x] Add `bioscript.samtools` wrapper surface for the VNtyper subset:
       `view`, `fastq`, `depth`, `index`, and possibly `faidx`.
-- [ ] Add `bioscript.bcftools` wrapper surface for optional VCF sort/compress
+- [x] Add `bioscript.bcftools` wrapper surface for optional VCF sort/compress
       fallback behavior.
 - [x] Add `bioscript.kestrel` wrapper surface for invoking the vendored or
       configured Kestrel JAR.
@@ -124,7 +124,7 @@ surface requires it.
       allowlist commands, fixed argv builders, workspace-confined inputs, and
       controlled output paths.
 - [x] Add runtime bindings for new modules imported via
-      `from bioscript import samtools, kestrel, vcf`.
+      `from bioscript import samtools, kestrel, vcf, bcftools`.
 - [x] Add runtime method bindings for `samtools` and `kestrel` command-builder
       calls.
 - [x] Ensure `bioscript.kestrel` accepts structured arguments only; no arbitrary

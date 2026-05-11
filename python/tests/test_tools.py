@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from bioscript import kestrel, samtools
+from bioscript import bcftools, kestrel, samtools
 
 
 class ToolCommandTests(unittest.TestCase):
@@ -71,6 +71,16 @@ class ToolCommandTests(unittest.TestCase):
         self.assertEqual(
             samtools.view_region("sample.bam", "chr1:1-10", "slice.bam"),
             ["samtools", "view", "-b", "sample.bam", "chr1:1-10", "-o", "slice.bam"],
+        )
+
+    def test_bcftools_vcf_helpers(self) -> None:
+        self.assertEqual(
+            bcftools.sort("calls.vcf", "calls.vcf.gz"),
+            ["bcftools", "sort", "-Oz", "-o", "calls.vcf.gz", "calls.vcf"],
+        )
+        self.assertEqual(
+            bcftools.view_filter("calls.vcf", "pass.vcf.gz", 'FILTER="PASS"'),
+            ["bcftools", "view", "-i", 'FILTER="PASS"', "-Oz", "-o", "pass.vcf.gz", "calls.vcf"],
         )
 
 

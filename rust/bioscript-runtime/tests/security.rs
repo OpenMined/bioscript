@@ -155,10 +155,12 @@ fn bioscript_library_import_binds_vntyper_tool_modules() {
         r#"
 from bioscript import kestrel
 from bioscript import samtools
+from bioscript import bcftools
 
 def main():
     print(kestrel)
     print(samtools)
+    print(bcftools)
 
 if __name__ == "__main__":
     main()
@@ -173,6 +175,7 @@ fn bioscript_vntyper_tool_modules_build_structured_commands() {
         r#"
 from bioscript import kestrel
 from bioscript import samtools
+from bioscript import bcftools
 
 def main():
     kcmd = kestrel.build_command(
@@ -190,6 +193,9 @@ def main():
     fcmd = samtools.fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz")
     if fcmd[0] != "samtools":
         raise Exception("bad samtools command")
+    bcmd = bcftools.sort("calls.vcf", "calls.vcf.gz")
+    if bcmd[0] != "bcftools":
+        raise Exception("bad bcftools command")
 
 if __name__ == "__main__":
     main()
