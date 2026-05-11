@@ -1,6 +1,7 @@
 import importlib.util
 import csv
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -33,6 +34,27 @@ class VntyperPortTests(unittest.TestCase):
         self.assertFalse(rows[2]["is_valid_frameshift"])
         self.assertEqual(rows[2]["Confidence"], "Negative")
         self.assertFalse(rows[2]["passes_vntyper_filters"])
+
+    def test_process_kestrel_vcf_reads_named_sample_column(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "named-sample.vcf"
+            path.write_text(
+                "\n".join(
+                    [
+                        "##fileformat=VCFv4.2",
+                        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\texample_sample",
+                        "MUC1\t100\t.\tC\tCGGCA\t.\tPASS\t.\tGT:GDP:DP\t1:120:10000",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            rows = vntyper_port.process_kestrel_vcf(str(path))
+
+        self.assertEqual(rows[0]["Estimated_Depth_AlternateVariant"], 120.0)
+        self.assertEqual(rows[0]["Estimated_Depth_Variant_ActiveRegion"], 10000.0)
+        self.assertEqual(rows[0]["Depth_Score"], 0.012)
 
     def test_best_kestrel_call_uses_depth_score(self):
         rows = vntyper_port.process_kestrel_vcf(str(FIXTURE))

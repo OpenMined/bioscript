@@ -177,6 +177,8 @@ def read_vcf_without_comments(vcf_file):
                 row[key] = values[idx] if idx < len(values) else ""
             if "SAMPLE" in row and "Sample" not in row:
                 row["Sample"] = row["SAMPLE"]
+            elif "FORMAT" in row and "Sample" not in row and len(header) > 9:
+                row["Sample"] = row.get(header[-1], "")
             rows.append(row)
     return rows
 
