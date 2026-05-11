@@ -86,6 +86,9 @@ critical path and implement this narrow path first:
 
 Already implemented:
 
+- `ports/vntyper/bioscript/vntyper_regions.py` for assembly aliases,
+  coordinate lookup, chromosome naming, naming-convention detection, and region
+  string construction.
 - `bioscript.samtools` command builders for `view_region`, `fastq`, `depth`,
   and `index`.
 - `bioscript.bcftools` command builders for `sort`, `index`, `view_filter`,
@@ -97,8 +100,6 @@ Already implemented:
 
 Still missing for parity:
 
-- Region/reference helpers from `region_utils.py`, `reference_registry.py`, and
-  `chromosome_utils.py`.
 - BAM-header-aware chromosome naming detection.
 - Full `process_bam_to_fastq` command plan including region slicing,
   unmapped-read retention, and FASTQ extraction.
