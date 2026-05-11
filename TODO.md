@@ -69,7 +69,11 @@ surface requires it.
 - [ ] Add or generate expected Kestrel VCF/TSV outputs for large integration
       data; copied data currently contains alignment/FASTQ inputs but no
       `.vcf`, `.tsv`, or result `.json` files. Tiny expected TSV/JSON fixtures
-      exist for unit tests.
+      exist for unit tests. A dry-run generator now exists at
+      `ports/vntyper/tests/generate_expected_outputs.py`; it records sample
+      labels, planned commands, and the ignored expected-output layout, but the
+      actual large VCF/TSV outputs still need to be materialized once the
+      external-tool runner is enabled.
 - [x] Mirror upstream `tests/test_data_config.json` filenames and MD5s in a
       BioScript-side manifest.
 - [x] Add a data validator that checks required files.
