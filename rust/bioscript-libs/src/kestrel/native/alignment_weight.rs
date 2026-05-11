@@ -32,6 +32,44 @@ impl AlignmentWeight {
         })
     }
 
+    pub fn parse(weight_string: Option<&str>) -> LibResult<Self> {
+        let Some(mut value) = weight_string.map(str::trim) else {
+            return Ok(Self::default());
+        };
+        if value.is_empty() {
+            return Ok(Self::default());
+        }
+        value = strip_matching_bounds(value)?;
+
+        let tokens: Vec<&str> = value.split(',').map(str::trim).collect();
+        if tokens.len() > 5 {
+            return Err(LibError::InvalidArguments(format!(
+                "Kestrel alignment weight vector has more than 5 comma-separated values: {}",
+                tokens.len()
+            )));
+        }
+
+        let mut weights = Self::default();
+        if let Some(token) = tokens.first().filter(|token| !token.is_empty()) {
+            weights.match_weight =
+                normalize_nonzero_positive("matching bases", parse_number(token)?)?;
+        }
+        if let Some(token) = tokens.get(1).filter(|token| !token.is_empty()) {
+            weights.mismatch =
+                normalize_nonzero_negative("mismatched bases", parse_number(token)?)?;
+        }
+        if let Some(token) = tokens.get(2).filter(|token| !token.is_empty()) {
+            weights.gap_open = -parse_number(token)?.abs();
+        }
+        if let Some(token) = tokens.get(3).filter(|token| !token.is_empty()) {
+            weights.gap_extend = normalize_nonzero_negative("gap extension", parse_number(token)?)?;
+        }
+        if let Some(token) = tokens.get(4).filter(|token| !token.is_empty()) {
+            weights.init_score = parse_number(token)?.abs();
+        }
+        Ok(weights)
+    }
+
     pub fn initial_score(&self, kmer_size: usize) -> LibResult<f32> {
         if kmer_size == 0 {
             return Err(LibError::InvalidArguments(
@@ -85,4 +123,69 @@ fn normalize_nonzero_negative(label: &str, value: f32) -> LibResult<f32> {
 
 fn is_zero(value: f32) -> bool {
     value.abs() <= f32::EPSILON
+}
+
+fn strip_matching_bounds(value: &str) -> LibResult<&str> {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return Ok(value);
+    };
+    let Some(last) = value.chars().next_back() else {
+        return Ok(value);
+    };
+
+    let expected = match first {
+        '(' => Some(')'),
+        '<' => Some('>'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        _ => None,
+    };
+    if let Some(expected) = expected {
+        if last != expected {
+            return Err(LibError::InvalidArguments(format!(
+                "Kestrel alignment weight vector has mismatched bounds: {value}"
+            )));
+        }
+        return Ok(&value[first.len_utf8()..value.len() - last.len_utf8()]);
+    }
+    if matches!(last, ')' | '>' | ']' | '}') {
+        return Err(LibError::InvalidArguments(format!(
+            "Kestrel alignment weight vector has a closing bound without an opening bound: {value}"
+        )));
+    }
+    Ok(value)
+}
+
+fn parse_number(value: &str) -> LibResult<f32> {
+    value
+        .parse::<f32>()
+        .or_else(|_| parse_java_integer(value).map(|number| number as f32))
+        .map_err(|_| {
+            LibError::InvalidArguments(format!(
+                "Kestrel alignment weight is not a valid number: {value}"
+            ))
+        })
+}
+
+fn parse_java_integer(value: &str) -> Result<i32, std::num::ParseIntError> {
+    let (negative, unsigned) = value
+        .strip_prefix('-')
+        .map(|value| (true, value))
+        .or_else(|| value.strip_prefix('+').map(|value| (false, value)))
+        .unwrap_or((false, value));
+    let (radix, digits) = if let Some(digits) = unsigned
+        .strip_prefix("0x")
+        .or_else(|| unsigned.strip_prefix("0X"))
+    {
+        (16, digits)
+    } else if let Some(digits) = unsigned.strip_prefix('#') {
+        (16, digits)
+    } else if unsigned.len() > 1 && unsigned.starts_with('0') {
+        (8, &unsigned[1..])
+    } else {
+        (10, unsigned)
+    };
+    let parsed = i32::from_str_radix(digits, radix)?;
+    Ok(if negative { -parsed } else { parsed })
 }

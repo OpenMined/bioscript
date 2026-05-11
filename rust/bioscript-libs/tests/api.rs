@@ -781,6 +781,45 @@ fn kestrel_native_alignment_weight_matches_java_gap_limit_shape() {
 }
 
 #[test]
+fn kestrel_native_alignment_weight_parses_java_weight_vectors() {
+    assert_eq!(
+        AlignmentWeight::parse(None).unwrap(),
+        AlignmentWeight::default()
+    );
+    assert_eq!(
+        AlignmentWeight::parse(Some("")).unwrap(),
+        AlignmentWeight::default()
+    );
+
+    let parsed = AlignmentWeight::parse(Some("( -8, 2, 12, 3, -5 )")).unwrap();
+    assert_eq!(
+        parsed,
+        AlignmentWeight {
+            match_weight: 8.0,
+            mismatch: -2.0,
+            gap_open: -12.0,
+            gap_extend: -3.0,
+            init_score: 5.0,
+        }
+    );
+
+    let partial = AlignmentWeight::parse(Some("[, -6, , -2]")).unwrap();
+    assert_eq!(partial.match_weight, AlignmentWeight::DEFAULT_MATCH);
+    assert_eq!(partial.mismatch, -6.0);
+    assert_eq!(partial.gap_open, AlignmentWeight::DEFAULT_GAP_OPEN);
+    assert_eq!(partial.gap_extend, -2.0);
+
+    let integer_formats = AlignmentWeight::parse(Some("<0xA, 012, #28, 04, 0>")).unwrap();
+    assert_eq!(integer_formats.match_weight, 10.0);
+    assert_eq!(integer_formats.mismatch, -12.0);
+    assert_eq!(integer_formats.gap_open, -40.0);
+    assert_eq!(integer_formats.gap_extend, -4.0);
+    assert!(AlignmentWeight::parse(Some("(1,2]")).is_err());
+    assert!(AlignmentWeight::parse(Some("1,2,3,4,5,6")).is_err());
+    assert!(AlignmentWeight::parse(Some("1,bad")).is_err());
+}
+
+#[test]
 fn kestrel_native_active_region_detector_recovers_right_anchor() {
     let region = ReferenceRegion {
         reference_name: "MUC1".to_owned(),
