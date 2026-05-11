@@ -9,12 +9,33 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
 UPSTREAM_CONFIG = ROOT / "ports" / "vntyper" / "vntyper" / "tests" / "test_data_config.json"
 DATA_ROOT = ROOT / "ports" / "vntyper" / "test-data"
+
+
+def require_test_data(check_md5=False):
+    """Skip an integration test unless the ignored VNtyper data drop is present."""
+    result = validate_manifest(check_md5=check_md5)
+    if result["missing"]:
+        preview = ", ".join(result["missing"][:3])
+        remaining = len(result["missing"]) - min(len(result["missing"]), 3)
+        suffix = f", plus {remaining} more" if remaining else ""
+        raise unittest.SkipTest(
+            "VNtyper integration data is absent from ports/vntyper/test-data: "
+            f"{preview}{suffix}"
+        )
+    if result["mismatched"]:
+        first = result["mismatched"][0]
+        raise unittest.SkipTest(
+            "VNtyper integration data checksum mismatch: "
+            f"{first['path']} expected {first['expected']} got {first['actual']}"
+        )
+    return result
 
 
 def load_manifest():

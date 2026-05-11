@@ -72,7 +72,7 @@ surface requires it.
 - [x] Mirror upstream `tests/test_data_config.json` filenames and MD5s in a
       BioScript-side manifest.
 - [x] Add a data validator that checks required files.
-- [ ] Wire the data validator into integration tests so they skip with a clear
+- [x] Wire the data validator into integration tests so they skip with a clear
       message when large data is absent.
 - [x] Keep large copied data out of git.
 - [x] Add tiny synthetic VCF fixtures for unit tests that do not need BAM or
