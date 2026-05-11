@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -22,7 +21,6 @@ ROOT = Path(__file__).resolve().parents[3]
 DATA_ROOT = ROOT / "ports" / "vntyper" / "test-data"
 EXPECTED_ROOT = DATA_ROOT / "expected"
 VNTYPER_BIOSCRIPT = ROOT / "ports" / "vntyper" / "bioscript" / "vntyper.bs.py"
-RUST_ROOT = ROOT / "rust"
 PYTHON_ROOT = ROOT / "python"
 BIOSCRIPT_PORT = ROOT / "ports" / "vntyper" / "bioscript"
 
@@ -30,6 +28,7 @@ sys.path.insert(0, str(PYTHON_ROOT))
 sys.path.insert(0, str(BIOSCRIPT_PORT))
 
 import vntyper_commands  # noqa: E402
+import vntyper_external_pipeline  # noqa: E402
 
 
 def main() -> int:
@@ -57,8 +56,14 @@ def main() -> int:
     if missing:
         raise SystemExit("Missing prerequisites: " + ", ".join(missing))
 
-    for command in payload["bioscript_command_plan_commands"]:
-        subprocess.run(command, cwd=RUST_ROOT, check=True)
+    for sample in payload["samples"]:
+        vntyper_external_pipeline.run_bam_pipeline(
+            sample["input_bam"],
+            sample["sample"],
+            str(EXPECTED_ROOT / sample["label"]),
+            assembly=args.assembly,
+            kestrel_jar=args.kestrel_jar,
+        )
     write_manifest(payload["manifest"])
     return 0
 
@@ -71,8 +76,8 @@ def build_payload(positive_sample: str, negative_sample: str, assembly: str, kes
     return {
         "note": (
             "This harness records the expected-output layout and command plans. "
-            "The current BioScript entrypoint writes command plans; full VCF/TSV "
-            "materialization is enabled once the external pipeline runner lands."
+            "Without --dry-run it executes the external-tool-backed runner and "
+            "materializes ignored VCF/TSV/report outputs under test-data/expected."
         ),
         "bioscript_command_plan_commands": [sample["bioscript_command_plan_command"] for sample in samples],
         "samples": samples,
@@ -137,10 +142,15 @@ def prerequisites(kestrel_jar: str, payload: dict[str, object]) -> list[str]:
     missing = []
     if shutil.which("samtools") is None:
         missing.append("samtools")
+    if shutil.which("bcftools") is None:
+        missing.append("bcftools")
     if shutil.which("java") is None:
         missing.append("java")
     if not Path(kestrel_jar).exists():
         missing.append(kestrel_jar)
+    muc1_reference = ROOT / vntyper_commands.DEFAULT_MUC1_REFERENCE
+    if not muc1_reference.exists():
+        missing.append(str(muc1_reference))
     for sample in payload["samples"]:
         for key in ["input_bam", "input_bai"]:
             if not Path(sample[key]).exists():

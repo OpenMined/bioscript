@@ -71,9 +71,10 @@ surface requires it.
       `.vcf`, `.tsv`, or result `.json` files. Tiny expected TSV/JSON fixtures
       exist for unit tests. A dry-run generator now exists at
       `ports/vntyper/tests/generate_expected_outputs.py`; it records sample
-      labels, planned commands, and the ignored expected-output layout, but the
-      actual large VCF/TSV outputs still need to be materialized once the
-      external-tool runner is enabled.
+      labels, planned commands, and the ignored expected-output layout. Without
+      `--dry-run`, it uses the external pipeline runner to materialize VCF, TSV,
+      and JSON outputs once local samtools/bcftools/Kestrel prerequisites and
+      validated sample labels are available.
 - [x] Mirror upstream `tests/test_data_config.json` filenames and MD5s in a
       BioScript-side manifest.
 - [x] Add a data validator that checks required files.
