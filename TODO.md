@@ -185,7 +185,7 @@ surface requires it.
       searchable/sortable tables, show/hide flagged rows, colored confidence
       values, flag icons/tooltips, detailed coverage toggle, and collapsible
       pipeline log.
-- [ ] Add IGV visualization after core report parity:
+- [x] Add IGV visualization after core report parity:
       embedded IGV.js, variant selector table, and BAM/VCF track sessions.
 - [x] Make the first BioScript HTML report useful without IGV or adVNTR:
       final screening summary, Kestrel table, VNTR coverage QC, metadata, and
@@ -207,7 +207,7 @@ surface requires it.
 - [x] M8: FASTQ path works using external fastp/bwa or documented prealigned
       inputs.
 - [x] M9: Optional adVNTR/SHARK/cohort/report modules triaged.
-- [ ] M10: IGV visualization parity.
+- [x] M10: IGV visualization parity.
 - [ ] M11: Replace selected external-tool behavior with Rust/noodles wrappers
       where the benefit is clear.
 

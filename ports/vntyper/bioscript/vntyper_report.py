@@ -10,6 +10,7 @@ def render_html_report(report: dict) -> str:
     coverage = report.get("coverage", {})
     kestrel_rows = report.get("kestrel_variants", [])
     pipeline_log = report.get("pipeline_log", [])
+    igv = report.get("igv", {})
     return "\n".join(
         [
             "<!doctype html>",
@@ -27,6 +28,7 @@ def render_html_report(report: dict) -> str:
             _section("Run Metadata", _definition_list(metadata)),
             _details_section("VNTR Coverage QC", _definition_list(coverage), open_by_default=True),
             _section("Kestrel Identified Variants", _variant_table(kestrel_rows)),
+            _section("IGV Visualization", _igv_section(igv, kestrel_rows)),
             _details_section("Pipeline Log", _log_block(pipeline_log), open_by_default=False),
             "</main>",
             "</body>",
@@ -125,6 +127,49 @@ def _log_block(lines: list[str]) -> str:
     return "<pre>" + escape("\n".join(str(line) for line in lines)) + "</pre>"
 
 
+def _igv_section(igv: dict, variants: list[dict]) -> str:
+    if not igv:
+        return "<p>IGV visualization is not configured for this report.</p>"
+    required = ["reference", "bam", "vcf"]
+    missing = [key for key in required if not igv.get(key)]
+    if missing:
+        return f"<p>IGV visualization is missing: {escape(', '.join(missing))}</p>"
+    selector = _igv_variant_selector(variants)
+    config = {
+        "reference": igv["reference"],
+        "bam": igv["bam"],
+        "bai": igv.get("bai"),
+        "vcf": igv["vcf"],
+        "locus": igv.get("locus"),
+    }
+    attrs = " ".join(f'data-{key}="{escape(_display_value(value))}"' for key, value in config.items() if value)
+    return (
+        selector
+        + f'<div id="igv-viewer" {attrs}></div>'
+        + '<script src="https://cdn.jsdelivr.net/npm/igv@2.15.13/dist/igv.min.js"></script>'
+        + _igv_script()
+    )
+
+
+def _igv_variant_selector(variants: list[dict]) -> str:
+    if not variants:
+        return "<p>No variants available for IGV selection.</p>"
+    rows = []
+    for row in variants:
+        label = f"{row.get('CHROM', 'MUC1')}:{row.get('POS', '')} {row.get('REF', '')}>{row.get('ALT', '')}"
+        locus = f"{row.get('CHROM', 'MUC1')}:{row.get('POS', '')}"
+        rows.append(
+            '<tr>'
+            f"<td>{escape(label)}</td>"
+            f'<td><button type="button" data-locus="{escape(locus)}" onclick="jumpIgv(this.dataset.locus)">View</button></td>'
+            "</tr>"
+        )
+    return (
+        '<table class="variant-selector"><thead><tr><th>Variant</th><th>IGV</th></tr></thead>'
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
 def _trusted_breaks(value: str) -> str:
     return escape(str(value)).replace("&lt;br&gt;", "<br>")
 
@@ -186,4 +231,27 @@ function sortVariants(index){
   });
   rows.forEach(row=>tbody.appendChild(row));
 }
+</script>"""
+
+
+def _igv_script() -> str:
+    return """<script>
+let bioscriptIgvBrowser=null;
+function initBioScriptIgv(){
+  const el=document.getElementById('igv-viewer');
+  if(!el || !window.igv){return;}
+  const options={
+    genome:{fastaURL:el.dataset.reference},
+    locus:el.dataset.locus || undefined,
+    tracks:[
+      {name:'BAM',type:'alignment',format:'bam',url:el.dataset.bam,indexURL:el.dataset.bai},
+      {name:'Kestrel VCF',type:'variant',format:'vcf',url:el.dataset.vcf}
+    ]
+  };
+  igv.createBrowser(el, options).then(browser=>{bioscriptIgvBrowser=browser;});
+}
+function jumpIgv(locus){
+  if(bioscriptIgvBrowser){bioscriptIgvBrowser.search(locus);}
+}
+window.addEventListener('load', initBioScriptIgv);
 </script>"""

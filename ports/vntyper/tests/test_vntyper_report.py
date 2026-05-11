@@ -53,6 +53,8 @@ class VntyperReportTests(unittest.TestCase):
         self.assertIn("<summary>VNTR Coverage QC</summary>", html)
         self.assertIn("<h2>Kestrel Identified Variants</h2>", html)
         self.assertIn("<summary>Pipeline Log</summary>", html)
+        self.assertIn("<h2>IGV Visualization</h2>", html)
+        self.assertIn("IGV visualization is not configured", html)
         self.assertIn("external samtools/kestrel", html)
         self.assertIn("High_Precision*", html)
         self.assertIn("planned samtools view", html)
@@ -63,6 +65,30 @@ class VntyperReportTests(unittest.TestCase):
         self.assertIn("confidence-high", html)
         self.assertIn('title="Not flagged"', html)
         self.assertIn("<details open>", html)
+
+    def test_html_report_can_embed_igv_session_config(self):
+        rows = vntyper_port.process_kestrel_vcf(str(FIXTURE))
+        report = vntyper_port.build_report_json(
+            sample_name="fixture",
+            input_files={"vcf": str(FIXTURE)},
+            kestrel_rows=rows,
+            coverage={"mean": 250},
+            pipeline_log=[],
+        )
+        report["igv"] = {
+            "reference": "ref.fa",
+            "bam": "sample.bam",
+            "bai": "sample.bam.bai",
+            "vcf": "kestrel.vcf",
+            "locus": "MUC1:100",
+        }
+        html = vntyper_report.render_html_report(report)
+        self.assertIn("https://cdn.jsdelivr.net/npm/igv", html)
+        self.assertIn('id="igv-viewer"', html)
+        self.assertIn('data-bam="sample.bam"', html)
+        self.assertIn('data-vcf="kestrel.vcf"', html)
+        self.assertIn("variant-selector", html)
+        self.assertIn("jumpIgv", html)
 
 
 if __name__ == "__main__":
