@@ -1322,6 +1322,33 @@ fn kestrel_native_assembled_haplotype_engine_writes_vcf() {
 }
 
 #[test]
+fn kestrel_native_assembled_haplotype_engine_prefers_alternate_over_reference_haplotype() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "ACGTAC".to_owned(),
+    };
+    let active = ActiveRegion::new(&region, Some(0), Some(3), &[2, 2, 1, 2], 3).unwrap();
+    let counts = KmerCountMap::from_sequences(["ACGTAC", "ACGTTAC"], 3).unwrap();
+    let vcf = call_assembled_haplotypes_to_vcf(
+        &region,
+        &active,
+        &counts,
+        &HaplotypeAssemblyConfig {
+            min_kmer_count: 1,
+            max_haplotypes: 4,
+            max_bases: 20,
+            max_repeat_count: 0,
+            max_saved_states: 4,
+            locus_depth: 1,
+        },
+        &NativeKestrelCallConfig::new("native", "sample1", "md5"),
+    )
+    .unwrap();
+
+    assert!(vcf.contains("MUC1\t3\t.\tG\tGT\t.\t.\t.\tGT:GDP:DP\t1:1:2\n"));
+}
+
+#[test]
 fn kestrel_native_sequences_engine_counts_detects_assembles_and_writes_vcf() {
     let region = ReferenceRegion {
         reference_name: "MUC1".to_owned(),
