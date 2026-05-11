@@ -74,7 +74,9 @@ surface requires it.
       labels, planned commands, and the ignored expected-output layout. Without
       `--dry-run`, it uses the external pipeline runner to materialize VCF, TSV,
       and JSON outputs once local samtools/bcftools/Kestrel prerequisites and
-      validated sample labels are available.
+      validated sample labels are available. `--fastq-only` can bootstrap
+      Kestrel VCF/TSV/report outputs from existing copied FASTQ pairs without
+      samtools/bcftools.
 - [x] Mirror upstream `tests/test_data_config.json` filenames and MD5s in a
       BioScript-side manifest.
 - [x] Add a data validator that checks required files.
