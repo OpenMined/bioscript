@@ -25,37 +25,37 @@ surface requires it.
 
 ## Port Strategy
 
-- [ ] Treat upstream VNtyper as the behavioral reference.
-- [ ] Start with the smallest faithful path:
+- [x] Treat upstream VNtyper as the behavioral reference.
+- [x] Start with the smallest faithful path:
       BAM input -> MUC1 read extraction -> Kestrel VCF -> frameshift/depth
       classification -> TSV/JSON report.
-- [ ] Keep Kestrel as an external tool adapter first.
-- [ ] Keep samtools/bcftools/fastp/bwa as external tool adapters first, then
+- [x] Keep Kestrel as an external tool adapter first.
+- [x] Keep samtools/bcftools/fastp/bwa as external tool adapters first, then
       replace the narrowest needed pieces with Rust wrappers when useful.
-- [ ] Keep optional modules separate:
+- [x] Keep optional modules separate:
       `adVNTR`, `SHARK`, cohort summaries, HTML reports, and mutation counter.
-- [ ] Prefer deterministic TSV/JSON parity tests before full HTML/report
+- [x] Prefer deterministic TSV/JSON parity tests before full HTML/report
       parity.
 
 ## Upstream Inventory
 
-- [ ] Read upstream CLI flow:
+- [x] Read upstream CLI flow:
       `ports/vntyper/vntyper/vntyper/cli.py`.
-- [ ] Read upstream pipeline orchestration:
+- [x] Read upstream pipeline orchestration:
       `ports/vntyper/vntyper/vntyper/scripts/pipeline.py`.
-- [ ] Read Kestrel flow:
+- [x] Read Kestrel flow:
       `ports/vntyper/vntyper/vntyper/scripts/kestrel_genotyping.py`.
-- [ ] Read alignment/read extraction flow:
+- [x] Read alignment/read extraction flow:
       `ports/vntyper/vntyper/vntyper/scripts/fastq_bam_processing.py`.
-- [ ] Read VCF and indel processing:
+- [x] Read VCF and indel processing:
       `ports/vntyper/vntyper/vntyper/scripts/file_processing.py`,
       `variant_parsing.py`, and `motif_processing.py`.
-- [ ] Read scoring/confidence/filtering:
+- [x] Read scoring/confidence/filtering:
       `scoring.py`, `confidence_assignment.py`, `flagging.py`, and
       `kestrel_config.json`.
-- [ ] Read region/reference registry helpers:
+- [x] Read region/reference registry helpers:
       `region_utils.py`, `reference_registry.py`, and `chromosome_utils.py`.
-- [ ] Identify exact upstream outputs needed for parity:
+- [x] Identify exact upstream outputs needed for parity:
       `kestrel_result.tsv`, `kestrel_pre_result.tsv`, filtered VCFs,
       pipeline summary JSON, and selected report fields.
 
