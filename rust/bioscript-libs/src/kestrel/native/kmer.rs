@@ -181,13 +181,10 @@ fn count_into(
             previous_kmer = None;
             continue;
         }
-        let kmer = String::from_utf8(window.to_vec()).map_err(|err| {
-            LibError::InvalidArguments(format!("Kestrel k-mer is not valid UTF-8: {err}"))
-        })?;
-        *counts.entry(kmer).or_insert(0) += 1;
         let current_kmer = String::from_utf8(window.to_vec()).map_err(|err| {
             LibError::InvalidArguments(format!("Kestrel k-mer is not valid UTF-8: {err}"))
         })?;
+        *counts.entry(current_kmer.clone()).or_insert(0) += 1;
         if let Some(previous) = previous_kmer.replace(current_kmer.clone()) {
             *transitions.entry((previous, current_kmer)).or_insert(0) += 1;
         }
