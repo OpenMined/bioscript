@@ -18,6 +18,14 @@ ROOT = Path(__file__).resolve().parents[3]
 UPSTREAM_CONFIG = ROOT / "ports" / "vntyper" / "vntyper" / "tests" / "test_data_config.json"
 DATA_ROOT = ROOT / "ports" / "vntyper" / "test-data"
 KESTREL_JAR = ROOT / "ports" / "vntyper" / "kestrel" / "kestrel.jar"
+MUC1_REFERENCE = (
+    ROOT
+    / "ports"
+    / "vntyper"
+    / "vntyper"
+    / "reference"
+    / "All_Pairwise_and_Self_Merged_MUC1_motifs_filtered.fa"
+)
 EXPECTED_OUTPUT_ROOT = DATA_ROOT / "expected"
 EXPECTED_OUTPUTS = [
     EXPECTED_OUTPUT_ROOT / "positive" / "kestrel" / "output.vcf",
@@ -53,10 +61,14 @@ def require_full_pipeline_prerequisites():
     missing = []
     if shutil.which("samtools") is None:
         missing.append("samtools on PATH")
+    if shutil.which("bcftools") is None:
+        missing.append("bcftools on PATH")
     if shutil.which("java") is None:
         missing.append("java on PATH")
     if not KESTREL_JAR.exists():
         missing.append(str(KESTREL_JAR))
+    if not MUC1_REFERENCE.exists():
+        missing.append(str(MUC1_REFERENCE))
     missing_outputs = [str(path) for path in EXPECTED_OUTPUTS if not path.exists()]
     if missing_outputs:
         preview = ", ".join(missing_outputs[:3])
@@ -70,8 +82,10 @@ def require_full_pipeline_prerequisites():
     return {
         "manifest": manifest,
         "samtools": shutil.which("samtools"),
+        "bcftools": shutil.which("bcftools"),
         "java": shutil.which("java"),
         "kestrel_jar": str(KESTREL_JAR),
+        "muc1_reference": str(MUC1_REFERENCE),
         "expected_outputs": [str(path) for path in EXPECTED_OUTPUTS],
     }
 

@@ -22,8 +22,14 @@ class VntyperFullPipelineGateTests(unittest.TestCase):
     def test_full_pipeline_prerequisites_are_available(self):
         self.assertGreater(self.prereqs["manifest"]["present"], 0)
         self.assertTrue(self.prereqs["samtools"])
+        self.assertTrue(self.prereqs["bcftools"])
         self.assertTrue(self.prereqs["java"])
         self.assertTrue(self.prereqs["kestrel_jar"].endswith("kestrel.jar"))
+        self.assertTrue(
+            self.prereqs["muc1_reference"].endswith(
+                "All_Pairwise_and_Self_Merged_MUC1_motifs_filtered.fa"
+            )
+        )
         self.assertGreaterEqual(len(self.prereqs["expected_outputs"]), 4)
 
 
