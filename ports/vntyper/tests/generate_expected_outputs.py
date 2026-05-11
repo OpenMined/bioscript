@@ -39,6 +39,11 @@ def main() -> int:
     parser.add_argument("--kestrel-jar", default=str(DEFAULT_KESTREL_JAR))
     parser.add_argument("--assembly", default="hg19")
     parser.add_argument(
+        "--fastq-only",
+        action="store_true",
+        help="Generate Kestrel VCF/TSV/report outputs from existing FASTQ pairs without samtools.",
+    )
+    parser.add_argument(
         "--write-manifest",
         action="store_true",
         help="Write expected/manifest.json even in dry-run mode.",
@@ -53,18 +58,27 @@ def main() -> int:
             write_manifest(payload["manifest"])
         return 0
 
-    missing = prerequisites(args.kestrel_jar, payload)
+    missing = prerequisites(args.kestrel_jar, payload, fastq_only=args.fastq_only)
     if missing:
         raise SystemExit("Missing prerequisites: " + ", ".join(missing))
 
     for sample in payload["samples"]:
-        vntyper_external_pipeline.run_bam_pipeline(
-            sample["input_bam"],
-            sample["sample"],
-            str(EXPECTED_ROOT / sample["label"]),
-            assembly=args.assembly,
-            kestrel_jar=args.kestrel_jar,
-        )
+        if args.fastq_only:
+            vntyper_external_pipeline.run_fastq_kestrel(
+                sample["input_fastq_1"],
+                sample["input_fastq_2"],
+                sample["sample"],
+                str(EXPECTED_ROOT / sample["label"]),
+                kestrel_jar=args.kestrel_jar,
+            )
+        else:
+            vntyper_external_pipeline.run_bam_pipeline(
+                sample["input_bam"],
+                sample["sample"],
+                str(EXPECTED_ROOT / sample["label"]),
+                assembly=args.assembly,
+                kestrel_jar=args.kestrel_jar,
+            )
     write_manifest(payload["manifest"])
     return 0
 
@@ -112,6 +126,8 @@ def sample_payload(label: str, sample: str, assembly: str, kestrel_jar: str) -> 
         "sample": sample,
         "input_bam": str(bam),
         "input_bai": str(DATA_ROOT / f"{sample}.bam.bai"),
+        "input_fastq_1": str(DATA_ROOT / f"{sample}_R1.fastq.gz"),
+        "input_fastq_2": str(DATA_ROOT / f"{sample}_R2.fastq.gz"),
         "expected_kestrel_vcf": str(output_root / "kestrel" / "output.vcf"),
         "expected_kestrel_tsv": str(output_root / "kestrel" / "kestrel_result.tsv"),
         "bioscript_command_plan_command": [
@@ -139,11 +155,11 @@ def write_manifest(manifest: dict[str, object]) -> None:
     (EXPECTED_ROOT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
-def prerequisites(kestrel_jar: str, payload: dict[str, object]) -> list[str]:
+def prerequisites(kestrel_jar: str, payload: dict[str, object], fastq_only: bool = False) -> list[str]:
     missing = []
-    if shutil.which("samtools") is None:
+    if not fastq_only and shutil.which("samtools") is None:
         missing.append("samtools")
-    if shutil.which("bcftools") is None:
+    if not fastq_only and shutil.which("bcftools") is None:
         missing.append("bcftools")
     if shutil.which("java") is None:
         missing.append("java")
@@ -153,7 +169,8 @@ def prerequisites(kestrel_jar: str, payload: dict[str, object]) -> list[str]:
     if not muc1_reference.exists():
         missing.append(str(muc1_reference))
     for sample in payload["samples"]:
-        for key in ["input_bam", "input_bai"]:
+        keys = ["input_fastq_1", "input_fastq_2"] if fastq_only else ["input_bam", "input_bai"]
+        for key in keys:
             if not Path(sample[key]).exists():
                 missing.append(sample[key])
     return missing

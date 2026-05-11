@@ -91,6 +91,32 @@ class VntyperExternalPipelineTests(unittest.TestCase):
         self.assertEqual(coverage["median"], 10.0)
         self.assertEqual(coverage["region_length"], 2)
 
+    def test_fastq_kestrel_runner_materializes_outputs_without_samtools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = []
+
+            def fake_runner(command, check):
+                calls.append(command)
+                shutil.copyfile(FIXTURE_VCF, command[command.index("-o") + 1])
+                Path(command[command.index("-p") + 1]).write_text("@HD\n", encoding="utf-8")
+
+            result = vntyper_external_pipeline.run_fastq_kestrel(
+                "sample_R1.fastq.gz",
+                "sample_R2.fastq.gz",
+                "sample1",
+                str(Path(tmp) / "sample1"),
+                runner=fake_runner,
+            )
+
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], "java")
+            self.assertTrue(Path(result.kestrel_tsv).exists())
+            self.assertTrue(Path(result.report_json).exists())
+            with open(result.report_json, "r", encoding="utf-8") as handle:
+                report = json.load(handle)
+            self.assertEqual(report["input_files"]["fastq_1"], "sample_R1.fastq.gz")
+            self.assertEqual(report["input_files"]["fastq_2"], "sample_R2.fastq.gz")
+
 
 if __name__ == "__main__":
     unittest.main()
