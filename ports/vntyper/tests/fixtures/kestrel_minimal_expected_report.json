@@ -1,0 +1,16 @@
+{
+  "best_call": {
+    "ALT": "CGGCA",
+    "CHROM": "MUC1",
+    "Confidence": "High_Precision*",
+    "Depth_Score": 0.012,
+    "Estimated_Depth_AlternateVariant": 120.0,
+    "Estimated_Depth_Variant_ActiveRegion": 10000.0,
+    "POS": "100",
+    "REF": "C",
+    "passes_vntyper_filters": true
+  },
+  "coverage_quality_pass": true,
+  "kestrel_variant_count": 3,
+  "screening_summary": "Kestrel detected a high-precision pathogenic variant."
+}
