@@ -199,15 +199,14 @@ surface requires it.
       `rust/bioscript-libs/tests/kestrel_java_parity.rs`; when
       `BIOSCRIPT_RUN_KESTREL_JAVA_PARITY=1` and a Kestrel jar are available, it
       compares native FASTQ-to-VCF output with Java Kestrel on tiny
-      perfect-reference no-variant and simple SNP fixtures. The remaining work
-      is the full Java active-region detector heuristics and broader parity
-      against Java Kestrel outputs on sparse synthetic and VNtyper fixtures.
-      A known next sparse synthetic target is reference-consistent split reads
-      (`AAAACCC`, `CCCTGGG`, `GGGTTTT`) against `AAAACCCCGGGGTTTT`: Java
-      Kestrel emits no variant rows with the current parity flags, while the
-      native graph assembler can bridge the sparse k-mer path and over-call
-      variants. That gap should be fixed before expanding the Java parity gate
-      to sparse-read fixtures.
+      perfect-reference no-variant, simple SNP, and sparse split-read fixtures.
+      The native assembler now tracks observed adjacent k-mer transitions from
+      each read/FASTQ record and refuses to bridge k-mers that were never
+      adjacent in an input read, which fixes the Java-confirmed sparse
+      reference-consistent case (`AAAACCC`, `CCCTGGG`, `GGGTTTT`) against
+      `AAAACCCCGGGGTTTT`. The remaining work is the full Java active-region
+      detector heuristics and broader parity against Java Kestrel outputs on
+      larger synthetic and VNtyper fixtures.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
