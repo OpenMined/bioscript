@@ -218,7 +218,12 @@ surface requires it.
       Java expected output for `example_6449_hg19_subset` remains negative
       because no high-confidence row is a VNtyper-valid frameshift, while the
       bounded native caller currently emits many high-confidence valid
-      frameshift rows and over-calls. The Java parity gate now includes a
+      frameshift rows and over-calls. The BioScript post-processing path now
+      applies the first motif annotation/filtering layer from upstream VNtyper
+      (`position_threshold`, right-motif exclusions, `GG` motif rules, and
+      combined motif/ALT exclusions), which makes the remaining false positives
+      a native haplotype/alignment parity issue rather than a missing
+      post-processing filter. The Java parity gate now includes a
       multi-reference FASTQ fixture that emits all contig headers and calls the
       matching reference record, which is the next required shape for full
       VNtyper motif-reference parity. The
