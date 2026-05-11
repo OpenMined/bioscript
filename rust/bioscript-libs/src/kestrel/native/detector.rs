@@ -10,6 +10,7 @@ pub struct ActiveRegionDetectorConfig {
     pub anchor_both_ends: bool,
     pub decay_min: f32,
     pub decay_alpha: f32,
+    pub peak_scan_length: usize,
 }
 
 impl Default for ActiveRegionDetectorConfig {
@@ -21,6 +22,7 @@ impl Default for ActiveRegionDetectorConfig {
             anchor_both_ends: true,
             decay_min: 0.55,
             decay_alpha: 0.80,
+            peak_scan_length: 7,
         }
     }
 }
@@ -123,19 +125,7 @@ fn candidate_regions(
         let left = counts[index - 1];
         let right = counts[index];
         if left > right && left - right >= difference_threshold {
-            let mut end = index + 1;
-            while end < counts.len()
-                && (counts[end] as f32)
-                    < recovery_threshold(
-                        left,
-                        difference_threshold,
-                        end - index,
-                        kmer_size,
-                        config,
-                    )?
-            {
-                end += 1;
-            }
+            let end = scan_right_end(counts, index, left, kmer_size, difference_threshold, config)?;
             if end < counts.len() && end.saturating_sub(index) >= kmer_size.saturating_sub(1) {
                 regions.push(ActiveRegion::new(
                     region,
@@ -178,6 +168,75 @@ fn candidate_regions(
         index += 1;
     }
     Ok(regions)
+}
+
+fn scan_right_end(
+    counts: &[u32],
+    start_index: usize,
+    anchor_count: u32,
+    kmer_size: usize,
+    difference_threshold: u32,
+    config: &ActiveRegionDetectorConfig,
+) -> LibResult<usize> {
+    let mut end = start_index + 1;
+    let mut peak_count = 0usize;
+    let mut peak_scan_index = 0usize;
+    let mut last_valley_index = 0usize;
+
+    'scan_loop: loop {
+        while end < counts.len()
+            && (counts[end] as f32)
+                < recovery_threshold(
+                    anchor_count,
+                    difference_threshold,
+                    end - start_index,
+                    kmer_size,
+                    config,
+                )?
+        {
+            end += 1;
+        }
+
+        if config.peak_scan_length == 0 {
+            return Ok(end);
+        }
+
+        if peak_scan_index > 0 && end.saturating_sub(peak_scan_index) >= kmer_size {
+            last_valley_index = end;
+        } else if peak_scan_index == 0 && end.saturating_sub(start_index) >= kmer_size {
+            last_valley_index = end;
+        }
+
+        let recovery_value = recovery_threshold(
+            anchor_count,
+            difference_threshold,
+            end.saturating_sub(start_index),
+            kmer_size,
+            config,
+        )?;
+        peak_scan_index = end;
+        let peak_scan_limit = end
+            .saturating_add(config.peak_scan_length)
+            .min(counts.len());
+
+        while peak_scan_index < peak_scan_limit {
+            if (counts[peak_scan_index] as f32) < recovery_value {
+                peak_count += 1;
+                end = peak_scan_index;
+                if peak_count > 3 && end.saturating_sub(start_index) / peak_count < kmer_size {
+                    return Ok(last_valley_index.max(start_index + 1));
+                }
+                continue 'scan_loop;
+            }
+            peak_scan_index += 1;
+        }
+
+        if peak_scan_index == counts.len() && last_valley_index > 0 {
+            return Ok(last_valley_index);
+        }
+
+        return Ok(end);
+    }
 }
 
 fn validate_config(config: &ActiveRegionDetectorConfig) -> LibResult<()> {

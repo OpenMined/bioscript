@@ -103,6 +103,7 @@ class ToolCommandTests(unittest.TestCase):
                     True,
                     0.55,
                     0.8,
+                    7,
                     1,
                     40,
                     500,

@@ -91,6 +91,7 @@ fn kestrel_call_sequences_native(
     anchor_both_ends: Option<bool>,
     decay_min: Option<f32>,
     decay_alpha: Option<f32>,
+    peak_scan_length: Option<usize>,
     min_kmer_count: Option<u32>,
     max_haplotypes: Option<usize>,
     max_bases: Option<usize>,
@@ -109,6 +110,7 @@ fn kestrel_call_sequences_native(
         anchor_both_ends: anchor_both_ends.unwrap_or(true),
         decay_min: decay_min.unwrap_or(0.55),
         decay_alpha: decay_alpha.unwrap_or(0.80),
+        peak_scan_length: peak_scan_length.unwrap_or(7),
     };
     let assembly_config = bioscript_libs::kestrel::native::HaplotypeAssemblyConfig {
         min_kmer_count: min_kmer_count.unwrap_or(1),
@@ -149,6 +151,7 @@ fn kestrel_call_fastq_native(
     anchor_both_ends: Option<bool>,
     decay_min: Option<f32>,
     decay_alpha: Option<f32>,
+    peak_scan_length: Option<usize>,
     min_kmer_count: Option<u32>,
     max_haplotypes: Option<usize>,
     max_bases: Option<usize>,
@@ -167,6 +170,7 @@ fn kestrel_call_fastq_native(
         anchor_both_ends: anchor_both_ends.unwrap_or(true),
         decay_min: decay_min.unwrap_or(0.55),
         decay_alpha: decay_alpha.unwrap_or(0.80),
+        peak_scan_length: peak_scan_length.unwrap_or(7),
     };
     let assembly_config = bioscript_libs::kestrel::native::HaplotypeAssemblyConfig {
         min_kmer_count: min_kmer_count.unwrap_or(1),
