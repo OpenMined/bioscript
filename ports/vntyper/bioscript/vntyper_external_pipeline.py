@@ -41,6 +41,10 @@ KESTREL_TSV_COLUMNS = [
     "passes_vntyper_filters",
 ]
 
+NATIVE_KESTREL_MAX_HAPLOTYPES = 2
+NATIVE_KESTREL_MAX_SAVED_STATES = 2
+NATIVE_KESTREL_MAX_BASES = 120
+
 
 @dataclass(frozen=True)
 class ExternalPipelineResult:
@@ -233,6 +237,9 @@ def run_native_kestrel(
         [plan.fastq_1, plan.fastq_2],
         20,
         sample_name=plan.participant_id,
+        max_haplotypes=NATIVE_KESTREL_MAX_HAPLOTYPES,
+        max_saved_states=NATIVE_KESTREL_MAX_SAVED_STATES,
+        max_bases=NATIVE_KESTREL_MAX_BASES,
     )
     Path(output_vcf).write_text(vcf, encoding="utf-8")
 
