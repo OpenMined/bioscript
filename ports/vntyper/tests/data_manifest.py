@@ -30,6 +30,7 @@ MUC1_REFERENCE = (
     / "All_Pairwise_and_Self_Merged_MUC1_motifs_filtered.fa"
 )
 EXPECTED_OUTPUT_ROOT = DATA_ROOT / "expected"
+LOCAL_TOOL_BIN = DATA_ROOT / "tools" / "local" / "bin"
 EXPECTED_OUTPUTS = [
     EXPECTED_OUTPUT_ROOT / "positive" / "kestrel" / "output.vcf",
     EXPECTED_OUTPUT_ROOT / "positive" / "kestrel" / "kestrel_result.tsv",
@@ -83,10 +84,12 @@ def require_full_pipeline_prerequisites():
     """Skip full external pipeline tests unless tools, data, and expected outputs exist."""
     manifest = require_test_data(check_md5=False)
     missing = []
-    if shutil.which("samtools") is None:
-        missing.append("samtools on PATH")
-    if shutil.which("bcftools") is None:
-        missing.append("bcftools on PATH")
+    samtools_path = which_tool("samtools")
+    bcftools_path = which_tool("bcftools")
+    if samtools_path is None:
+        missing.append("samtools on PATH or in ports/vntyper/test-data/tools/local/bin")
+    if bcftools_path is None:
+        missing.append("bcftools on PATH or in ports/vntyper/test-data/tools/local/bin")
     if shutil.which("java") is None:
         missing.append("java on PATH")
     if not KESTREL_JAR.exists():
@@ -105,12 +108,36 @@ def require_full_pipeline_prerequisites():
         )
     return {
         "manifest": manifest,
-        "samtools": shutil.which("samtools"),
-        "bcftools": shutil.which("bcftools"),
+        "samtools": samtools_path,
+        "bcftools": bcftools_path,
         "java": shutil.which("java"),
+        "tool_path": str(LOCAL_TOOL_BIN),
         "kestrel_jar": str(KESTREL_JAR),
         "muc1_reference": str(MUC1_REFERENCE),
         "expected_outputs": [str(path) for path in EXPECTED_OUTPUTS],
+    }
+
+
+def require_external_bam_pipeline_prerequisites():
+    """Skip unless the external samtools/bcftools BAM path is explicitly enabled."""
+    prereqs = require_full_pipeline_prerequisites()
+    missing = []
+    if os.environ.get("BIOSCRIPT_RUN_EXTERNAL_BAM_PARITY") != "1":
+        missing.append("BIOSCRIPT_RUN_EXTERNAL_BAM_PARITY=1")
+    missing_cases = [
+        str(path)
+        for bam in REPRESENTATIVE_BAM_CASES.values()
+        for path in [bam, Path(f"{bam}.bai")]
+        if not path.exists()
+    ]
+    missing.extend(missing_cases)
+    if missing:
+        raise unittest.SkipTest(
+            "VNtyper external BAM pipeline prerequisites are missing: " + "; ".join(missing)
+        )
+    return {
+        **prereqs,
+        "bam_cases": {label: str(path) for label, path in REPRESENTATIVE_BAM_CASES.items()},
     }
 
 
@@ -192,8 +219,9 @@ def require_samtools_fastq_oracle_prerequisites():
     missing = []
     if os.environ.get("BIOSCRIPT_RUN_SAMTOOLS_ORACLE") != "1":
         missing.append("BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1")
-    if shutil.which("samtools") is None:
-        missing.append("samtools on PATH")
+    samtools_path = which_tool("samtools")
+    if samtools_path is None:
+        missing.append("samtools on PATH or in ports/vntyper/test-data/tools/local/bin")
     missing_cases = [
         str(path)
         for bam in REPRESENTATIVE_BAM_CASES.values()
@@ -211,9 +239,20 @@ def require_samtools_fastq_oracle_prerequisites():
         )
     return {
         "manifest": manifest,
-        "samtools": shutil.which("samtools"),
+        "samtools": samtools_path,
+        "tool_path": str(LOCAL_TOOL_BIN),
         "bam_cases": {label: str(path) for label, path in REPRESENTATIVE_BAM_CASES.items()},
     }
+
+
+def which_tool(name):
+    path = shutil.which(name)
+    if path is not None:
+        return path
+    local = LOCAL_TOOL_BIN / name
+    if local.exists() and os.access(local, os.X_OK):
+        return str(local)
+    return None
 
 
 def import_native_module():

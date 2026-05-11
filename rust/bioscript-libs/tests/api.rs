@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use bioscript_libs::{
     LibError, ModuleName, bcftools,
-    kestrel::KestrelRunConfig,
+    kestrel::{
+        KestrelRunConfig,
+        native::{KestrelVcfWriter, ReferenceSequence, VariantCall},
+    },
     pyfaidx::Fasta,
     pysam::{AlignedSegment, AlignmentFile},
     samtools, supported_modules,
@@ -239,6 +242,46 @@ fn kestrel_vntyper_command_uses_structured_argv() {
             "tmp",
         ]
     );
+}
+
+#[test]
+fn kestrel_native_vcf_writer_matches_java_writer_surface() {
+    let mut writer = KestrelVcfWriter::new(
+        "1.0.2",
+        vec![ReferenceSequence {
+            name: "MUC1".to_owned(),
+            length: 120,
+            md5: "abc123".to_owned(),
+        }],
+    );
+    writer.add_sample("sample1").unwrap();
+    writer.add_sample("sample2").unwrap();
+    writer
+        .add_variant(VariantCall {
+            sample_name: "sample2".to_owned(),
+            chrom: "MUC1".to_owned(),
+            pos: 21,
+            ref_allele: "T".to_owned(),
+            alt_allele: "G".to_owned(),
+            variant_depth: 7,
+            locus_depth: 100,
+        })
+        .unwrap();
+
+    assert_eq!(
+        writer.to_vcf_string(),
+        concat!(
+            "##fileformat=VCF4.2\n",
+            "##source=Kestrel1.0.2\n",
+            "##contig=<ID=MUC1,length=120,md5=abc123>\n",
+            "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n",
+            "##FORMAT=<ID=GDP,Number=A,Type=Integer,Description=\"Estimated depth of all haplotypes supporting the alternate variant\">\n",
+            "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Estimated depth of all haplotypes in the variant active region\">\n",
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1\tsample2\n",
+            "MUC1\t21\t.\tT\tG\t.\t.\t.\tGT:GDP:DP\t0:.:.\t1:7:100\n",
+        )
+    );
+    assert!(writer.add_sample("bad sample").is_err());
 }
 
 #[test]

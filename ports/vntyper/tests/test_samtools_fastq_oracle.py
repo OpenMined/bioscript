@@ -1,5 +1,6 @@
 import gzip
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -64,13 +65,17 @@ def run_samtools_oracle(bam, region, tmp):
     other = tmp / "samtools_other.fastq.gz"
     singleton = tmp / "samtools_single.fastq.gz"
 
+    env = os.environ.copy()
+    env["PATH"] = f"{data_manifest.LOCAL_TOOL_BIN}{os.pathsep}{env.get('PATH', '')}"
     subprocess.run(
         ["samtools", "view", "-P", "-b", bam, region, "-o", str(sliced)],
         check=True,
+        env=env,
     )
     subprocess.run(
         ["samtools", "sort", "-n", "-o", str(sorted_bam), str(sliced)],
         check=True,
+        env=env,
     )
     subprocess.run(
         [
@@ -87,6 +92,7 @@ def run_samtools_oracle(bam, region, tmp):
             str(singleton),
         ],
         check=True,
+        env=env,
     )
     return {
         "read1_records": count_fastq_records(read1),

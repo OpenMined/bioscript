@@ -5,6 +5,8 @@ use crate::{
     tools::{CommandSpec, path_arg},
 };
 
+pub mod native;
+
 pub const MODULE: &str = "kestrel";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

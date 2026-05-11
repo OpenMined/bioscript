@@ -124,6 +124,12 @@ surface requires it.
 - [ ] Port the Kestrel Java internals only after the external-tool-backed
       wrapper passes VNtyper parity. Candidate internal packages:
       `counter`, `activeregion`, `align`, `variant`, and `writer.vcf`.
+      The first native surface now exists in
+      `rust/bioscript-libs/src/kestrel/native.rs`: a Rust Kestrel VCF writer
+      model that mirrors the Java `writer.vcf` headers, FORMAT fields,
+      multi-sample genotype/depth fields, validation, and record ordering. The
+      remaining work is the actual k-mer counting, active-region detection,
+      haplotype alignment, and variant-calling engine.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
@@ -180,15 +186,21 @@ surface requires it.
       `ports/vntyper/tests/test_samtools_fastq_oracle.py`; it is opt-in with
       `BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1` and compares native FASTQ extraction
       counts against `samtools view -P`, name-sort, and `samtools fastq`.
-      The local environment is Arch Linux, but `sudo pacman -Sy --needed
+      The local environment is Arch Linux, and `sudo pacman -Sy --needed
       --noconfirm samtools bcftools` cannot run non-interactively here because
-      sudo requires a terminal password.
+      sudo requires a terminal password. To unblock comparison gates, local
+      ignored builds of `htslib`, `samtools`, and `bcftools` 1.23.1 were built
+      under `ports/vntyper/test-data/tools/local`; the manifest discovers those
+      binaries when system installs are absent.
       FASTQ-backed Kestrel expected outputs are gated by
       `test_fastq_expected_outputs.py`; native BAM-backed positive and negative
       representative samples are gated by `test_native_bam_pipeline_gate.py`.
       The native BAM gate verifies sample classification, report shape,
       screening summary, nonempty Kestrel rows, variant-table linkage, and VNTR
-      coverage fields against the generated expected report set.
+      coverage fields against the generated expected report set. The external
+      BAM gate in `test_full_pipeline_gate.py` is opt-in with
+      `BIOSCRIPT_RUN_EXTERNAL_BAM_PARITY=1` and runs the samtools/bcftools plus
+      Kestrel path for the representative positive and negative BAMs.
 - [x] Run upstream VNtyper tests from the submodule as a reference check when
       Python dependencies and external tools are installed.
 - [x] Run BioScript tests without external tools by using fixed Kestrel VCF
@@ -235,20 +247,21 @@ surface requires it.
 - [x] M2: Kestrel VCF post-processing works in BioScript from fixture VCFs.
 - [x] M3: Confidence/depth/frame classification parity with upstream unit
       tests.
-- [ ] M4: BAM path works using external samtools and Kestrel wrappers.
+- [x] M4: BAM path works using external samtools and Kestrel wrappers.
       The execution layer now exists in
       `ports/vntyper/bioscript/vntyper_external_pipeline.py` and is covered
-      with an injected fake runner; the real-tool run remains gated on local
-      samtools/bcftools/Kestrel prerequisites and expected labels.
+      with an injected fake runner. Local ignored `htslib`, `samtools`, and
+      `bcftools` 1.23.1 builds provide comparison tools when system packages are
+      unavailable. The opt-in external BAM gate runs the real-tool path against
+      representative positive and negative BAMs, requires nonempty Kestrel rows,
+      and compares classification/report shape with generated expected reports.
       Native BioScript BAM FASTQ extraction now writes complete primary R1/R2
       pairs only and matches the copied representative FASTQ fixture counts
       for `example_6449_hg19_subset.bam` (`82523/82523`) and
       `example_66bf_hg19_subset.bam` (`19877/19877`). The native BAM/Kestrel
       gate now passes locally when explicitly enabled with
       `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1` and a temporarily copied
-      `bioscript._native` extension. The remaining M4 work is proving the
-      external `samtools`/`bcftools` comparison path once those tools are
-      available locally, or replacing that milestone with the native Rust path.
+      `bioscript._native` extension.
 - [x] M5: Native Rust Kestrel feasibility spike:
       reproduce Kestrel VCF output for one tiny fixture or document why the JVM
       adapter remains the practical first target.
@@ -260,9 +273,8 @@ surface requires it.
       native BAM gate now validates copied positive and negative BAM samples
       against generated expected reports, including report schema, Kestrel
       classification, screening summary, variant-table linkage, and populated
-      VNTR coverage metrics. Exact external `samtools`/`bcftools` oracle
-      comparison remains part of M4 because those tools are not installable
-      non-interactively in this environment.
+      VNTR coverage metrics. The external `samtools`/`bcftools` gate also runs
+      locally through the ignored user-space tool build.
 - [x] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
       logs.
 - [x] M8: FASTQ path works using external fastp/bwa or documented prealigned
