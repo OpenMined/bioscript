@@ -84,6 +84,9 @@ fn collect_region_template_names(
 }
 
 fn record_in_templates(record: &bam::Record, target_names: &HashSet<Vec<u8>>) -> bool {
+    if record.flags().is_unmapped() {
+        return true;
+    }
     record
         .name()
         .is_some_and(|name| target_names.contains::<[u8]>(name.as_ref()))
@@ -249,14 +252,18 @@ mod tests {
         assert_eq!(
             summary,
             FastqPairSummary {
-                read1_records: 1,
-                read2_records: 1,
+                read1_records: 2,
+                read2_records: 2,
                 skipped_records: 1,
             }
         );
-        assert_eq!(fs::read_to_string(read1_path)?, "@pair\nACGT\n+\nBCDE\n");
+        let read1 = fs::read_to_string(read1_path)?;
+        assert!(read1.contains("@pair\nACGT\n+\nBCDE\n"));
+        assert!(read1.contains("@unmapped\nTTTT\n+\nBCDE\n"));
         let read2 = fs::File::open(read2_path).map(GzDecoder::new)?;
-        assert_eq!(std::io::read_to_string(read2)?, "@pair\nTGCA\n+\nBCDE\n");
+        let read2 = std::io::read_to_string(read2)?;
+        assert!(read2.contains("@pair\nTGCA\n+\nBCDE\n"));
+        assert!(read2.contains("@unmapped\nCCCC\n+\nBCDE\n"));
         fs::remove_dir_all(&dir)?;
         Ok(())
     }
@@ -294,6 +301,14 @@ mod tests {
             )?,
         )?;
         writer.write_alignment_record(&header, &record("skip", Flags::empty(), b"AAAA", 1002)?)?;
+        writer.write_alignment_record(
+            &header,
+            &unmapped_record("unmapped", Flags::SEGMENTED | Flags::FIRST_SEGMENT, b"TTTT")?,
+        )?;
+        writer.write_alignment_record(
+            &header,
+            &unmapped_record("unmapped", Flags::SEGMENTED | Flags::LAST_SEGMENT, b"CCCC")?,
+        )?;
         writer.try_finish()?;
         Ok(())
     }
@@ -310,6 +325,25 @@ mod tests {
             .set_reference_sequence_id(0)
             .set_alignment_start(Position::try_from(start)?)
             .set_cigar(Cigar::from(vec![Op::new(Kind::Match, sequence.len())]))
+            .set_sequence(Sequence::from(sequence))
+            .set_quality_scores(
+                sequence
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| u8::try_from(i + 33).unwrap())
+                    .collect::<QualityScores>(),
+            )
+            .build())
+    }
+
+    fn unmapped_record(
+        name: &str,
+        flags: Flags,
+        sequence: &[u8],
+    ) -> Result<RecordBuf, Box<dyn std::error::Error>> {
+        Ok(RecordBuf::builder()
+            .set_name(name)
+            .set_flags(flags | Flags::UNMAPPED)
             .set_sequence(Sequence::from(sequence))
             .set_quality_scores(
                 sequence
