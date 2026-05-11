@@ -149,13 +149,15 @@ surface requires it.
       `peak_scan_length` controls stable-recovery scanning and short recovery
       spikes inside a low-count valley no longer prematurely terminate the
       active region. The native detector also exposes a Java-shaped
-      `scan_limit_factor` control; until alignment-weight max-gap parity is
-      implemented, BioScript uses `max(k, factor * k)` and discards candidate
-      right scans that exceed that limit. Java's default `recoverRightAnchor`
-      behavior is now partially ported as `recover_right_anchor`: when the
-      normal recovery threshold is never reached inside the scan limit, the
-      native detector searches for a later abrupt count increase and uses that
-      k-mer as a recovered right anchor. The first left-scan peak suppression
+      `scan_limit_factor` control plus an explicit `max_gap_size` input for the
+      Java `maxGapSize + scanLimitFactor * k` shape; BioScript defaults the
+      gap component to zero until full alignment-weight parity is ported. Both
+      left and right scans discard candidates that exceed that limit. Java's
+      default `recoverRightAnchor` behavior is now partially ported as
+      `recover_right_anchor`: when the normal recovery threshold is never
+      reached inside the scan limit, the native detector searches for a later
+      abrupt count increase and uses that k-mer as a recovered right anchor.
+      The first left-scan peak suppression
       rule is also ported: short isolated count increases can be skipped rather
       than being emitted as left-end active regions, and left-open candidate
       scans now respect the same scan-limit length used by right scans. The
