@@ -7,10 +7,11 @@ use bioscript_libs::{
         native::{
             ActiveRegion, ActiveRegionDetectorConfig, AlignmentOp, AlignmentWeight,
             HaplotypeAssemblyConfig, HaplotypeEvidence, KestrelVcfWriter, KmerCountMap,
-            NativeKestrelCallConfig, NativeVariantCall, ReferenceRegion, ReferenceSequence,
-            RegionStats, VariantCall, align_haplotype, assemble_haplotypes,
+            NativeKestrelCallConfig, NativeReferenceRegion, NativeVariantCall, ReferenceRegion,
+            ReferenceSequence, RegionStats, VariantCall, align_haplotype, assemble_haplotypes,
             call_alignment_variants, call_assembled_haplotypes_to_vcf,
-            call_explicit_haplotypes_to_vcf, call_fastq_paths_to_vcf, call_sequences_to_vcf,
+            call_counted_kmers_to_vcf_references, call_explicit_haplotypes_to_vcf,
+            call_fastq_paths_to_vcf, call_fastq_paths_to_vcf_references, call_sequences_to_vcf,
             count_fastq_kmers, count_sequence_kmers, detect_active_regions, difference_threshold,
             read_reference_records, recovery_threshold, reference_kmers, scan_limit_length,
         },
@@ -1390,6 +1391,95 @@ fn kestrel_native_fastq_engine_does_not_bridge_split_reads() {
         !vcf.lines()
             .any(|line| !line.is_empty() && !line.starts_with('#'))
     );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn kestrel_native_multi_reference_engine_writes_all_contigs_and_calls_matching_region() {
+    let references = vec![
+        NativeReferenceRegion::new("REF1", "AAAACCCCGGGGTTTT", "md5-ref1"),
+        NativeReferenceRegion::new("REF2", "ACAGTCCGTAAG", "md5-ref2"),
+    ];
+    let counts = KmerCountMap::from_sequences(["ACAGTTCGTAAG"; 5], 4).unwrap();
+    let vcf = call_counted_kmers_to_vcf_references(
+        &references,
+        &counts,
+        &ActiveRegionDetectorConfig {
+            minimum_difference: 1,
+            difference_quantile: 0.0,
+            count_reverse_kmers: false,
+            anchor_both_ends: false,
+            decay_min: 1.0,
+            decay_alpha: 0.80,
+            peak_scan_length: 7,
+            scan_limit_factor: 7.0,
+            max_gap_size: 0,
+            recover_right_anchor: true,
+            call_ambiguous_regions: true,
+        },
+        &HaplotypeAssemblyConfig {
+            min_kmer_count: 1,
+            max_haplotypes: 40,
+            max_bases: 100,
+            max_repeat_count: 0,
+            max_saved_states: 40,
+            locus_depth: 1,
+        },
+        &NativeKestrelCallConfig::new("native", "sample1", "."),
+    )
+    .unwrap();
+
+    assert!(vcf.contains("##contig=<ID=REF1,length=16,md5=md5-ref1>\n"));
+    assert!(vcf.contains("##contig=<ID=REF2,length=12,md5=md5-ref2>\n"));
+    assert!(vcf.contains("REF2\t6\t.\tC\tT\t.\t.\t.\tGT:GDP:DP\t1:5:5\n"));
+    assert!(!vcf.contains("REF1\t"));
+}
+
+#[test]
+fn kestrel_native_multi_reference_fastq_engine_reuses_counted_reads() {
+    let dir = std::env::temp_dir().join(format!(
+        "bioscript-kestrel-multiref-fastq-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    let fastq = dir.join("reads.fastq");
+    fs::write(
+        &fastq,
+        b"@r1\nACAGTTCGTAAG\n+\nIIIIIIIIIIII\n@r2\nACAGTTCGTAAG\n+\nIIIIIIIIIIII\n",
+    )
+    .unwrap();
+    let references = vec![NativeReferenceRegion::new("REF", "ACAGTCCGTAAG", "md5-ref")];
+    let vcf = call_fastq_paths_to_vcf_references(
+        &references,
+        [fastq.as_path()],
+        4,
+        &ActiveRegionDetectorConfig {
+            minimum_difference: 1,
+            difference_quantile: 0.0,
+            count_reverse_kmers: false,
+            anchor_both_ends: false,
+            decay_min: 1.0,
+            decay_alpha: 0.80,
+            peak_scan_length: 7,
+            scan_limit_factor: 7.0,
+            max_gap_size: 0,
+            recover_right_anchor: true,
+            call_ambiguous_regions: true,
+        },
+        &HaplotypeAssemblyConfig {
+            min_kmer_count: 1,
+            max_haplotypes: 40,
+            max_bases: 100,
+            max_repeat_count: 0,
+            max_saved_states: 40,
+            locus_depth: 1,
+        },
+        &NativeKestrelCallConfig::new("native", "sample1", "."),
+    )
+    .unwrap();
+
+    assert!(vcf.contains("##contig=<ID=REF,length=12,md5=md5-ref>\n"));
+    assert!(vcf.contains("REF\t6\t.\tC\tT\t.\t.\t.\tGT:GDP:DP\t1:2:2\n"));
     fs::remove_dir_all(dir).unwrap();
 }
 

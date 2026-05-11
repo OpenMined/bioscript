@@ -20,6 +20,34 @@ pub struct HaplotypeEvidence {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeReferenceRegion {
+    pub reference_name: String,
+    pub sequence: String,
+    pub md5: String,
+}
+
+impl NativeReferenceRegion {
+    pub fn new(
+        reference_name: impl Into<String>,
+        sequence: impl Into<String>,
+        md5: impl Into<String>,
+    ) -> Self {
+        Self {
+            reference_name: reference_name.into(),
+            sequence: sequence.into(),
+            md5: md5.into(),
+        }
+    }
+
+    fn region(&self) -> ReferenceRegion {
+        ReferenceRegion {
+            reference_name: self.reference_name.clone(),
+            sequence: self.sequence.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeKestrelCallConfig {
     pub source_version: String,
     pub sample_name: String,
@@ -116,6 +144,24 @@ pub fn call_fastq_paths_to_vcf<'a>(
     )
 }
 
+pub fn call_fastq_paths_to_vcf_references<'a>(
+    references: &[NativeReferenceRegion],
+    fastq_paths: impl IntoIterator<Item = &'a Path>,
+    kmer_size: usize,
+    detector_config: &ActiveRegionDetectorConfig,
+    assembly_config: &HaplotypeAssemblyConfig,
+    call_config: &NativeKestrelCallConfig,
+) -> LibResult<String> {
+    let counts = KmerCountMap::from_fastq_paths(fastq_paths, kmer_size)?;
+    call_counted_kmers_to_vcf_references(
+        references,
+        &counts,
+        detector_config,
+        assembly_config,
+        call_config,
+    )
+}
+
 pub fn call_counted_kmers_to_vcf(
     region: &ReferenceRegion,
     counts: &KmerCountMap,
@@ -138,6 +184,31 @@ pub fn call_counted_kmers_to_vcf(
     Ok(writer.to_vcf_string())
 }
 
+pub fn call_counted_kmers_to_vcf_references(
+    references: &[NativeReferenceRegion],
+    counts: &KmerCountMap,
+    detector_config: &ActiveRegionDetectorConfig,
+    assembly_config: &HaplotypeAssemblyConfig,
+    call_config: &NativeKestrelCallConfig,
+) -> LibResult<String> {
+    let mut writer = new_writer_for_references(references, call_config)?;
+    for reference in references {
+        let region = reference.region();
+        let detection = detect_active_regions(&region, counts, detector_config)?;
+        for active_region in &detection.regions {
+            let haplotypes = assemble_haplotypes(active_region, counts, assembly_config)?;
+            add_active_region_haplotypes(
+                &mut writer,
+                &region,
+                active_region,
+                &haplotypes,
+                &call_config.sample_name,
+            )?;
+        }
+    }
+    Ok(writer.to_vcf_string())
+}
+
 fn new_writer(
     region: &ReferenceRegion,
     config: &NativeKestrelCallConfig,
@@ -150,6 +221,23 @@ fn new_writer(
             md5: config.reference_md5.clone(),
         }],
     );
+    writer.add_sample(&config.sample_name)?;
+    Ok(writer)
+}
+
+fn new_writer_for_references(
+    references: &[NativeReferenceRegion],
+    config: &NativeKestrelCallConfig,
+) -> LibResult<KestrelVcfWriter> {
+    let reference_sequences = references
+        .iter()
+        .map(|reference| ReferenceSequence {
+            name: reference.reference_name.clone(),
+            length: reference.sequence.len(),
+            md5: reference.md5.clone(),
+        })
+        .collect();
+    let mut writer = KestrelVcfWriter::new(&config.source_version, reference_sequences);
     writer.add_sample(&config.sample_name)?;
     Ok(writer)
 }
