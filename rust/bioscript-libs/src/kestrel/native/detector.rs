@@ -135,6 +135,7 @@ fn candidate_regions(
 
     let mut regions = Vec::new();
     let mut index = 1usize;
+    let mut last_region_end = 0usize;
     while index < counts.len() {
         let left = counts[index - 1];
         let right = counts[index];
@@ -159,6 +160,7 @@ fn candidate_regions(
                     counts,
                     kmer_size,
                 )?);
+                last_region_end = end;
                 index = end + 1;
                 continue;
             }
@@ -204,6 +206,10 @@ fn candidate_regions(
                 continue;
             }
             let start_base = start.unwrap_or(0);
+            if last_region_end > 0 && start_base < last_region_end {
+                index += 1;
+                continue;
+            }
             if !config.call_ambiguous_regions
                 && contains_ambiguous_region_base(region, start_base, index + kmer_size)
             {
@@ -217,6 +223,7 @@ fn candidate_regions(
                 counts,
                 kmer_size,
             )?);
+            last_region_end = index;
             index += 1;
             continue;
         }
