@@ -132,7 +132,7 @@ surface requires it.
       command strings.
 - [x] Add tests that unsupported shell strings, remote paths, and write modes
       fail closed.
-- [ ] Record tool execution in runtime trace/timing output.
+- [x] Record tool execution in runtime trace/timing output.
 
 ## Python Compatibility Package
 

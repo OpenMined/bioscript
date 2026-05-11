@@ -171,7 +171,9 @@ if __name__ == "__main__":
 
 #[test]
 fn bioscript_vntyper_tool_modules_build_structured_commands() {
-    run_script(
+    let dir = temp_dir("tool-command-timing");
+    let runtime = run_script_with_inputs(
+        &dir,
         r#"
 from bioscript import kestrel
 from bioscript import samtools
@@ -200,8 +202,20 @@ def main():
 if __name__ == "__main__":
     main()
 "#,
+        Vec::new(),
     )
     .unwrap();
+    let timings = runtime.timing_snapshot();
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan"
+            && timing.detail.contains("method=kestrel.build_command")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=samtools.fastq")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=bcftools.sort")
+    }));
 }
 
 #[test]

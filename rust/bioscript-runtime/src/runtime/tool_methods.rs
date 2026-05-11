@@ -7,6 +7,7 @@ use monty::MontyObject;
 use super::{
     BioscriptRuntime,
     args::{expect_string_arg, reject_kwargs},
+    timing::RuntimeInstant,
 };
 
 impl BioscriptRuntime {
@@ -21,7 +22,11 @@ impl BioscriptRuntime {
                 "bcftools.sort expects input_vcf and output_vcf_gz".to_owned(),
             ));
         }
+        let started = RuntimeInstant::now();
         command_argv_object(
+            self,
+            "bcftools.sort",
+            started,
             bcftools::sort(
                 PathBuf::from(expect_string_arg(args, 1, "bcftools.sort")?).as_path(),
                 PathBuf::from(expect_string_arg(args, 2, "bcftools.sort")?).as_path(),
@@ -42,7 +47,11 @@ impl BioscriptRuntime {
                 "bcftools.index expects vcf_gz".to_owned(),
             ));
         }
+        let started = RuntimeInstant::now();
         command_argv_object(
+            self,
+            "bcftools.index",
+            started,
             bcftools::index(PathBuf::from(expect_string_arg(args, 1, "bcftools.index")?).as_path())
                 .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
                 .argv(),
@@ -61,7 +70,11 @@ impl BioscriptRuntime {
                     .to_owned(),
             ));
         }
+        let started = RuntimeInstant::now();
         command_argv_object(
+            self,
+            "bcftools.view_filter",
+            started,
             bcftools::view_filter(
                 PathBuf::from(expect_string_arg(args, 1, "bcftools.view_filter")?).as_path(),
                 PathBuf::from(expect_string_arg(args, 2, "bcftools.view_filter")?).as_path(),
@@ -83,7 +96,11 @@ impl BioscriptRuntime {
                 "bcftools.norm expects input_vcf, reference_fasta, and output_vcf_gz".to_owned(),
             ));
         }
+        let started = RuntimeInstant::now();
         command_argv_object(
+            self,
+            "bcftools.norm",
+            started,
             bcftools::norm(
                 PathBuf::from(expect_string_arg(args, 1, "bcftools.norm")?).as_path(),
                 PathBuf::from(expect_string_arg(args, 2, "bcftools.norm")?).as_path(),
@@ -115,7 +132,11 @@ impl BioscriptRuntime {
             expect_string_arg(args, 7, "kestrel.build_command")?,
             expect_string_arg(args, 8, "kestrel.build_command")?,
         );
+        let started = RuntimeInstant::now();
         command_argv_object(
+            self,
+            "kestrel.build_command",
+            started,
             config
                 .command()
                 .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
@@ -136,7 +157,11 @@ impl BioscriptRuntime {
             ));
         }
         let include_unmapped = expect_bool_arg(args, 4, "samtools.view_region")?;
+        let started = RuntimeInstant::now();
         command_argv_object(
+            self,
+            "samtools.view_region",
+            started,
             samtools::view_region(
                 PathBuf::from(expect_string_arg(args, 1, "samtools.view_region")?).as_path(),
                 &expect_string_arg(args, 2, "samtools.view_region")?,
@@ -159,7 +184,11 @@ impl BioscriptRuntime {
                 "samtools.fastq expects bam, fastq_1, and fastq_2".to_owned(),
             ));
         }
+        let started = RuntimeInstant::now();
         command_argv_object(
+            self,
+            "samtools.fastq",
+            started,
             samtools::fastq(
                 PathBuf::from(expect_string_arg(args, 1, "samtools.fastq")?).as_path(),
                 PathBuf::from(expect_string_arg(args, 2, "samtools.fastq")?).as_path(),
@@ -181,7 +210,11 @@ impl BioscriptRuntime {
                 "samtools.depth expects bam and region".to_owned(),
             ));
         }
+        let started = RuntimeInstant::now();
         command_argv_object(
+            self,
+            "samtools.depth",
+            started,
             samtools::depth(
                 PathBuf::from(expect_string_arg(args, 1, "samtools.depth")?).as_path(),
                 &expect_string_arg(args, 2, "samtools.depth")?,
@@ -202,7 +235,11 @@ impl BioscriptRuntime {
                 "samtools.index expects bam".to_owned(),
             ));
         }
+        let started = RuntimeInstant::now();
         command_argv_object(
+            self,
+            "samtools.index",
+            started,
             samtools::index(PathBuf::from(expect_string_arg(args, 1, "samtools.index")?).as_path())
                 .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
                 .argv(),
@@ -257,7 +294,17 @@ impl BioscriptRuntime {
     }
 }
 
-fn command_argv_object(argv: Vec<String>) -> Result<MontyObject, RuntimeError> {
+fn command_argv_object(
+    runtime: &BioscriptRuntime,
+    method: &str,
+    started: RuntimeInstant,
+    argv: Vec<String>,
+) -> Result<MontyObject, RuntimeError> {
+    runtime.record_timing(
+        "tool_command_plan",
+        started.elapsed(),
+        format!("method={method} argv={}", argv.join(" ")),
+    );
     Ok(MontyObject::List(
         argv.into_iter().map(MontyObject::String).collect(),
     ))
