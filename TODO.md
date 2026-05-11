@@ -151,7 +151,7 @@ surface requires it.
       on the same tiny fixture and compare TSV/JSON values.
 - [ ] Add integration tests against `ports/vntyper/test-data` once copied:
       one positive BAM, one negative BAM, and one FASTQ pair if available.
-- [ ] Run upstream VNtyper tests from the submodule as a reference check when
+- [x] Run upstream VNtyper tests from the submodule as a reference check when
       Python dependencies and external tools are installed.
 - [x] Run BioScript tests without external tools by using fixed Kestrel VCF
       fixtures.
