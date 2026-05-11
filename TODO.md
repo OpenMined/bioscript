@@ -196,7 +196,10 @@ surface requires it.
       `bioscript.kestrel.call_sequences_native` exposes that path through the
       Python wrapper/PyO3 layer. `call_fastq_paths_to_vcf` and
       `bioscript.kestrel.call_fastq_native` extend the same native caller to
-      FASTQ inputs produced by the BioScript samtools extraction path. The
+      FASTQ inputs produced by the BioScript samtools extraction path. A
+      multi-reference native VCF path now counts FASTQ reads once, emits all
+      reference contig headers, and scans each reference region for variants,
+      which is the next required shape for full VNtyper motif-reference parity. The
       haplotype assembler now tracks repeated k-mers and trims saved states by
       path depth using exposed `max_repeat_count` and `max_saved_states`
       controls. A first opt-in Java parity gate now exists at

@@ -17,9 +17,10 @@ pub use detector::{
     recovery_threshold, scan_limit_length,
 };
 pub use engine::{
-    HaplotypeEvidence, NativeKestrelCallConfig, call_assembled_haplotypes_to_vcf,
-    call_counted_kmers_to_vcf, call_explicit_haplotypes_to_vcf, call_fastq_paths_to_vcf,
-    call_sequences_to_vcf,
+    HaplotypeEvidence, NativeKestrelCallConfig, NativeReferenceRegion,
+    call_assembled_haplotypes_to_vcf, call_counted_kmers_to_vcf,
+    call_counted_kmers_to_vcf_references, call_explicit_haplotypes_to_vcf, call_fastq_paths_to_vcf,
+    call_fastq_paths_to_vcf_references, call_sequences_to_vcf,
 };
 pub use haplotype::{HaplotypeAssemblyConfig, assemble_haplotypes};
 pub use kmer::{KmerCountMap, count_fastq_kmers, count_sequence_kmers};
