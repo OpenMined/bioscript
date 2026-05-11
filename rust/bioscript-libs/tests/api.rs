@@ -5,13 +5,13 @@ use bioscript_libs::{
     kestrel::{
         KestrelRunConfig,
         native::{
-            ActiveRegion, ActiveRegionDetectorConfig, AlignmentOp, HaplotypeAssemblyConfig,
-            HaplotypeEvidence, KestrelVcfWriter, KmerCountMap, NativeKestrelCallConfig,
-            NativeVariantCall, ReferenceRegion, ReferenceSequence, RegionStats, VariantCall,
-            align_haplotype, assemble_haplotypes, call_alignment_variants,
-            call_assembled_haplotypes_to_vcf, call_explicit_haplotypes_to_vcf,
-            call_fastq_paths_to_vcf, call_sequences_to_vcf, count_fastq_kmers,
-            count_sequence_kmers, detect_active_regions, difference_threshold,
+            ActiveRegion, ActiveRegionDetectorConfig, AlignmentOp, AlignmentWeight,
+            HaplotypeAssemblyConfig, HaplotypeEvidence, KestrelVcfWriter, KmerCountMap,
+            NativeKestrelCallConfig, NativeVariantCall, ReferenceRegion, ReferenceSequence,
+            RegionStats, VariantCall, align_haplotype, assemble_haplotypes,
+            call_alignment_variants, call_assembled_haplotypes_to_vcf,
+            call_explicit_haplotypes_to_vcf, call_fastq_paths_to_vcf, call_sequences_to_vcf,
+            count_fastq_kmers, count_sequence_kmers, detect_active_regions, difference_threshold,
             read_reference_records, recovery_threshold, reference_kmers, scan_limit_length,
         },
     },
@@ -750,6 +750,34 @@ fn kestrel_native_active_region_detector_discards_over_limit_scans() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn kestrel_native_alignment_weight_matches_java_gap_limit_shape() {
+    let default_weight = AlignmentWeight::default();
+    assert_eq!(default_weight.initial_score(4).unwrap(), 40.0);
+    assert_eq!(default_weight.max_exclusive_gap_size(4).unwrap(), 0);
+    assert_eq!(default_weight.max_exclusive_gap_size(20).unwrap(), 40);
+    assert_eq!(
+        scan_limit_length(
+            20,
+            &ActiveRegionDetectorConfig {
+                scan_limit_factor: 7.0,
+                max_gap_size: default_weight.max_exclusive_gap_size(20).unwrap(),
+                ..ActiveRegionDetectorConfig::default()
+            }
+        )
+        .unwrap(),
+        180
+    );
+
+    let custom_weight = AlignmentWeight::new(-8.0, 2.0, 12.0, 3.0, 0.0).unwrap();
+    assert_eq!(custom_weight.match_weight, 8.0);
+    assert_eq!(custom_weight.mismatch, -2.0);
+    assert_eq!(custom_weight.gap_open, -12.0);
+    assert_eq!(custom_weight.gap_extend, -3.0);
+    assert_eq!(custom_weight.max_exclusive_gap_size(4).unwrap(), 6);
+    assert!(AlignmentWeight::new(0.0, -1.0, -1.0, -1.0, 0.0).is_err());
 }
 
 #[test]
