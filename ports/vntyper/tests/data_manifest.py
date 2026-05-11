@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import unittest
 from pathlib import Path
 
@@ -37,6 +38,10 @@ EXPECTED_OUTPUTS = [
     EXPECTED_OUTPUT_ROOT / "negative" / "kestrel" / "kestrel_result.tsv",
     EXPECTED_OUTPUT_ROOT / "negative" / "report.json",
 ]
+REPRESENTATIVE_BAM_CASES = {
+    "positive": DATA_ROOT / "example_6449_hg19_subset.bam",
+    "negative": DATA_ROOT / "example_66bf_hg19_subset.bam",
+}
 
 def resolve_kestrel_jar():
     env_path = os.environ.get("BIOSCRIPT_KESTREL_JAR")
@@ -136,6 +141,56 @@ def require_fastq_kestrel_expected_outputs():
         "muc1_reference": str(MUC1_REFERENCE),
         "expected_outputs": [str(path) for path in EXPECTED_OUTPUTS],
     }
+
+
+def require_native_bam_pipeline_prerequisites():
+    """Skip unless the native-samtools BAM path can run against copied data."""
+    manifest = require_test_data(check_md5=False)
+    missing = []
+    if shutil.which("java") is None:
+        missing.append("java on PATH")
+    if not KESTREL_JAR.exists():
+        missing.append(str(KESTREL_JAR))
+    if not MUC1_REFERENCE.exists():
+        missing.append(str(MUC1_REFERENCE))
+    missing_cases = [
+        str(path)
+        for bam in REPRESENTATIVE_BAM_CASES.values()
+        for path in [bam, Path(f"{bam}.bai")]
+        if not path.exists()
+    ]
+    missing.extend(missing_cases)
+    missing_outputs = [str(path) for path in EXPECTED_OUTPUTS if not path.exists()]
+    if missing_outputs:
+        preview = ", ".join(missing_outputs[:3])
+        remaining = len(missing_outputs) - min(len(missing_outputs), 3)
+        suffix = f", plus {remaining} more" if remaining else ""
+        missing.append(f"native BAM expected outputs: {preview}{suffix}")
+    try:
+        import_native_module()
+    except Exception as exc:
+        missing.append(f"bioscript._native importable ({exc})")
+    if missing:
+        raise unittest.SkipTest(
+            "VNtyper native BAM pipeline prerequisites are missing: " + "; ".join(missing)
+        )
+    return {
+        "manifest": manifest,
+        "java": shutil.which("java"),
+        "kestrel_jar": str(KESTREL_JAR),
+        "muc1_reference": str(MUC1_REFERENCE),
+        "expected_outputs": [str(path) for path in EXPECTED_OUTPUTS],
+        "bam_cases": {label: str(path) for label, path in REPRESENTATIVE_BAM_CASES.items()},
+    }
+
+
+def import_native_module():
+    python_root = ROOT / "python"
+    if str(python_root) not in sys.path:
+        sys.path.insert(0, str(python_root))
+    import bioscript._native as native
+
+    return native
 
 
 def load_manifest():

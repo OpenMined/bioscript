@@ -173,7 +173,9 @@ surface requires it.
       FASTQ extraction, depth, Kestrel, bcftools, and TSV/JSON materialization.
       A second fake-runner path now covers native BioScript samtools slice,
       FASTQ extraction, and depth followed by Kestrel without requiring
-      bcftools.
+      bcftools. A gated real-data native BAM pipeline test now exists and skips
+      until `bioscript._native`, Java/Kestrel, BAM/BAI inputs, and expected
+      outputs are all available.
       FASTQ-backed Kestrel expected outputs are gated by
       `test_fastq_expected_outputs.py`; true positive/negative BAM labels still
       need validation against upstream expected results.
