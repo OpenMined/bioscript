@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -174,6 +176,27 @@ class ToolCommandTests(unittest.TestCase):
             ),
         )
         self.assertEqual(calls[0][-1], 10)
+
+    def test_kestrel_load_reference_regions_reads_fasta_with_md5(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "refs.fa"
+            path.write_text(">REF1 description\nAAAA\nCCCC\n>REF2\nACAGTCCGTAAG\n", encoding="utf-8")
+
+            self.assertEqual(
+                kestrel.load_reference_regions(str(path)),
+                [
+                    ("REF1", "AAAACCCC", "7b0d393d76107409cd695d4a86386703"),
+                    ("REF2", "ACAGTCCGTAAG", "f17cc056a4c30b8661b5585d2641a37a"),
+                ],
+            )
+
+    def test_kestrel_load_reference_regions_rejects_empty_fasta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "refs.fa"
+            path.write_text("\n", encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                kestrel.load_reference_regions(str(path))
 
     def test_kestrel_native_sequences_wrapper_reports_missing_extension(self) -> None:
         with patch.dict("sys.modules", {"bioscript._native": None}):

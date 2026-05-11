@@ -200,10 +200,13 @@ surface requires it.
       multi-reference native VCF path now counts FASTQ reads once, emits all
       reference contig headers, and scans each reference region for variants,
       with Python/PyO3 wrapper access through
-      `bioscript.kestrel.call_fastq_references_native`; the Java parity gate
-      now includes a multi-reference FASTQ fixture that emits all contig
-      headers and calls the matching reference record, which is the next
-      required shape for full VNtyper motif-reference parity. The
+      `bioscript.kestrel.call_fastq_references_native`. Python-side
+      `bioscript.kestrel.load_reference_regions` reads multi-record FASTA files
+      into `(name, sequence, md5)` triples for that native path, matching the
+      shape of VNtyper motif dictionaries. The Java parity gate now includes a
+      multi-reference FASTQ fixture that emits all contig headers and calls the
+      matching reference record, which is the next required shape for full
+      VNtyper motif-reference parity. The
       haplotype assembler now tracks repeated k-mers and trims saved states by
       path depth using exposed `max_repeat_count` and `max_saved_states`
       controls. A first opt-in Java parity gate now exists at
