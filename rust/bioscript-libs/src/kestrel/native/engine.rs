@@ -1,7 +1,10 @@
 use crate::LibResult;
 
 use super::{
+    active_region::ActiveRegion,
     alignment::{align_haplotype, call_alignment_variants},
+    haplotype::{HaplotypeAssemblyConfig, assemble_haplotypes},
+    kmer::KmerCountMap,
     variant::ReferenceRegion,
     vcf::{KestrelVcfWriter, ReferenceSequence},
 };
@@ -62,4 +65,15 @@ pub fn call_explicit_haplotypes_to_vcf(
         }
     }
     Ok(writer.to_vcf_string())
+}
+
+pub fn call_assembled_haplotypes_to_vcf(
+    region: &ReferenceRegion,
+    active_region: &ActiveRegion,
+    counts: &KmerCountMap,
+    assembly_config: &HaplotypeAssemblyConfig,
+    call_config: &NativeKestrelCallConfig,
+) -> LibResult<String> {
+    let haplotypes = assemble_haplotypes(active_region, counts, assembly_config)?;
+    call_explicit_haplotypes_to_vcf(region, &haplotypes, call_config)
 }

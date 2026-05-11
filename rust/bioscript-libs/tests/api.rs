@@ -5,10 +5,11 @@ use bioscript_libs::{
     kestrel::{
         KestrelRunConfig,
         native::{
-            ActiveRegion, ActiveRegionDetectorConfig, AlignmentOp, HaplotypeEvidence,
-            KestrelVcfWriter, KmerCountMap, NativeKestrelCallConfig, NativeVariantCall,
-            ReferenceRegion, ReferenceSequence, RegionStats, VariantCall, align_haplotype,
-            call_alignment_variants, call_explicit_haplotypes_to_vcf, count_fastq_kmers,
+            ActiveRegion, ActiveRegionDetectorConfig, AlignmentOp, HaplotypeAssemblyConfig,
+            HaplotypeEvidence, KestrelVcfWriter, KmerCountMap, NativeKestrelCallConfig,
+            NativeVariantCall, ReferenceRegion, ReferenceSequence, RegionStats, VariantCall,
+            align_haplotype, assemble_haplotypes, call_alignment_variants,
+            call_assembled_haplotypes_to_vcf, call_explicit_haplotypes_to_vcf, count_fastq_kmers,
             count_sequence_kmers, detect_active_regions, difference_threshold,
         },
     },
@@ -565,6 +566,57 @@ fn kestrel_native_explicit_haplotype_engine_writes_vcf() {
     assert!(vcf.contains("##contig=<ID=MUC1,length=6,md5=md5>\n"));
     assert!(vcf.contains("MUC1\t2\t.\tC\tT\t.\t.\t.\tGT:GDP:DP\t1:6:10\n"));
     assert!(vcf.contains("MUC1\t3\t.\tG\tGT\t.\t.\t.\tGT:GDP:DP\t1:6:10\n"));
+}
+
+#[test]
+fn kestrel_native_haplotype_assembler_follows_counted_kmer_paths() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "ACGTAC".to_owned(),
+    };
+    let active = ActiveRegion::new(&region, Some(0), Some(3), &[10, 1, 1, 10], 3).unwrap();
+    let counts = KmerCountMap::from_sequences(["ACGTTAC"], 3).unwrap();
+    let haplotypes = assemble_haplotypes(
+        &active,
+        &counts,
+        &HaplotypeAssemblyConfig {
+            min_kmer_count: 1,
+            max_haplotypes: 4,
+            max_bases: 20,
+            locus_depth: 10,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(haplotypes.len(), 1);
+    assert_eq!(haplotypes[0].sequence, "ACGTTAC");
+    assert_eq!(haplotypes[0].variant_depth, 1);
+    assert_eq!(haplotypes[0].locus_depth, 10);
+}
+
+#[test]
+fn kestrel_native_assembled_haplotype_engine_writes_vcf() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "ACGTAC".to_owned(),
+    };
+    let active = ActiveRegion::new(&region, Some(0), Some(3), &[10, 1, 1, 10], 3).unwrap();
+    let counts = KmerCountMap::from_sequences(["ACGTTAC"], 3).unwrap();
+    let vcf = call_assembled_haplotypes_to_vcf(
+        &region,
+        &active,
+        &counts,
+        &HaplotypeAssemblyConfig {
+            min_kmer_count: 1,
+            max_haplotypes: 4,
+            max_bases: 20,
+            locus_depth: 10,
+        },
+        &NativeKestrelCallConfig::new("native", "sample1", "md5"),
+    )
+    .unwrap();
+
+    assert!(vcf.contains("MUC1\t3\t.\tG\tGT\t.\t.\t.\tGT:GDP:DP\t1:1:10\n"));
 }
 
 #[test]
