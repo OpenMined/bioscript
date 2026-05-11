@@ -18,15 +18,16 @@ def render_html_report(report: dict) -> str:
             '<meta charset="utf-8">',
             "<title>VNtyper BioScript Report</title>",
             _style(),
+            _script(),
             "</head>",
             "<body>",
             "<main>",
             "<h1>VNtyper BioScript Report</h1>",
             _section("Screening Summary", f"<p>{_trusted_breaks(report.get('screening_summary', ''))}</p>"),
             _section("Run Metadata", _definition_list(metadata)),
-            _section("VNTR Coverage QC", _definition_list(coverage)),
+            _details_section("VNTR Coverage QC", _definition_list(coverage), open_by_default=True),
             _section("Kestrel Identified Variants", _variant_table(kestrel_rows)),
-            _section("Pipeline Log", _log_block(pipeline_log)),
+            _details_section("Pipeline Log", _log_block(pipeline_log), open_by_default=False),
             "</main>",
             "</body>",
             "</html>",
@@ -41,6 +42,11 @@ def write_html_report(path: str, report: dict) -> None:
 
 def _section(title: str, body: str) -> str:
     return f"<section><h2>{escape(title)}</h2>{body}</section>"
+
+
+def _details_section(title: str, body: str, open_by_default: bool = False) -> str:
+    open_attr = " open" if open_by_default else ""
+    return f"<section><details{open_attr}><summary>{escape(title)}</summary>{body}</details></section>"
 
 
 def _definition_list(values: dict) -> str:
@@ -68,12 +74,49 @@ def _variant_table(rows: list[dict]) -> str:
     ]
     if not rows:
         return "<p>No Kestrel variants reported.</p>"
-    header = "".join(f"<th>{escape(column)}</th>" for column in columns)
+    controls = (
+        '<div class="table-tools">'
+        '<label>Search <input id="variant-search" type="search" oninput="filterVariants()" '
+        'placeholder="Filter variants"></label>'
+        '<label><input id="show-flagged" type="checkbox" checked onchange="filterVariants()"> '
+        "Show flagged rows</label>"
+        "</div>"
+    )
+    header = "".join(
+        f'<th><button type="button" onclick="sortVariants({idx})">{escape(column)}</button></th>'
+        for idx, column in enumerate(columns)
+    )
     body_rows = []
     for row in rows:
-        cells = "".join(f"<td>{escape(_display_value(row.get(column, '')))}</td>" for column in columns)
-        body_rows.append(f"<tr>{cells}</tr>")
-    return f"<table><thead><tr>{header}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>"
+        flagged = row.get("Flag", "Not flagged") != "Not flagged"
+        cells = "".join(_variant_cell(column, row.get(column, "")) for column in columns)
+        body_rows.append(f'<tr data-flagged="{str(flagged).lower()}">{cells}</tr>')
+    table = f'<table id="kestrel-table"><thead><tr>{header}</tr></thead><tbody>{"".join(body_rows)}</tbody></table>'
+    return controls + table
+
+
+def _variant_cell(column: str, value) -> str:
+    content = escape(_display_value(value))
+    if column == "Confidence":
+        css = "confidence " + _confidence_class(str(value))
+        return f'<td><span class="{css}">{content}</span></td>'
+    if column == "Flag":
+        flagged = str(value) not in ("", "None", "Not flagged", "Not applicable")
+        icon = "!" if flagged else "-"
+        title = "Flagged variant" if flagged else "Not flagged"
+        return f'<td><span class="flag" title="{title}">{icon}</span> {content}</td>'
+    return f"<td>{content}</td>"
+
+
+def _confidence_class(value: str) -> str:
+    normalized = value.lower().replace("*", "star").replace("_", "-")
+    if "high-precision" in normalized:
+        return "confidence-high"
+    if "low-precision" in normalized:
+        return "confidence-low"
+    if "negative" in normalized:
+        return "confidence-negative"
+    return "confidence-other"
 
 
 def _log_block(lines: list[str]) -> str:
@@ -107,5 +150,40 @@ dd{margin:0}
 table{border-collapse:collapse;width:100%;font-size:13px}
 th,td{border:1px solid #ddd;padding:6px;text-align:left}
 th{background:#eef1f5}
+th button{border:0;background:transparent;font:inherit;font-weight:700;cursor:pointer}
+.table-tools{display:flex;gap:18px;align-items:center;margin:0 0 12px}
+.table-tools input[type=search]{padding:6px;border:1px solid #bbb}
+.confidence{font-weight:700}
+.confidence-high{color:#116329}
+.confidence-low{color:#8a5a00}
+.confidence-negative{color:#6b7280}
+.flag{display:inline-block;min-width:16px;text-align:center;font-weight:700}
+details summary{cursor:pointer;font-weight:700;font-size:18px;margin:0 0 12px}
 pre{white-space:pre-wrap;background:#111;color:#f7f7f7;padding:12px;overflow:auto}
 </style>"""
+
+
+def _script() -> str:
+    return """<script>
+function filterVariants(){
+  const q=document.getElementById('variant-search').value.toLowerCase();
+  const showFlagged=document.getElementById('show-flagged').checked;
+  document.querySelectorAll('#kestrel-table tbody tr').forEach(row=>{
+    const flagged=row.dataset.flagged==='true';
+    const match=row.innerText.toLowerCase().includes(q);
+    row.style.display=(match && (showFlagged || !flagged)) ? '' : 'none';
+  });
+}
+function sortVariants(index){
+  const tbody=document.querySelector('#kestrel-table tbody');
+  const rows=Array.from(tbody.querySelectorAll('tr'));
+  const numeric=value=>value!=='' && !Number.isNaN(Number(value));
+  rows.sort((a,b)=>{
+    const av=a.children[index].innerText.trim();
+    const bv=b.children[index].innerText.trim();
+    if(numeric(av) && numeric(bv)){return Number(av)-Number(bv);}
+    return av.localeCompare(bv);
+  });
+  rows.forEach(row=>tbody.appendChild(row));
+}
+</script>"""

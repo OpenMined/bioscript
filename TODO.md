@@ -181,7 +181,7 @@ surface requires it.
 - [x] Include adVNTR identified variants table when available:
       VID, variant, supporting reads, mean coverage, p-value, RU, POS, REF,
       ALT, and flag.
-- [ ] Preserve interactive HTML features after JSON parity:
+- [x] Preserve interactive HTML features after JSON parity:
       searchable/sortable tables, show/hide flagged rows, colored confidence
       values, flag icons/tooltips, detailed coverage toggle, and collapsible
       pipeline log.
