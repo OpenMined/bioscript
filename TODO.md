@@ -195,8 +195,13 @@ surface requires it.
       FASTQ inputs produced by the BioScript samtools extraction path. The
       haplotype assembler now tracks repeated k-mers and trims saved states by
       path depth using exposed `max_repeat_count` and `max_saved_states`
-      controls. The remaining work is the full Java active-region detector
-      heuristics and parity against Java Kestrel outputs on VNtyper fixtures.
+      controls. A first opt-in Java parity gate now exists at
+      `rust/bioscript-libs/tests/kestrel_java_parity.rs`; when
+      `BIOSCRIPT_RUN_KESTREL_JAVA_PARITY=1` and a Kestrel jar are available, it
+      compares native FASTQ-to-VCF output with Java Kestrel on a tiny
+      perfect-reference no-variant fixture. The remaining work is the full Java
+      active-region detector heuristics and broader parity against Java Kestrel
+      outputs on sparse synthetic and VNtyper fixtures.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
