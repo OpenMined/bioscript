@@ -107,7 +107,7 @@ def call_sequences_native(
     decay_alpha: float = 0.80,
     peak_scan_length: int = 7,
     scan_limit_factor: float = 7.0,
-    max_gap_size: int = 0,
+    max_gap_size: int | None = None,
     recover_right_anchor: bool = True,
     call_ambiguous_regions: bool = True,
     min_kmer_count: int = 1,
@@ -136,7 +136,7 @@ def call_sequences_native(
             float(decay_alpha),
             int(peak_scan_length),
             float(scan_limit_factor),
-            int(max_gap_size),
+            _optional_int(max_gap_size),
             bool(recover_right_anchor),
             bool(call_ambiguous_regions),
             int(min_kmer_count),
@@ -165,7 +165,7 @@ def call_fastq_native(
     decay_alpha: float = 0.80,
     peak_scan_length: int = 7,
     scan_limit_factor: float = 7.0,
-    max_gap_size: int = 0,
+    max_gap_size: int | None = None,
     recover_right_anchor: bool = True,
     call_ambiguous_regions: bool = True,
     min_kmer_count: int = 1,
@@ -194,7 +194,7 @@ def call_fastq_native(
             float(decay_alpha),
             int(peak_scan_length),
             float(scan_limit_factor),
-            int(max_gap_size),
+            _optional_int(max_gap_size),
             bool(recover_right_anchor),
             bool(call_ambiguous_regions),
             int(min_kmer_count),
@@ -212,6 +212,12 @@ def _path_arg(path: str) -> str:
     if "\0" in value:
         raise ValueError("path arguments cannot contain NUL bytes")
     return value
+
+
+def _optional_int(value: int | None) -> int | None:
+    if value is None:
+        return None
+    return int(value)
 
 
 def _validate_program(program: str) -> None:

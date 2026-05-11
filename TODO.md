@@ -150,9 +150,11 @@ surface requires it.
       spikes inside a low-count valley no longer prematurely terminate the
       active region. The native detector also exposes a Java-shaped
       `scan_limit_factor` control plus an explicit `max_gap_size` input for the
-      Java `maxGapSize + scanLimitFactor * k` shape; BioScript defaults the
-      gap component to zero until full alignment-weight parity is ported. Both
-      left and right scans discard candidates that exceed that limit. Java's
+      Java `maxGapSize + scanLimitFactor * k` shape; BioScript now ports the
+      Java default `AlignmentWeight.getMaxExclusiveGapSize(k)` calculation and
+      uses it as the native wrapper default when callers do not provide an
+      explicit gap component. Both left and right scans discard candidates that
+      exceed that limit. Java's
       default `recoverRightAnchor` behavior is now partially ported as
       `recover_right_anchor`: when the normal recovery threshold is never
       reached inside the scan limit, the native detector searches for a later

@@ -116,7 +116,7 @@ fn kestrel_call_sequences_native(
         decay_alpha: decay_alpha.unwrap_or(0.80),
         peak_scan_length: peak_scan_length.unwrap_or(7),
         scan_limit_factor: scan_limit_factor.unwrap_or(7.0),
-        max_gap_size: max_gap_size.unwrap_or(0),
+        max_gap_size: max_gap_size.unwrap_or_else(|| default_alignment_max_gap_size(kmer_size)),
         recover_right_anchor: recover_right_anchor.unwrap_or(true),
         call_ambiguous_regions: call_ambiguous_regions.unwrap_or(true),
     };
@@ -184,7 +184,7 @@ fn kestrel_call_fastq_native(
         decay_alpha: decay_alpha.unwrap_or(0.80),
         peak_scan_length: peak_scan_length.unwrap_or(7),
         scan_limit_factor: scan_limit_factor.unwrap_or(7.0),
-        max_gap_size: max_gap_size.unwrap_or(0),
+        max_gap_size: max_gap_size.unwrap_or_else(|| default_alignment_max_gap_size(kmer_size)),
         recover_right_anchor: recover_right_anchor.unwrap_or(true),
         call_ambiguous_regions: call_ambiguous_regions.unwrap_or(true),
     };
@@ -226,4 +226,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
 
 fn to_py_value_error(err: bioscript_libs::LibError) -> PyErr {
     PyValueError::new_err(err.to_string())
+}
+
+fn default_alignment_max_gap_size(kmer_size: usize) -> usize {
+    bioscript_libs::kestrel::native::AlignmentWeight::default()
+        .max_exclusive_gap_size(kmer_size)
+        .unwrap_or(0)
 }
