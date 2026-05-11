@@ -49,6 +49,43 @@ pub fn query_bam_depth_summary(
     Ok(DepthSummary::from_depths(depths))
 }
 
+pub fn write_bam_region(
+    input_path: &Path,
+    output_path: &Path,
+    options: &GenotypeLoadOptions,
+    locus: &GenomicLocus,
+) -> Result<usize, RuntimeError> {
+    let mut reader = build_indexed_reader(input_path, options)?;
+    let header = reader
+        .read_header()
+        .map_err(|err| RuntimeError::Io(format!("failed to read BAM header: {err}")))?;
+    let region = build_region(locus)?;
+    let query = reader
+        .query(&header, &region)
+        .map_err(|err| RuntimeError::Io(format!("failed to query BAM region {region}: {err}")))?;
+
+    let output = std::fs::File::create(output_path)
+        .map_err(|err| RuntimeError::Io(format!("failed to create BAM slice: {err}")))?;
+    let mut writer = bam::io::Writer::new(output);
+    writer
+        .write_header(&header)
+        .map_err(|err| RuntimeError::Io(format!("failed to write BAM header: {err}")))?;
+
+    let mut count = 0;
+    for result in query.records() {
+        let record =
+            result.map_err(|err| RuntimeError::Io(format!("failed to read BAM record: {err}")))?;
+        writer
+            .write_record(&header, &record)
+            .map_err(|err| RuntimeError::Io(format!("failed to write BAM record: {err}")))?;
+        count += 1;
+    }
+    writer
+        .try_finish()
+        .map_err(|err| RuntimeError::Io(format!("failed to finish BAM slice: {err}")))?;
+    Ok(count)
+}
+
 fn build_indexed_reader(
     path: &Path,
     options: &GenotypeLoadOptions,
@@ -354,6 +391,40 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn write_bam_region_creates_slice_with_matching_records()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir =
+            std::env::temp_dir().join(format!("bioscript-bam-slice-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir)?;
+        let bam_path = dir.join("mini.bam");
+        let bai_path = dir.join("mini.bam.bai");
+        let slice_path = dir.join("slice.bam");
+        write_fixture_bam(&bam_path)?;
+        let index = bam::fs::index(&bam_path)?;
+        bam::bai::fs::write(&bai_path, &index)?;
+
+        let count = write_bam_region(
+            &bam_path,
+            &slice_path,
+            &GenotypeLoadOptions {
+                input_index: Some(bai_path),
+                ..GenotypeLoadOptions::default()
+            },
+            &GenomicLocus {
+                chrom: "chr_test".to_owned(),
+                start: 1000,
+                end: 1002,
+            },
+        )?;
+
+        assert_eq!(count, 1);
+        assert_eq!(count_bam_records(&slice_path)?, 1);
+        fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
     fn write_fixture_bam(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let header = sam::Header::builder()
             .set_header(
@@ -383,5 +454,16 @@ mod tests {
             .set_cigar(Cigar::from(vec![Op::new(Kind::Match, 4)]))
             .set_sequence(Sequence::from(b"ACGT".as_slice()))
             .build())
+    }
+
+    fn count_bam_records(path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
+        let mut reader = fs::File::open(path).map(bam::io::Reader::new)?;
+        reader.read_header()?;
+        let mut count = 0;
+        for result in reader.records() {
+            let _ = result?;
+            count += 1;
+        }
+        Ok(count)
     }
 }

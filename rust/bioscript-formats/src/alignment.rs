@@ -13,7 +13,7 @@ mod bam_stream;
 mod cram_stream;
 mod readers;
 
-pub use bam_stream::{DepthSummary, query_bam_depth_summary, query_bam_records};
+pub use bam_stream::{DepthSummary, query_bam_depth_summary, query_bam_records, write_bam_region};
 pub use readers::{
     build_bam_indexed_reader_from_reader, build_cram_indexed_reader_from_reader,
     build_reference_repository_from_readers, generate_bam_bai_bytes, generate_bam_bai_reader,
