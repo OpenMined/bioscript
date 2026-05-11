@@ -91,6 +91,8 @@ fn kestrel_call_sequences_native(
     min_kmer_count: Option<u32>,
     max_haplotypes: Option<usize>,
     max_bases: Option<usize>,
+    max_repeat_count: Option<usize>,
+    max_saved_states: Option<usize>,
     locus_depth: Option<u32>,
 ) -> PyResult<String> {
     let region = bioscript_libs::kestrel::native::ReferenceRegion {
@@ -106,6 +108,8 @@ fn kestrel_call_sequences_native(
         min_kmer_count: min_kmer_count.unwrap_or(1),
         max_haplotypes: max_haplotypes.unwrap_or(40),
         max_bases: max_bases.unwrap_or(500),
+        max_repeat_count: max_repeat_count.unwrap_or(0),
+        max_saved_states: max_saved_states.unwrap_or(40),
         locus_depth: locus_depth.unwrap_or(1),
     };
     let call_config = bioscript_libs::kestrel::native::NativeKestrelCallConfig::new(
@@ -139,6 +143,8 @@ fn kestrel_call_fastq_native(
     min_kmer_count: Option<u32>,
     max_haplotypes: Option<usize>,
     max_bases: Option<usize>,
+    max_repeat_count: Option<usize>,
+    max_saved_states: Option<usize>,
     locus_depth: Option<u32>,
 ) -> PyResult<String> {
     let region = bioscript_libs::kestrel::native::ReferenceRegion {
@@ -154,6 +160,8 @@ fn kestrel_call_fastq_native(
         min_kmer_count: min_kmer_count.unwrap_or(1),
         max_haplotypes: max_haplotypes.unwrap_or(40),
         max_bases: max_bases.unwrap_or(500),
+        max_repeat_count: max_repeat_count.unwrap_or(0),
+        max_saved_states: max_saved_states.unwrap_or(40),
         locus_depth: locus_depth.unwrap_or(1),
     };
     let call_config = bioscript_libs::kestrel::native::NativeKestrelCallConfig::new(

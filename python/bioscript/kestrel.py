@@ -105,6 +105,8 @@ def call_sequences_native(
     min_kmer_count: int = 1,
     max_haplotypes: int = 40,
     max_bases: int = 500,
+    max_repeat_count: int = 0,
+    max_saved_states: int = 40,
     locus_depth: int = 1,
 ) -> str:
     """Run the native synthetic reads-to-VCF Kestrel path."""
@@ -124,6 +126,8 @@ def call_sequences_native(
             int(min_kmer_count),
             int(max_haplotypes),
             int(max_bases),
+            int(max_repeat_count),
+            int(max_saved_states),
             int(locus_depth),
         )
     )
@@ -143,6 +147,8 @@ def call_fastq_native(
     min_kmer_count: int = 1,
     max_haplotypes: int = 40,
     max_bases: int = 500,
+    max_repeat_count: int = 0,
+    max_saved_states: int = 40,
     locus_depth: int = 1,
 ) -> str:
     """Run the native FASTQ-to-VCF Kestrel path."""
@@ -162,6 +168,8 @@ def call_fastq_native(
             int(min_kmer_count),
             int(max_haplotypes),
             int(max_bases),
+            int(max_repeat_count),
+            int(max_saved_states),
             int(locus_depth),
         )
     )

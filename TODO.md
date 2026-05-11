@@ -154,10 +154,10 @@ surface requires it.
       Python wrapper/PyO3 layer. `call_fastq_paths_to_vcf` and
       `bioscript.kestrel.call_fastq_native` extend the same native caller to
       FASTQ inputs produced by the BioScript samtools extraction path. The
-      remaining work is the full Java
-      active-region detector heuristics, richer state trimming and repeat
-      handling in Kestrel's haplotype builder, and parity against Java Kestrel
-      outputs on VNtyper fixtures.
+      haplotype assembler now tracks repeated k-mers and trims saved states by
+      path depth using exposed `max_repeat_count` and `max_saved_states`
+      controls. The remaining work is the full Java active-region detector
+      heuristics and parity against Java Kestrel outputs on VNtyper fixtures.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
