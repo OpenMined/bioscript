@@ -1,0 +1,96 @@
+name: Release Docker Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - custom
+        default: 'minor'
+      custom_version:
+        description: 'Custom version, without v prefix. Required when bump=custom.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  attestations: write
+  id-token: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.new.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Resolve new version
+        id: new
+        shell: bash
+        run: |
+          CURRENT="$(tr -d '[:space:]' < VERSION)"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          case "${{ inputs.bump }}" in
+            major)
+              NEW_VERSION="$((MAJOR + 1)).0.0"
+              ;;
+            minor)
+              NEW_VERSION="${MAJOR}.$((MINOR + 1)).0"
+              ;;
+            patch)
+              NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+              ;;
+            custom)
+              NEW_VERSION="${{ inputs.custom_version }}"
+              ;;
+          esac
+
+          if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version: $NEW_VERSION" >&2
+            exit 1
+          fi
+
+          echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "New version: ${NEW_VERSION}"
+
+      - name: Bump version
+        run: ./bump_version.sh "${{ steps.new.outputs.version }}"
+
+      - name: Run tests
+        run: ./test.sh
+
+      - name: Commit version bump and tag
+        shell: bash
+        run: |
+          VERSION="${{ steps.new.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION rust/bioscript-*/Cargo.toml rust/Cargo.lock
+          if git diff --cached --quiet; then
+            echo "Version files already at ${VERSION}"
+          else
+            git commit -m "Bump version to ${VERSION}"
+          fi
+          git tag "v${VERSION}"
+          git push origin main --tags
+
+  docker:
+    needs: version
+    uses: ./.github/workflows/docker-build.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.version.outputs.version }}
