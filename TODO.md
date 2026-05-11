@@ -211,11 +211,17 @@ surface requires it.
       native path uses a bounded haplotype beam (`max_haplotypes=2`,
       `max_saved_states=2`, `max_bases=120`) so the full 551-record motif
       dictionary completes on representative FASTQs; a local positive-sample
-      probe now materializes VCF/TSV/report in about 12 seconds, but still
-      classifies the expected-positive sample as negative. The Java parity gate
-      now includes a multi-reference FASTQ fixture that emits all contig
-      headers and calls the matching reference record, which is the next
-      required shape for full VNtyper motif-reference parity. The
+      probe now materializes VCF/TSV/report in about 12 seconds. The
+      BioScript post-processor now correctly reads Kestrel VCFs whose final
+      sample column is named with the actual sample ID rather than the literal
+      `SAMPLE`; this exposes the current native parity gap more clearly:
+      Java expected output for `example_6449_hg19_subset` remains negative
+      because no high-confidence row is a VNtyper-valid frameshift, while the
+      bounded native caller currently emits many high-confidence valid
+      frameshift rows and over-calls. The Java parity gate now includes a
+      multi-reference FASTQ fixture that emits all contig headers and calls the
+      matching reference record, which is the next required shape for full
+      VNtyper motif-reference parity. The
       haplotype assembler now tracks repeated k-mers and trims saved states by
       path depth using exposed `max_repeat_count` and `max_saved_states`
       controls. A first opt-in Java parity gate now exists at
