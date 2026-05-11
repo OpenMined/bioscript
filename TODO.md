@@ -146,10 +146,13 @@ surface requires it.
       the native aligner, variant caller, and VCF writer for an end-to-end
       non-assembling caller path. The first graph-backed Rust haplotype
       assembler now walks counted k-mer paths between active-region anchors and
-      feeds assembled haplotypes into the native VCF caller. The remaining work
-      is the full Java active-region detector heuristics, richer state trimming
-      and repeat handling in Kestrel's haplotype builder, and parity against
-      Java Kestrel outputs on VNtyper fixtures.
+      feeds assembled haplotypes into the native VCF caller. The native
+      `call_sequences_to_vcf` path now ties read sequence counting, active-region
+      detection, graph haplotype assembly, alignment, variant calling, and VCF
+      writing together for small synthetic fixtures. The remaining work is the
+      full Java active-region detector heuristics, richer state trimming and
+      repeat handling in Kestrel's haplotype builder, and parity against Java
+      Kestrel outputs on VNtyper fixtures.
 - [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
       milestone.
 - [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in

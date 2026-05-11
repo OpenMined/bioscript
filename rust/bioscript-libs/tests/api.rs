@@ -9,8 +9,9 @@ use bioscript_libs::{
             HaplotypeEvidence, KestrelVcfWriter, KmerCountMap, NativeKestrelCallConfig,
             NativeVariantCall, ReferenceRegion, ReferenceSequence, RegionStats, VariantCall,
             align_haplotype, assemble_haplotypes, call_alignment_variants,
-            call_assembled_haplotypes_to_vcf, call_explicit_haplotypes_to_vcf, count_fastq_kmers,
-            count_sequence_kmers, detect_active_regions, difference_threshold,
+            call_assembled_haplotypes_to_vcf, call_explicit_haplotypes_to_vcf,
+            call_sequences_to_vcf, count_fastq_kmers, count_sequence_kmers, detect_active_regions,
+            difference_threshold,
         },
     },
     pyfaidx::Fasta,
@@ -617,6 +618,38 @@ fn kestrel_native_assembled_haplotype_engine_writes_vcf() {
     .unwrap();
 
     assert!(vcf.contains("MUC1\t3\t.\tG\tGT\t.\t.\t.\tGT:GDP:DP\t1:1:10\n"));
+}
+
+#[test]
+fn kestrel_native_sequences_engine_counts_detects_assembles_and_writes_vcf() {
+    let region = ReferenceRegion {
+        reference_name: "MUC1".to_owned(),
+        sequence: "AAAACCCCGGGGTTTT".to_owned(),
+    };
+    let vcf = call_sequences_to_vcf(
+        &region,
+        [
+            "AAAA", "AAAC", "AACC", "ACCC", "CCCT", "CCTG", "CTGG", "TGGG", "GGGT", "GGTT", "GTTT",
+            "TTTT",
+        ],
+        4,
+        &ActiveRegionDetectorConfig {
+            minimum_difference: 1,
+            difference_quantile: 0.0,
+            count_reverse_kmers: false,
+        },
+        &HaplotypeAssemblyConfig {
+            min_kmer_count: 1,
+            max_haplotypes: 4,
+            max_bases: 30,
+            locus_depth: 10,
+        },
+        &NativeKestrelCallConfig::new("native", "sample1", "md5"),
+    )
+    .unwrap();
+
+    assert!(vcf.contains("##contig=<ID=MUC1,length=16,md5=md5>\n"));
+    assert!(vcf.contains("GT:GDP:DP\t1:1:10\n"));
 }
 
 #[test]
