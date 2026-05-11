@@ -148,6 +148,11 @@ surface requires it.
       FASTQ, mixed case, legal IUPAC/gap characters, and Kestrel's deterministic
       ambiguous-base-to-ACGT k-mer normalization for k sizes 1, 2, 21, 32, and
       64.
+      The separate upstream `paudano/kescases` publication pipeline is now
+      vendored as `ports/vntyper/kescases` for the next parity layer; it
+      contains Kestrel CLI/Snakemake workflows, bundled Kestrel jars, reference
+      FASTA data, and comparison pipelines rather than ordinary unit-test
+      sources.
       `call_explicit_haplotypes_to_vcf` now ties explicit haplotype evidence to
       the native aligner, variant caller, and VCF writer for an end-to-end
       non-assembling caller path. The first graph-backed Rust haplotype
