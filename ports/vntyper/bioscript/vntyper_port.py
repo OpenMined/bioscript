@@ -614,6 +614,8 @@ def compute_algorithm_result(rows, report_config=None, algorithm="kestrel"):
     logic = config.get("algorithm_logic", {}).get(algorithm, {})
     default = logic.get("default", "negative")
     for row in rows:
+        if algorithm == "kestrel" and "passes_vntyper_filters" in row and not row["passes_vntyper_filters"]:
+            continue
         for rule in logic.get("rules", []):
             if all(_condition_matches(row, field, condition) for field, condition in rule.get("conditions", {}).items()):
                 return rule.get("result", default)
