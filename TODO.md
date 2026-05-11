@@ -187,7 +187,7 @@ surface requires it.
       pipeline log.
 - [ ] Add IGV visualization after core report parity:
       embedded IGV.js, variant selector table, and BAM/VCF track sessions.
-- [ ] Make the first BioScript HTML report useful without IGV or adVNTR:
+- [x] Make the first BioScript HTML report useful without IGV or adVNTR:
       final screening summary, Kestrel table, VNTR coverage QC, metadata, and
       pipeline log.
 
@@ -202,7 +202,7 @@ surface requires it.
       reproduce Kestrel VCF output for one tiny fixture or document why the JVM
       adapter remains the practical first target.
 - [ ] M6: Structured report JSON parity for the minimal BAM/Kestrel path.
-- [ ] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
+- [x] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
       logs.
 - [ ] M8: FASTQ path works using external fastp/bwa or documented prealigned
       inputs.
