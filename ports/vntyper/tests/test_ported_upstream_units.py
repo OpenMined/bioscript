@@ -90,6 +90,57 @@ class PortedUpstreamUnitTests(unittest.TestCase):
         out = vntyper_port.filter_by_alt_values_and_finalize(rows, config)
         self.assertEqual([row["alt_filter_pass"] for row in out], [False, True, True, False])
 
+    def test_flagging_regex_match_and_condition_evaluation(self):
+        self.assertTrue(vntyper_port.regex_match(r"^D", "D5"))
+        self.assertFalse(vntyper_port.regex_match(r"^D", "E5"))
+        self.assertTrue(vntyper_port.regex_match(r"^\d+", 42))
+        self.assertFalse(vntyper_port.regex_match(r"[invalid", "test"))
+
+        row = {"Depth_Score": 0.3, "Motif": "2", "REF": "C", "ALT": "CGGCA"}
+        self.assertTrue(vntyper_port.evaluate_condition(row, "Depth_Score < 0.4"))
+        self.assertTrue(vntyper_port.evaluate_condition(row, "Motif in ['1', '2', '3']"))
+        self.assertTrue(
+            vntyper_port.evaluate_condition(
+                row,
+                "(Depth_Score < 0.4) and (Motif in ['1', '2', '3'])",
+            )
+        )
+        self.assertTrue(
+            vntyper_port.evaluate_condition(
+                row,
+                "regex_match('^C', REF) and ALT == 'CGGCA'",
+            )
+        )
+        self.assertFalse(vntyper_port.evaluate_condition({"Motif": None}, "Motif in ['1', '2']"))
+
+    def test_add_flags_matches_upstream_rules(self):
+        rules = vntyper_port.DEFAULT_KESTREL_CONFIG["flagging_rules"]
+        rows = [
+            {"REF": "C", "ALT": "CGGCA", "Depth_Score": 0.1, "Motif": "2"},
+            {"REF": "A", "ALT": "AT", "Depth_Score": 0.5, "Motif": "5"},
+        ]
+        out = vntyper_port.add_flags(rows, rules)
+        self.assertIn("False_Positive_4bp_Insertion", out[0]["Flag"])
+        self.assertIn("Low_Depth_Conserved_Motifs", out[0]["Flag"])
+        self.assertEqual(out[1]["Flag"], "Not flagged")
+
+    def test_duplicate_flagging_marks_lower_priority_rows(self):
+        rows = [
+            {"REF": "C", "ALT": "CG", "Depth_Score": 0.8, "Motif": "5"},
+            {"REF": "C", "ALT": "CG", "Depth_Score": 0.5, "Motif": "5"},
+            {"REF": "A", "ALT": "AT", "Depth_Score": 0.6, "Motif": "5"},
+        ]
+        duplicates_config = {
+            "enabled": True,
+            "flag_name": "Potential_Duplicate",
+            "group_by": ["REF", "ALT"],
+            "sort_by": [{"column": "Depth_Score", "ascending": False}],
+        }
+        out = vntyper_port.add_flags(rows, {}, duplicates_config=duplicates_config)
+        self.assertNotIn("Potential_Duplicate", out[0]["Flag"])
+        self.assertIn("Potential_Duplicate", out[1]["Flag"])
+        self.assertNotIn("Potential_Duplicate", out[2]["Flag"])
+
 
 if __name__ == "__main__":
     unittest.main()
