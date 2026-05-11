@@ -4,7 +4,8 @@ use crate::LibResult;
 
 use super::{
     active_region::ActiveRegion,
-    alignment::{align_haplotype, call_alignment_variants},
+    alignment::{NativeAlignment, align_haplotype, call_alignment_variants, score_alignment},
+    alignment_weight::AlignmentWeight,
     detector::{ActiveRegionDetectorConfig, detect_active_regions},
     haplotype::{HaplotypeAssemblyConfig, assemble_haplotypes},
     kmer::KmerCountMap,
@@ -251,8 +252,7 @@ fn add_active_region_haplotypes(
 ) -> LibResult<()> {
     let active_reference = active_reference_sequence(region, active_region);
     let reference_start = u32::try_from(active_region.start_index + 1).unwrap_or(u32::MAX);
-    for haplotype in haplotypes {
-        let alignment = align_haplotype(&active_reference, &haplotype.sequence)?;
+    for (haplotype, alignment) in max_scoring_haplotypes(&active_reference, haplotypes)? {
         for variant in call_alignment_variants(
             sample_name,
             &alignment,
@@ -264,6 +264,38 @@ fn add_active_region_haplotypes(
         }
     }
     Ok(())
+}
+
+fn max_scoring_haplotypes<'a>(
+    active_reference: &str,
+    haplotypes: &'a [HaplotypeEvidence],
+) -> LibResult<Vec<(&'a HaplotypeEvidence, NativeAlignment)>> {
+    let weight = AlignmentWeight::default();
+    let mut scored = Vec::new();
+    let mut max_score = f32::NEG_INFINITY;
+    for haplotype in haplotypes {
+        let alignment = align_haplotype(active_reference, &haplotype.sequence)?;
+        let score = score_alignment(&alignment, &weight);
+        if score > max_score {
+            max_score = score;
+        }
+        scored.push((score, haplotype, alignment));
+    }
+    if scored
+        .iter()
+        .any(|(_, haplotype, _)| haplotype.sequence != active_reference)
+    {
+        scored.retain(|(_, haplotype, _)| haplotype.sequence != active_reference);
+        max_score = scored
+            .iter()
+            .map(|(score, _, _)| *score)
+            .fold(f32::NEG_INFINITY, f32::max);
+    }
+    Ok(scored
+        .into_iter()
+        .filter(|(score, _, _)| (*score - max_score).abs() <= f32::EPSILON)
+        .map(|(_, haplotype, alignment)| (haplotype, alignment))
+        .collect())
 }
 
 fn active_reference_sequence(region: &ReferenceRegion, active_region: &ActiveRegion) -> String {
