@@ -12,7 +12,7 @@ use bioscript_libs::{
             call_assembled_haplotypes_to_vcf, call_explicit_haplotypes_to_vcf,
             call_fastq_paths_to_vcf, call_sequences_to_vcf, count_fastq_kmers,
             count_sequence_kmers, detect_active_regions, difference_threshold,
-            read_reference_records, reference_kmers,
+            read_reference_records, recovery_threshold, reference_kmers,
         },
     },
     pyfaidx::Fasta,
@@ -511,6 +511,8 @@ fn kestrel_native_active_region_detector_finds_depth_drop_candidates() {
         difference_quantile: 0.0,
         count_reverse_kmers: false,
         anchor_both_ends: true,
+        decay_min: 1.0,
+        decay_alpha: 0.80,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -539,6 +541,8 @@ fn kestrel_native_active_region_detector_emits_right_open_candidates() {
         difference_quantile: 0.0,
         count_reverse_kmers: false,
         anchor_both_ends: false,
+        decay_min: 1.0,
+        decay_alpha: 0.80,
     };
 
     let detection = detect_active_regions(&region, &counts, &config).unwrap();
@@ -567,6 +571,8 @@ fn kestrel_native_active_region_detector_respects_anchor_both_ends() {
             difference_quantile: 0.0,
             count_reverse_kmers: false,
             anchor_both_ends: true,
+            decay_min: 1.0,
+            decay_alpha: 0.80,
         },
     )
     .unwrap();
@@ -588,6 +594,8 @@ fn kestrel_native_active_region_detector_emits_left_open_candidates() {
             difference_quantile: 0.0,
             count_reverse_kmers: false,
             anchor_both_ends: false,
+            decay_min: 1.0,
+            decay_alpha: 0.80,
         },
     )
     .unwrap();
@@ -613,6 +621,45 @@ fn kestrel_native_difference_threshold_matches_java_quantile_shape() {
     assert_eq!(difference_threshold(&[10, 10], 5, 0.90).unwrap(), 5);
     assert!(difference_threshold(&[10, 10, 1], 0, 0.90).is_ok());
     assert!(difference_threshold(&[10, 10, 1], 1, 1.0).is_err());
+}
+
+#[test]
+fn kestrel_native_recovery_threshold_matches_java_decay_shape() {
+    let constant = ActiveRegionDetectorConfig {
+        decay_min: 1.0,
+        ..ActiveRegionDetectorConfig::default()
+    };
+    assert_eq!(
+        recovery_threshold(200, 5, 48, 48, &constant).unwrap(),
+        195.0
+    );
+
+    let decayed = ActiveRegionDetectorConfig {
+        decay_min: 0.50,
+        decay_alpha: 0.80,
+        ..ActiveRegionDetectorConfig::default()
+    };
+    assert_eq!(
+        recovery_threshold(200, 5, 48, 48, &decayed).unwrap() as u32,
+        180
+    );
+    assert_eq!(
+        recovery_threshold(200, 5, 96, 48, &decayed).unwrap() as u32,
+        164
+    );
+    assert!(
+        recovery_threshold(
+            200,
+            5,
+            48,
+            48,
+            &ActiveRegionDetectorConfig {
+                decay_alpha: 1.0,
+                ..decayed
+            }
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -801,6 +848,8 @@ fn kestrel_native_sequences_engine_counts_detects_assembles_and_writes_vcf() {
             difference_quantile: 0.0,
             count_reverse_kmers: false,
             anchor_both_ends: true,
+            decay_min: 1.0,
+            decay_alpha: 0.80,
         },
         &HaplotypeAssemblyConfig {
             min_kmer_count: 1,
@@ -844,6 +893,8 @@ fn kestrel_native_fastq_engine_counts_detects_assembles_and_writes_vcf() {
             difference_quantile: 0.0,
             count_reverse_kmers: false,
             anchor_both_ends: true,
+            decay_min: 1.0,
+            decay_alpha: 0.80,
         },
         &HaplotypeAssemblyConfig {
             min_kmer_count: 1,

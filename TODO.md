@@ -142,7 +142,10 @@ surface requires it.
       haplotype work. It now also exposes Java-shaped `anchor_both_ends`
       behavior, defaults reverse-kmer counting and both-end anchoring to the
       Java detector defaults, and emits left-open candidates for near-left-end
-      active regions when unanchored ends are explicitly allowed. The
+      active regions when unanchored ends are explicitly allowed. Java's
+      exponential recovery-threshold shape is now implemented with `decay_min`
+      and `decay_alpha` controls and exposed through the native/Python wrapper
+      path. The
       native `align_haplotype` and `call_alignment_variants` helpers provide a
       first deterministic reference-vs-haplotype edit surface that emits
       SNP/insertion/deletion calls using the same native VCF normalization path.

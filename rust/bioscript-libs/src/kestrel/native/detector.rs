@@ -8,6 +8,8 @@ pub struct ActiveRegionDetectorConfig {
     pub difference_quantile: f32,
     pub count_reverse_kmers: bool,
     pub anchor_both_ends: bool,
+    pub decay_min: f32,
+    pub decay_alpha: f32,
 }
 
 impl Default for ActiveRegionDetectorConfig {
@@ -17,6 +19,8 @@ impl Default for ActiveRegionDetectorConfig {
             difference_quantile: 0.90,
             count_reverse_kmers: true,
             anchor_both_ends: true,
+            decay_min: 0.55,
+            decay_alpha: 0.80,
         }
     }
 }
@@ -45,7 +49,7 @@ pub fn detect_active_regions(
         &reference_counts,
         counts.kmer_size(),
         difference_threshold,
-        config.anchor_both_ends,
+        config,
     )?;
     Ok(ActiveRegionDetection {
         reference_counts,
@@ -84,12 +88,30 @@ pub fn difference_threshold(
     Ok(threshold.max(minimum_difference))
 }
 
+pub fn recovery_threshold(
+    anchor_count: u32,
+    difference_threshold: u32,
+    distance: usize,
+    kmer_size: usize,
+    config: &ActiveRegionDetectorConfig,
+) -> LibResult<f32> {
+    validate_decay(config)?;
+    if config.decay_min == 1.0 {
+        return Ok(anchor_count.saturating_sub(difference_threshold).max(1) as f32);
+    }
+
+    let min_value = (anchor_count as f32 * config.decay_min).max(1.0);
+    let range = anchor_count as f32 - min_value;
+    let lambda = -config.decay_alpha.ln() / kmer_size as f32;
+    Ok(range * (-(distance as f32) * lambda).exp() + min_value)
+}
+
 fn candidate_regions(
     region: &ReferenceRegion,
     counts: &[u32],
     kmer_size: usize,
     difference_threshold: u32,
-    anchor_both_ends: bool,
+    config: &ActiveRegionDetectorConfig,
 ) -> LibResult<Vec<ActiveRegion>> {
     if counts.len() < 2 {
         return Ok(Vec::new());
@@ -101,9 +123,17 @@ fn candidate_regions(
         let left = counts[index - 1];
         let right = counts[index];
         if left > right && left - right >= difference_threshold {
-            let recovery_value = left.saturating_sub(difference_threshold).max(1);
             let mut end = index + 1;
-            while end < counts.len() && counts[end] < recovery_value {
+            while end < counts.len()
+                && (counts[end] as f32)
+                    < recovery_threshold(
+                        left,
+                        difference_threshold,
+                        end - index,
+                        kmer_size,
+                        config,
+                    )?
+            {
                 end += 1;
             }
             if end < counts.len() && end.saturating_sub(index) >= kmer_size.saturating_sub(1) {
@@ -117,7 +147,7 @@ fn candidate_regions(
                 index = end + 1;
                 continue;
             }
-            if !anchor_both_ends
+            if !config.anchor_both_ends
                 && end == counts.len()
                 && end.saturating_sub(index) >= kmer_size.saturating_sub(1)
             {
@@ -132,7 +162,7 @@ fn candidate_regions(
             }
         } else if right > left
             && right - left >= difference_threshold
-            && !anchor_both_ends
+            && !config.anchor_both_ends
             && index >= kmer_size.saturating_sub(1)
         {
             regions.push(ActiveRegion::new(
@@ -156,13 +186,30 @@ fn validate_config(config: &ActiveRegionDetectorConfig) -> LibResult<()> {
             "Kestrel active-region minimum difference must be at least 1".to_owned(),
         ));
     }
-    validate_difference_quantile(config.difference_quantile)
+    validate_difference_quantile(config.difference_quantile)?;
+    validate_decay(config)
 }
 
 fn validate_difference_quantile(difference_quantile: f32) -> LibResult<()> {
     if !(0.0..1.0).contains(&difference_quantile) {
         return Err(LibError::InvalidArguments(format!(
             "Kestrel active-region difference quantile must be in [0.0, 1.0): {difference_quantile}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_decay(config: &ActiveRegionDetectorConfig) -> LibResult<()> {
+    if !(0.0..=1.0).contains(&config.decay_min) {
+        return Err(LibError::InvalidArguments(format!(
+            "Kestrel active-region decay minimum must be in [0.0, 1.0]: {}",
+            config.decay_min
+        )));
+    }
+    if !(0.0..1.0).contains(&config.decay_alpha) {
+        return Err(LibError::InvalidArguments(format!(
+            "Kestrel active-region decay alpha must be in (0.0, 1.0): {}",
+            config.decay_alpha
         )));
     }
     Ok(())

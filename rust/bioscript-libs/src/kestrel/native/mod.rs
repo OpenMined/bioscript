@@ -12,6 +12,7 @@ pub use active_region::{ActiveRegion, RegionStats};
 pub use alignment::{AlignmentOp, NativeAlignment, align_haplotype, call_alignment_variants};
 pub use detector::{
     ActiveRegionDetection, ActiveRegionDetectorConfig, detect_active_regions, difference_threshold,
+    recovery_threshold,
 };
 pub use engine::{
     HaplotypeEvidence, NativeKestrelCallConfig, call_assembled_haplotypes_to_vcf,
