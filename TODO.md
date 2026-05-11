@@ -243,8 +243,9 @@ surface requires it.
       negative BAM expected labels. A manual native run currently extracts
       fewer reads from the subset BAM than the copied FASTQ fixtures and
       produces empty Kestrel calls, so the next fix is matching upstream read
-      extraction semantics for retained mate/unmapped reads or choosing the
-      correct BAM fixture.
+      extraction semantics (`samtools view -P`, unmapped-read extraction/merge,
+      and name-sorted FASTQ conversion) against a full BAM fixture, or choosing
+      the correct BAM fixture.
 - [x] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
       logs.
 - [x] M8: FASTQ path works using external fastp/bwa or documented prealigned
