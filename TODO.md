@@ -200,7 +200,9 @@ surface requires it.
       multi-reference native VCF path now counts FASTQ reads once, emits all
       reference contig headers, and scans each reference region for variants,
       with Python/PyO3 wrapper access through
-      `bioscript.kestrel.call_fastq_references_native`; this is the next
+      `bioscript.kestrel.call_fastq_references_native`; the Java parity gate
+      now includes a multi-reference FASTQ fixture that emits all contig
+      headers and calls the matching reference record, which is the next
       required shape for full VNtyper motif-reference parity. The
       haplotype assembler now tracks repeated k-mers and trims saved states by
       path depth using exposed `max_repeat_count` and `max_saved_states`
@@ -211,7 +213,7 @@ surface requires it.
       perfect-reference no-variant, MUC1 SNP, nonrepetitive SNP, adjacent
       nonrepetitive SNPs, k=20 nonrepetitive SNP/deletion/insertion fixtures,
       mixed reference/alternate SNP and deletion depth, a mixed insertion
-      no-call, and sparse split-read fixtures.
+      no-call, sparse split-read, and multi-reference fixtures.
       The native assembler now tracks observed adjacent k-mer transitions from
       each read/FASTQ record and refuses to bridge k-mers that were never
       adjacent in an input read, which fixes the Java-confirmed sparse

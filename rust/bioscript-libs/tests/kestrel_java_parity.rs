@@ -6,7 +6,8 @@ use std::{
 
 use bioscript_libs::kestrel::native::{
     ActiveRegionDetectorConfig, AlignmentWeight, HaplotypeAssemblyConfig, NativeKestrelCallConfig,
-    ReferenceRegion, call_fastq_paths_to_vcf,
+    NativeReferenceRegion, ReferenceRegion, call_fastq_paths_to_vcf,
+    call_fastq_paths_to_vcf_references,
 };
 
 const RUN_ENV: &str = "BIOSCRIPT_RUN_KESTREL_JAVA_PARITY";
@@ -254,6 +255,39 @@ fn native_kestrel_fastq_output_matches_java_for_sparse_split_reads() {
     );
 }
 
+#[test]
+fn native_kestrel_fastq_output_matches_java_for_multiple_references() {
+    let dir = parity_temp_dir("multiple-references");
+    let mut fastq = Vec::new();
+    for read_index in 1..=5 {
+        fastq.extend_from_slice(
+            format!("@r{read_index}\nACAGTTCGTAAG\n+\nIIIIIIIIIIII\n").as_bytes(),
+        );
+    }
+    let fixture = MultiReferenceParityFixture::new(
+        vec![
+            KestrelReferenceFixture::new(
+                "REF1",
+                "AAAACCCCGGGGTTTT",
+                "2a9fd43653a81f9ec44e34c7ec038636",
+            ),
+            KestrelReferenceFixture::new(
+                "REF2",
+                "ACAGTCCGTAAG",
+                "f17cc056a4c30b8661b5585d2641a37a",
+            ),
+        ],
+        &fastq,
+    );
+    let (java_vcf, native_vcf) = run_java_and_native_references(&dir, &fixture);
+
+    assert_eq!(variant_rows(&native_vcf), variant_rows(&java_vcf));
+    assert_eq!(
+        header_without_source(&native_vcf),
+        header_without_source(&java_vcf)
+    );
+}
+
 struct KestrelParityFixture<'a> {
     reference_name: &'a str,
     reference_sequence: &'a str,
@@ -288,6 +322,40 @@ impl<'a> KestrelParityFixture<'a> {
     fn with_max_states(mut self, max_states: usize) -> Self {
         self.max_states = max_states;
         self
+    }
+}
+
+struct KestrelReferenceFixture<'a> {
+    name: &'a str,
+    sequence: &'a str,
+    md5: &'a str,
+}
+
+impl<'a> KestrelReferenceFixture<'a> {
+    fn new(name: &'a str, sequence: &'a str, md5: &'a str) -> Self {
+        Self {
+            name,
+            sequence,
+            md5,
+        }
+    }
+}
+
+struct MultiReferenceParityFixture<'a> {
+    references: Vec<KestrelReferenceFixture<'a>>,
+    fastq_contents: &'a [u8],
+    kmer_size: usize,
+    max_states: usize,
+}
+
+impl<'a> MultiReferenceParityFixture<'a> {
+    fn new(references: Vec<KestrelReferenceFixture<'a>>, fastq_contents: &'a [u8]) -> Self {
+        Self {
+            references,
+            fastq_contents,
+            kmer_size: 4,
+            max_states: 40,
+        }
     }
 }
 
@@ -389,6 +457,115 @@ fn run_java_and_native(dir: &Path, fixture: &KestrelParityFixture<'_>) -> (Strin
             locus_depth: 1,
         },
         &NativeKestrelCallConfig::new("1.0.2", "sample1", fixture.reference_md5),
+    )
+    .unwrap();
+
+    (java_vcf, native_vcf)
+}
+
+fn run_java_and_native_references(
+    dir: &Path,
+    fixture: &MultiReferenceParityFixture<'_>,
+) -> (String, String) {
+    if std::env::var_os(RUN_ENV).is_none() {
+        return (String::new(), String::new());
+    }
+
+    let jar = kestrel_jar();
+    assert!(
+        jar.exists(),
+        "Kestrel Java parity gate requires {} or {} to exist: {}",
+        RUN_ENV,
+        "BIOSCRIPT_KESTREL_JAR",
+        jar.display()
+    );
+
+    fs::create_dir_all(dir).unwrap();
+    let reference_path = dir.join("ref.fa");
+    let fastq_path = dir.join("reads.fq");
+    let java_vcf_path = dir.join("java.vcf");
+    let java_sam_path = dir.join("java.sam");
+
+    let reference_fasta = fixture
+        .references
+        .iter()
+        .map(|reference| format!(">{}\n{}\n", reference.name, reference.sequence))
+        .collect::<String>();
+    fs::write(&reference_path, reference_fasta).unwrap();
+    fs::write(&fastq_path, fixture.fastq_contents).unwrap();
+
+    let status = Command::new("java")
+        .arg("-Xmx512m")
+        .arg("-jar")
+        .arg(&jar)
+        .arg("-k")
+        .arg(fixture.kmer_size.to_string())
+        .args([
+            "--minsize",
+            "4",
+            "--mincount",
+            "1",
+            "--mindiff",
+            "1",
+            "--diffq",
+            "0",
+            "--decaymin",
+            "1.0",
+        ])
+        .arg("--maxalignstates")
+        .arg(fixture.max_states.to_string())
+        .arg("--maxhapstates")
+        .arg(fixture.max_states.to_string())
+        .args(["--noanchorboth", "--nocountrev", "-r"])
+        .arg(&reference_path)
+        .arg("-o")
+        .arg(&java_vcf_path)
+        .arg("-ssample1")
+        .arg(&fastq_path)
+        .args(["--hapfmt", "sam", "-p"])
+        .arg(&java_sam_path)
+        .args(["--logstderr", "--loglevel", "ERROR", "--temploc"])
+        .arg(dir)
+        .status()
+        .unwrap();
+    assert!(status.success(), "Java Kestrel exited with {status}");
+
+    let references = fixture
+        .references
+        .iter()
+        .map(|reference| {
+            NativeReferenceRegion::new(reference.name, reference.sequence, reference.md5)
+        })
+        .collect::<Vec<_>>();
+    let java_vcf = fs::read_to_string(&java_vcf_path).unwrap();
+    let native_vcf = call_fastq_paths_to_vcf_references(
+        &references,
+        [fastq_path.as_path()],
+        fixture.kmer_size,
+        &ActiveRegionDetectorConfig {
+            minimum_difference: 1,
+            difference_quantile: 0.0,
+            count_reverse_kmers: false,
+            anchor_both_ends: false,
+            decay_min: 1.0,
+            decay_alpha: 0.80,
+            peak_scan_length: 7,
+            scan_limit_factor: 7.0,
+            max_gap_size: AlignmentWeight::default()
+                .max_exclusive_gap_size(fixture.kmer_size)
+                .unwrap(),
+            recover_right_anchor: true,
+            call_ambiguous_regions: true,
+        },
+        &HaplotypeAssemblyConfig {
+            min_kmer_count: 1,
+            max_haplotypes: fixture.max_states,
+            max_bases: 500,
+            max_repeat_count: 0,
+            max_saved_states: fixture.max_states,
+            locus_depth: 1,
+        },
+        &NativeKestrelCallConfig::new("1.0.2", "sample1", "."),
     )
     .unwrap();
 
