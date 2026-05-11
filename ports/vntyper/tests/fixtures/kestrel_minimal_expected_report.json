@@ -1,4 +1,9 @@
 {
+  "algorithm_results": {
+    "advntr": "none",
+    "kestrel": "High_Precision",
+    "quality_metrics_pass": true
+  },
   "best_call": {
     "ALT": "CGGCA",
     "CHROM": "MUC1",
@@ -10,7 +15,18 @@
     "REF": "C",
     "passes_vntyper_filters": true
   },
-  "coverage_quality_pass": true,
+  "coverage": {
+    "quality_pass": true,
+    "status": "pass",
+    "threshold": 100
+  },
   "kestrel_variant_count": 3,
-  "screening_summary": "Kestrel detected a high-precision pathogenic variant."
+  "metadata": {
+    "alignment_pipeline": "external samtools/kestrel",
+    "bam_header_warnings": [],
+    "detected_assembly": "hg19",
+    "detected_contig": "chr1",
+    "vntyper_version": "bioscript-vntyper-port"
+  },
+  "screening_summary": "Kestrel detected a high-precision pathogenic variant.<br>Note: adVNTR genotyping was not performed.<br>It is recommended to perform adVNTR and validate the result using orthogonal methods (e.g., SNaPshot, long-read sequencing)."
 }

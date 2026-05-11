@@ -42,6 +42,76 @@ DEFAULT_KESTREL_CONFIG = {
 
 DEFAULT_REPORT_CONFIG = {
     "mean_vntr_coverage_threshold": 100,
+    "algorithm_logic": {
+        "kestrel": {
+            "rules": [
+                {
+                    "conditions": {
+                        "Confidence": {"operator": "in", "value": ["High_Precision", "High_Precision*"]},
+                        "Flag": {"operator": "==", "value": "Not flagged"},
+                    },
+                    "result": "High_Precision",
+                },
+                {
+                    "conditions": {
+                        "Confidence": {"operator": "in", "value": ["Low_Precision"]},
+                        "Flag": {"operator": "==", "value": "Not flagged"},
+                    },
+                    "result": "Low_Precision",
+                },
+                {
+                    "conditions": {
+                        "Confidence": {"operator": "in", "value": ["High_Precision", "High_Precision*"]},
+                        "Flag": {"operator": "!=", "value": "Not flagged"},
+                    },
+                    "result": "High_Precision_flagged",
+                },
+                {
+                    "conditions": {
+                        "Confidence": {"operator": "in", "value": ["Low_Precision"]},
+                        "Flag": {"operator": "!=", "value": "Not flagged"},
+                    },
+                    "result": "Low_Precision_flagged",
+                },
+            ],
+            "default": "negative",
+        },
+    },
+    "screening_summary_default": "The screening was negative (no valid Kestrel or adVNTR data).",
+    "screening_summary_rules": [
+        {
+            "conditions": {
+                "kestrel_result": "High_Precision",
+                "advntr_result": "none",
+                "quality_metrics_pass": True,
+            },
+            "message": "Kestrel detected a high-precision pathogenic variant.<br>Note: adVNTR genotyping was not performed.<br>It is recommended to perform adVNTR and validate the result using orthogonal methods (e.g., SNaPshot, long-read sequencing).",
+        },
+        {
+            "conditions": {
+                "kestrel_result": "High_Precision",
+                "advntr_result": "none",
+                "quality_metrics_pass": False,
+            },
+            "message": "Kestrel detected a high-precision pathogenic variant with quality metrics below threshold, and adVNTR genotyping was not performed.<br>Further validation using alternative methods (e.g., SNaPshot, long-read sequencing) is strongly recommended.",
+        },
+        {
+            "conditions": {
+                "kestrel_result": "Low_Precision",
+                "advntr_result": "none",
+                "quality_metrics_pass": True,
+            },
+            "message": "Kestrel detected a pathogenic variant with low precision.<br>Note: adVNTR genotyping was not performed.<br>It is recommended to perform adVNTR and validate the result using alternative methods (e.g., SNaPshot, long-read sequencing).",
+        },
+        {
+            "conditions": {
+                "kestrel_result": "negative",
+                "advntr_result": "none",
+                "quality_metrics_pass": True,
+            },
+            "message": "No variant detected.<br>Note: adVNTR genotyping was not performed.",
+        },
+    ],
 }
 
 
@@ -214,33 +284,45 @@ def build_report_json(
     fastp=None,
     report_config=None,
     pipeline_version="bioscript-vntyper-port",
+    metadata=None,
+    advntr_rows=None,
+    pipeline_log=None,
 ):
     config = report_config or DEFAULT_REPORT_CONFIG
-    coverage = coverage or {}
-    fastp = fastp or {}
-    mean_cov = coverage.get("mean")
-    threshold = config.get("mean_vntr_coverage_threshold", 100)
-    quality_pass = mean_cov is None or float(mean_cov) >= float(threshold)
-    screening = screening_summary(kestrel_rows, quality_pass)
+    coverage_qc = build_coverage_qc(coverage or {}, config)
+    fastp_qc = build_fastp_qc(fastp or {})
+    advntr_rows = advntr_rows or []
+    kestrel_result = compute_algorithm_result(kestrel_rows, config, "kestrel")
+    advntr_result = "none" if not advntr_rows else compute_algorithm_result(advntr_rows, config, "advntr")
+    screening = screening_summary_from_config(
+        kestrel_result,
+        advntr_result,
+        coverage_qc["quality_pass"],
+        config,
+    )
+    report_metadata = build_run_metadata(
+        sample_name=sample_name,
+        input_files=input_files,
+        pipeline_version=pipeline_version,
+        metadata=metadata or {},
+    )
     return {
         "sample_name": sample_name,
         "version": pipeline_version,
-        "report_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "report_date": report_metadata["report_date"],
+        "metadata": report_metadata,
         "input_files": input_files,
-        "coverage": {
-            "mean": mean_cov,
-            "median": coverage.get("median"),
-            "stdev": coverage.get("stdev"),
-            "min": coverage.get("min"),
-            "max": coverage.get("max"),
-            "region_length": coverage.get("region_length"),
-            "uncovered_bases": coverage.get("uncovered_bases"),
-            "percent_uncovered": coverage.get("percent_uncovered"),
-            "quality_pass": quality_pass,
+        "coverage": coverage_qc,
+        "fastp": fastp_qc,
+        "algorithm_results": {
+            "kestrel": kestrel_result,
+            "advntr": advntr_result,
+            "quality_metrics_pass": coverage_qc["quality_pass"],
         },
-        "fastp": fastp,
         "screening_summary": screening,
         "kestrel_variants": kestrel_rows,
+        "advntr_variants": advntr_rows,
+        "pipeline_log": pipeline_log or [],
     }
 
 
@@ -250,25 +332,103 @@ def write_report_json(path, report):
 
 
 def screening_summary(kestrel_rows, quality_pass):
-    candidates = [row for row in kestrel_rows if row.get("passes_vntyper_filters")]
-    if not candidates:
-        if quality_pass:
-            return "No variant detected. Quality metrics are acceptable."
-        return "No variant detected; however, quality metrics are below threshold."
-    best = best_kestrel_call(candidates)
-    confidence = best.get("Confidence", NEGATIVE_LABEL)
-    flagged = best.get("Flag", "Not flagged") != "Not flagged"
-    if confidence in ["High_Precision", "High_Precision*"]:
-        if flagged:
-            return "Kestrel detected a high-precision pathogenic variant with a flagged result."
-        if quality_pass:
-            return "Kestrel detected a high-precision pathogenic variant."
-        return "Kestrel detected a high-precision pathogenic variant with quality metrics below threshold."
-    if confidence == "Low_Precision":
-        if flagged:
-            return "Kestrel detected a pathogenic variant with low precision and a flagged result."
-        return "Kestrel detected a pathogenic variant with low precision."
-    return "No variant detected."
+    config = DEFAULT_REPORT_CONFIG
+    return screening_summary_from_config(
+        compute_algorithm_result(kestrel_rows, config, "kestrel"),
+        "none",
+        quality_pass,
+        config,
+    )
+
+
+def build_run_metadata(sample_name, input_files, pipeline_version, metadata=None):
+    metadata = metadata or {}
+    return {
+        "sample_name": sample_name,
+        "vntyper_version": metadata.get("vntyper_version", pipeline_version),
+        "report_date": metadata.get("report_date", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        "input_files": input_files,
+        "alignment_pipeline": metadata.get("alignment_pipeline"),
+        "detected_assembly": metadata.get("detected_assembly"),
+        "detected_contig": metadata.get("detected_contig"),
+        "bam_header_warnings": metadata.get("bam_header_warnings", []),
+    }
+
+
+def build_coverage_qc(coverage, report_config=None):
+    config = report_config or DEFAULT_REPORT_CONFIG
+    mean_cov = coverage.get("mean")
+    threshold = config.get("mean_vntr_coverage_threshold", 100)
+    quality_pass = mean_cov is None or float(mean_cov) >= float(threshold)
+    return {
+        "mean": mean_cov,
+        "median": coverage.get("median"),
+        "stdev": coverage.get("stdev"),
+        "min": coverage.get("min"),
+        "max": coverage.get("max"),
+        "region_length": coverage.get("region_length"),
+        "uncovered_bases": coverage.get("uncovered_bases"),
+        "percent_uncovered": coverage.get("percent_uncovered"),
+        "threshold": threshold,
+        "quality_pass": quality_pass,
+        "status": "pass" if quality_pass else "warning",
+    }
+
+
+def build_fastp_qc(fastp):
+    if not fastp:
+        return {"available": False}
+    return {
+        "available": True,
+        "sequencing_setup": fastp.get("sequencing_setup"),
+        "duplication_rate": fastp.get("duplication_rate"),
+        "q20_rate": fastp.get("q20_rate"),
+        "q30_rate": fastp.get("q30_rate"),
+        "passed_filter_read_rate": fastp.get("passed_filter_read_rate"),
+        "quality_pass": fastp.get("quality_pass"),
+        "status": "pass" if fastp.get("quality_pass", True) else "warning",
+    }
+
+
+def compute_algorithm_result(rows, report_config=None, algorithm="kestrel"):
+    config = report_config or DEFAULT_REPORT_CONFIG
+    logic = config.get("algorithm_logic", {}).get(algorithm, {})
+    default = logic.get("default", "negative")
+    for row in rows:
+        for rule in logic.get("rules", []):
+            if all(_condition_matches(row, field, condition) for field, condition in rule.get("conditions", {}).items()):
+                return rule.get("result", default)
+    return default
+
+
+def screening_summary_from_config(kestrel_result, advntr_result, quality_metrics_pass, report_config=None):
+    config = report_config or DEFAULT_REPORT_CONFIG
+    context = {
+        "kestrel_result": kestrel_result,
+        "advntr_result": advntr_result,
+        "quality_metrics_pass": quality_metrics_pass,
+    }
+    for rule in config.get("screening_summary_rules", []):
+        if rule.get("conditions", {}) == context:
+            return rule.get("message", config.get("screening_summary_default", ""))
+    return config.get("screening_summary_default", "")
+
+
+def _condition_matches(row, field, condition):
+    if not isinstance(condition, dict):
+        return row.get(field) == condition
+    operator = condition.get("operator", "==")
+    expected = condition.get("value")
+    actual = row.get(field)
+    if operator == "==":
+        return actual == expected
+    if operator == "!=":
+        return actual != expected
+    if operator == "in":
+        return actual in expected
+    if operator == "not in":
+        return actual not in expected
+    raise ValueError(f"Unsupported condition operator: {operator}")
 
 
 def best_kestrel_call(rows):
