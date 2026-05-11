@@ -11,6 +11,7 @@ pub struct ActiveRegionDetectorConfig {
     pub decay_min: f32,
     pub decay_alpha: f32,
     pub peak_scan_length: usize,
+    pub scan_limit_factor: f32,
 }
 
 impl Default for ActiveRegionDetectorConfig {
@@ -23,6 +24,7 @@ impl Default for ActiveRegionDetectorConfig {
             decay_min: 0.55,
             decay_alpha: 0.80,
             peak_scan_length: 7,
+            scan_limit_factor: 7.0,
         }
     }
 }
@@ -125,7 +127,12 @@ fn candidate_regions(
         let left = counts[index - 1];
         let right = counts[index];
         if left > right && left - right >= difference_threshold {
-            let end = scan_right_end(counts, index, left, kmer_size, difference_threshold, config)?;
+            let Some(end) =
+                scan_right_end(counts, index, left, kmer_size, difference_threshold, config)?
+            else {
+                index += 1;
+                continue;
+            };
             if end < counts.len() && end.saturating_sub(index) >= kmer_size.saturating_sub(1) {
                 regions.push(ActiveRegion::new(
                     region,
@@ -177,14 +184,16 @@ fn scan_right_end(
     kmer_size: usize,
     difference_threshold: u32,
     config: &ActiveRegionDetectorConfig,
-) -> LibResult<usize> {
+) -> LibResult<Option<usize>> {
     let mut end = start_index + 1;
     let mut peak_count = 0usize;
     let mut peak_scan_index = 0usize;
     let mut last_valley_index = 0usize;
+    let scan_limit = scan_limit_length(kmer_size, config)?;
 
     'scan_loop: loop {
         while end < counts.len()
+            && end.saturating_sub(start_index) <= scan_limit
             && (counts[end] as f32)
                 < recovery_threshold(
                     anchor_count,
@@ -196,9 +205,12 @@ fn scan_right_end(
         {
             end += 1;
         }
+        if end.saturating_sub(start_index) > scan_limit {
+            return Ok(None);
+        }
 
         if config.peak_scan_length == 0 {
-            return Ok(end);
+            return Ok(Some(end));
         }
 
         if peak_scan_index > 0 && end.saturating_sub(peak_scan_index) >= kmer_size {
@@ -224,7 +236,7 @@ fn scan_right_end(
                 peak_count += 1;
                 end = peak_scan_index;
                 if peak_count > 3 && end.saturating_sub(start_index) / peak_count < kmer_size {
-                    return Ok(last_valley_index.max(start_index + 1));
+                    return Ok(Some(last_valley_index.max(start_index + 1)));
                 }
                 continue 'scan_loop;
             }
@@ -232,11 +244,20 @@ fn scan_right_end(
         }
 
         if peak_scan_index == counts.len() && last_valley_index > 0 {
-            return Ok(last_valley_index);
+            return Ok(Some(last_valley_index));
         }
 
-        return Ok(end);
+        return Ok(Some(end));
     }
+}
+
+pub fn scan_limit_length(
+    kmer_size: usize,
+    config: &ActiveRegionDetectorConfig,
+) -> LibResult<usize> {
+    validate_scan_limit(config)?;
+    let scaled = (config.scan_limit_factor * kmer_size as f32) as usize;
+    Ok(kmer_size.max(scaled))
 }
 
 fn validate_config(config: &ActiveRegionDetectorConfig) -> LibResult<()> {
@@ -246,13 +267,24 @@ fn validate_config(config: &ActiveRegionDetectorConfig) -> LibResult<()> {
         ));
     }
     validate_difference_quantile(config.difference_quantile)?;
-    validate_decay(config)
+    validate_decay(config)?;
+    validate_scan_limit(config)
 }
 
 fn validate_difference_quantile(difference_quantile: f32) -> LibResult<()> {
     if !(0.0..1.0).contains(&difference_quantile) {
         return Err(LibError::InvalidArguments(format!(
             "Kestrel active-region difference quantile must be in [0.0, 1.0): {difference_quantile}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_scan_limit(config: &ActiveRegionDetectorConfig) -> LibResult<()> {
+    if config.scan_limit_factor < 0.0 || !config.scan_limit_factor.is_finite() {
+        return Err(LibError::InvalidArguments(format!(
+            "Kestrel active-region scan limit factor must be finite and nonnegative: {}",
+            config.scan_limit_factor
         )));
     }
     Ok(())
