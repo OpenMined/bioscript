@@ -227,17 +227,18 @@ fn observe_vcf_variant<R: std::io::Read + std::io::Seek>(
     // Use the existing CLI helper so wasm picks the same locus the path-based
     // path does: detected GRCh37 → grch37 first; detected GRCh38 → grch38
     // first; None → grch37 first (CLI default for variant-only VCFs).
-    let raw_locus = bioscript_formats::choose_variant_locus_for_assembly(variant, detected_assembly)
-        .ok_or_else(|| {
-            RuntimeError::Io(format!(
-                "variant {} has no GRCh37/GRCh38 locus",
-                variant
-                    .rsids
-                    .first()
-                    .map(|s| s.as_str())
-                    .unwrap_or("variant")
-            ))
-        })?;
+    let raw_locus =
+        bioscript_formats::choose_variant_locus_for_assembly(variant, detected_assembly)
+            .ok_or_else(|| {
+                RuntimeError::Io(format!(
+                    "variant {} has no GRCh37/GRCh38 locus",
+                    variant
+                        .rsids
+                        .first()
+                        .map(|s| s.as_str())
+                        .unwrap_or("variant")
+                ))
+            })?;
     let assembly = detected_assembly.or_else(|| {
         if variant.grch37.as_ref().is_some_and(|l| l == &raw_locus) {
             Some(Assembly::Grch37)

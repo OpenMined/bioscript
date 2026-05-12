@@ -95,7 +95,10 @@ const VCF_Y_WINDOWS_GRCH38: &[(i64, i64)] = &[
 /// instead of scanning the whole file. Reuses the shared
 /// `infer_sex_from_text_lines` so classification rules match the CLI.
 pub(super) fn vcf_sex_via_tabix<R: std::io::Read + std::io::Seek>(
-    reader: &mut noodles::csi::io::IndexedReader<noodles::bgzf::io::Reader<R>, noodles::tabix::Index>,
+    reader: &mut noodles::csi::io::IndexedReader<
+        noodles::bgzf::io::Reader<R>,
+        noodles::tabix::Index,
+    >,
     head_lines: &[String],
 ) -> Option<bioscript_formats::SexInference> {
     let mut lines = head_lines.to_vec();
@@ -142,10 +145,7 @@ fn build_region(chrom: &str, start: i64, end: i64) -> Option<noodles::core::Regi
 
 /// Pull the VCF header from the bgzf head so `infer_sex_from_text_lines` can
 /// resolve delimiter and column indexes for the X/Y records added via tabix.
-pub(super) fn decompress_vcf_head_lines(
-    read_at: &js_sys::Function,
-    total_len: u64,
-) -> Vec<String> {
+pub(super) fn decompress_vcf_head_lines(read_at: &js_sys::Function, total_len: u64) -> Vec<String> {
     use crate::js_reader::JsReader;
     use std::io::{BufRead, BufReader, Read};
 

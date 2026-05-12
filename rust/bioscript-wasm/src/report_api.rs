@@ -370,12 +370,8 @@ pub fn run_package_report_from_vcf(
     // Inspect format/source/assembly from the head, but skip the byte-stream
     // sex detection — we'll do that via tabix-targeted X non-PAR queries
     // below, which works on indexed VCFs of any size.
-    let mut head_inspection = inspect_head_via_js_reader(
-        &vcf_read_at,
-        vcf_len as u64,
-        input_name,
-        false,
-    );
+    let mut head_inspection =
+        inspect_head_via_js_reader(&vcf_read_at, vcf_len as u64, input_name, false);
     // Decompress the head once to grab the VCF header lines (## meta + #CHROM
     // column header) — these are needed by `infer_sex_from_text_lines` to
     // figure out delimiter / column indexes for the data lines we'll pull
