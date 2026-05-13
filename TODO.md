@@ -172,8 +172,10 @@ This is not just a facade spike. The finish line is:
       `vntyper_bioscript_program_runs_via_cli_and_writes_command_plan` runs
       `ports/vntyper/bioscript/vntyper.bs` with the representative positive BAM
       fixture and verifies the generated command plan.
-- [ ] Add one CLI/runtime command that runs the BioScript VNtyper program against
+- [x] Add one CLI/runtime command that runs the BioScript VNtyper program against
       a FASTQ fixture pair.
+      Added `ports/vntyper/bioscript/vntyper-fastq.bs` and runtime coverage in
+      `rust/bioscript-runtime/tests/vntyper_program.rs`.
 
 ## VNtyper Parity Tests
 

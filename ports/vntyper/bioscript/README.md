@@ -7,10 +7,11 @@ layers should live in `rust/bioscript-libs` and be exposed through
 
 ## Target Interface
 
-The user-facing BioScript program path is:
+The user-facing BioScript program paths are:
 
 ```text
 ports/vntyper/bioscript/vntyper.bs
+ports/vntyper/bioscript/vntyper-fastq.bs
 ```
 
 `vntyper.bs.py` remains an executable sketch until the runtime can execute the
