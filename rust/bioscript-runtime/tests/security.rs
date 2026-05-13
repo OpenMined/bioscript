@@ -410,6 +410,45 @@ if __name__ == "__main__":
 }
 
 #[test]
+fn bioscript_kestrel_native_method_materializes_vcf() {
+    let dir = temp_dir("kestrel-native-method");
+    let runtime = run_script_with_inputs(
+        &dir,
+        r#"
+from bioscript import kestrel
+
+def main():
+    bioscript.write_text("ref.fa", ">chr1\nAAAACCCCGGGGTTTT\n")
+    bioscript.write_text(
+        "reads.fastq",
+        "@r1\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n"
+        + "@r2\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n"
+        + "@r3\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n"
+        + "@r4\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n"
+        + "@r5\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n",
+    )
+    output = kestrel.run_native("ref.fa", ["reads.fastq"], "calls/out.vcf", 4, "sample1", 1, 4, 4)
+    if not output:
+        raise Exception("missing Kestrel output")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+
+    let vcf = fs::read_to_string(dir.join("calls/out.vcf")).unwrap();
+    assert!(vcf.contains("##fileformat=VCFv4.2\n"));
+    assert!(vcf.contains("##contig=<ID=chr1,length=16"));
+    assert!(vcf.contains("chr1\t5\t.\tC\tT"), "{vcf}");
+    let timings = runtime.timing_snapshot();
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail == "method=kestrel.run_native"
+    }));
+}
+
+#[test]
 fn bioscript_vcf_read_kestrel_returns_records() {
     let dir = temp_dir("vcf-read-kestrel");
     fs::write(

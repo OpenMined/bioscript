@@ -13,6 +13,7 @@ mod args;
 mod dispatch;
 mod host_io;
 mod imports;
+mod kestrel_native_methods;
 mod lib_methods;
 mod methods;
 mod objects;

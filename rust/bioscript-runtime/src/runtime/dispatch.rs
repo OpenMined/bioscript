@@ -47,6 +47,7 @@ impl BioscriptRuntime {
             ("VcfModule", "read_kestrel") => self.method_vcf_read_kestrel(args, kwargs),
             ("KestrelModule", "build_command") => self.method_kestrel_build_command(args, kwargs),
             ("KestrelModule", "plan_command") => self.method_kestrel_build_command(args, kwargs),
+            ("KestrelModule", "run_native") => self.method_kestrel_run_native(args, kwargs),
             ("SamtoolsModule", "view") => self.method_samtools_view_region_native(args, kwargs),
             ("SamtoolsModule", "plan_view") => self.method_samtools_view(args, kwargs),
             ("SamtoolsModule", "view_region") => {
