@@ -15,11 +15,11 @@ def main():
         reference_fasta,
         [fastq_1, fastq_2],
         kestrel_vcf,
-        4,
+        kmer_size,
         sample,
-        1,
-        4,
-        4,
+        minimum_difference,
+        max_haplotypes,
+        max_saved_states,
     )
     bcftools.sort(kestrel_vcf, sorted_vcf)
     bcftools.index(sorted_vcf)
