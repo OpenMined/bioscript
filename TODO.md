@@ -437,8 +437,11 @@ This is not just a facade spike. The finish line is:
       `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate.VntyperNativeBamPipelineGateTests.test_native_bam_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification`
       passed in 91.426s.
 - [ ] VNtyper FASTQ positive/negative native parity gate passes.
-      Current status 2026-05-14: gate runs but fails negative-fixture parity
-      (`High_Precision` vs expected `negative`).
+      Current status 2026-05-14: gate runs but fails negative-fixture parity.
+      Rechecked with
+      `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_fastq_pipeline_gate.VntyperNativeFastqPipelineGateTests.test_native_fastq_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification`;
+      the negative fixture reports `High_Precision` vs expected `negative`
+      after 87.777s. Keep open as a `kestrel-rs` output-parity blocker.
 - [ ] VNtyper report JSON and TSV outputs match expected fixtures with explicit
       normalized fields.
 - [x] VNtyper HTML report structure test passes.
