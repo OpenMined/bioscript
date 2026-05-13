@@ -4,6 +4,8 @@ use crate::{LibError, LibResult};
 
 pub const MODULE: &str = "vcf";
 
+pub mod vntyper;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VcfDirection {
     PysamVariantFile,
@@ -27,6 +29,11 @@ pub fn read_kestrel_vcf(path: &Path) -> LibResult<Vec<VcfRecord>> {
         LibError::InvalidArguments(format!("failed to read VCF {}: {err}", path.display()))
     })?;
     parse_kestrel_vcf(&contents)
+}
+
+pub fn read_vntyper_kestrel_rows(path: &Path) -> LibResult<Vec<VcfRecord>> {
+    let records = read_kestrel_vcf(path)?;
+    Ok(vntyper::vntyper_kestrel_rows(&records))
 }
 
 pub fn parse_kestrel_vcf(contents: &str) -> LibResult<Vec<VcfRecord>> {

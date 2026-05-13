@@ -46,6 +46,9 @@ impl BioscriptRuntime {
             ("BcftoolsModule", "index_native") => self.method_bcftools_index_native(args, kwargs),
             ("VcfModule", "VariantFile") => self.method_vcf_variant_file(args, kwargs),
             ("VcfModule", "read_kestrel") => self.method_vcf_read_kestrel(args, kwargs),
+            ("VcfModule", "read_vntyper_kestrel") => {
+                self.method_vcf_read_vntyper_kestrel(args, kwargs)
+            }
             ("KestrelModule", "build_command") => self.method_kestrel_build_command(args, kwargs),
             ("KestrelModule", "plan_command") => self.method_kestrel_build_command(args, kwargs),
             ("KestrelModule", "run_native") => self.method_kestrel_run_native(args, kwargs),

@@ -132,6 +132,8 @@ fn vntyper_fastq_bioscript_program_runs_through_runtime() {
     assert!(plan.contains("fastq_1"));
     assert!(plan.contains("kestrel_vcf"));
     assert!(plan.contains("first_variant_alt"));
+    assert!(plan.contains("first_variant_confidence"));
+    assert!(plan.contains("Low_Precision"));
     assert!(plan.contains("\tT"));
     assert!(output_dir.join("positive/kestrel/output.vcf").exists());
     assert!(

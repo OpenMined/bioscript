@@ -26,6 +26,7 @@ mod timing;
 mod tool_methods;
 mod trace;
 mod variants;
+mod vcf_methods;
 
 #[cfg(test)]
 use bioscript_core::VariantSpec;

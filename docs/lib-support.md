@@ -274,6 +274,8 @@ from bioscript import pysam / samtools / pyfaidx
 Python authors can call low-level `kestrel.call_*_native(...)` helpers when
 they need VCF text, or `kestrel.run_native(reference_fasta, fastq_paths,
 output_vcf)` when a pipeline wants Kestrel-like file output.
+BioScript runtime code can use `vcf.read_vntyper_kestrel(path)` for the current
+VNtyper Kestrel call-table rows used by the FASTQ runtime slice.
 
 When `kestrel-rs`, `bcftools-rs`, `htslib-rs`, and `samtools-rs` stabilize,
 the default Cargo dependencies can move from local paths to published crate
@@ -343,9 +345,10 @@ Support:
 - fetch by region when indexed
 - expose `chrom`, `pos`, `id`, `ref`, `alts`, and sample genotype fields
 
-The initial implementation decision is `bioscript.pysam.VariantFile` first,
-with a separate `bioscript.vcf` namespace reserved for BioScript-native helpers
-if the API needs to diverge later.
+The initial implementation decision is `bioscript.pysam.VariantFile` first for
+general VCF compatibility, with `bioscript.vcf` reserved for BioScript-native
+helpers. Current helpers include raw `read_kestrel(path)` parsing and
+VNtyper-specific `read_vntyper_kestrel(path)` call-table conversion.
 
 ## Upstream Source And Tests
 

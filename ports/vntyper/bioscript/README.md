@@ -58,14 +58,15 @@ Expected native flow:
 ```text
 FASTQ pair -> bioscript.kestrel.run_native
            -> bioscript.bcftools.sort/index
-           -> bioscript.vcf.read_kestrel
+           -> bioscript.vcf.read_vntyper_kestrel
            -> TSV execution summary
 ```
 
 `vntyper-fastq.bs` currently exercises this native BioScript runtime path on
-tiny deterministic fixtures. Full VNtyper TSV/JSON/HTML post-processing still
-lives in the Python scaffold until that logic is moved into runtime-supported
-BioScript calls.
+tiny deterministic fixtures. Core Kestrel call-table conversion is now in
+`bioscript-libs`; full VNtyper JSON/HTML report generation still lives in the
+Python scaffold until that logic is moved into runtime-supported BioScript
+calls.
 
 ## Local Test Gates
 
