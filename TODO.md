@@ -40,8 +40,14 @@ uses those built-in primitives.
       `git@github.com:madhavajay/samtools-rs.git`.
       The repo contains the VNtyper-needed `view`, `fastq`, `depth`, `index`,
       and related API surface.
-- [ ] Keep vendored engine crate tests inside their own repos/workspaces.
-- [ ] Keep BioScript tests focused on adapter behavior and pipeline integration.
+- [x] Keep vendored engine crate tests inside their own repos/workspaces.
+      `kestrel-rs`, `samtools-rs`, `bcftools-rs`, and `htslib-rs` keep their
+      engine tests under their own vendored workspaces; BioScript only points
+      at the submodule revisions and calls their public APIs.
+- [x] Keep BioScript tests focused on adapter behavior and pipeline integration.
+      BioScript-owned tests now cover argument normalization, runtime/Python
+      wrappers, tiny fixture adapters, and VNtyper integration gates rather
+      than re-testing whole engines.
 
 ## Rust Crate Wiring
 
@@ -59,8 +65,12 @@ uses those built-in primitives.
       `samtools-rs` workspace is patched on
       `bioscript-use-shared-htslib` to share the BCFtools HTS backend path so
       Cargo has one unambiguous `htslib-rs` package.
-- [ ] Add `[patch]` entries only where nested crate dependencies would
+- [x] Add `[patch]` entries only where nested crate dependencies would
       otherwise pull remote git/crates.io versions instead of local submodules.
+      No new engine-crate patches were needed: `bioscript-libs` uses path
+      dependencies and the vendored `samtools-rs` workspace points at the
+      shared nested `bcftools-rs/htslib-rs` path. Existing workspace patches
+      remain limited to the local noodles/lexical overrides.
 - [x] Document the dependency graph:
       BioScript -> `bioscript-libs` facade -> vendored Rust engine crate.
 
@@ -109,8 +119,11 @@ uses those built-in primitives.
       helpers for Python/VNtyper integration.
       Decision: keep string-returning low-level helpers and expose
       `kestrel.run_native(...)` as the file-writing convenience path.
-- [ ] Move any remaining Kestrel algorithm parity expectations into
+- [x] Move any remaining Kestrel algorithm parity expectations into
       `vendor/rust/kestrel-rs`.
+      Java/Rust parity and algorithm behavior tests live in the Kestrel engine
+      workspace, including `crates/kestrel/tests/cli_parity.rs` and the
+      Java-compatible unit tests. BioScript keeps only facade smoke coverage.
 
 ## Samtools Facade
 
@@ -263,9 +276,15 @@ uses those built-in primitives.
       integration with BioScript/Python/VNtyper.
 - [ ] Add tiny fixture tests for every facade method before wiring it into
       VNtyper.
-- [ ] Add opt-in oracle tests against real CLI tools where useful.
-- [ ] Add one end-to-end VNtyper native-facade test after each major backend is
+- [x] Add opt-in oracle tests against real CLI tools where useful.
+      Real-tool gates are opt-in, including the Samtools FASTQ oracle and
+      VNtyper external/native BAM gates.
+- [x] Add one end-to-end VNtyper native-facade test after each major backend is
       swapped in.
+      `test_native_bam_pipeline_gate.py` exercises the native Samtools facade
+      with the VNtyper BAM path; BCFtools/Kestrel native paths have additional
+      fake-runner and fixture smoke coverage. Full all-native parity remains
+      tracked separately in the VNtyper section.
 
 ## Near-Term Order
 
