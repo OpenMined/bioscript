@@ -201,8 +201,14 @@ uses those built-in primitives.
       `sort_native`, and `index_native`; Samtools native bindings now cover
       `view_region_native`, `fastq_native`, and `depth_native` through the
       BioScript facade, which is backed by `samtools-rs`.
-- [ ] Keep runtime responsible for language/object adaptation only.
-- [ ] Keep file/path/security policy centralized and reused across facades.
+- [x] Keep runtime responsible for language/object adaptation only.
+      Runtime methods now adapt Monty objects, paths, and return shapes while
+      delegating tool behavior to `bioscript-libs` facades.
+- [x] Keep file/path/security policy centralized and reused across facades.
+      Native Samtools and BCFtools runtime bindings use the same
+      `resolve_existing_user_path` / `resolve_user_write_path` sandbox checks
+      as other host-facing methods, with security tests covering materialized
+      outputs.
 
 ## VNtyper Proof Port
 
