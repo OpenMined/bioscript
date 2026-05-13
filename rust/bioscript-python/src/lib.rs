@@ -124,6 +124,14 @@ fn bcftools_index_native(
         .map_err(to_py_value_error)
 }
 
+#[pyfunction]
+fn pyfaidx_fetch_native(path: &str, contig: &str, start: usize, stop: usize) -> PyResult<String> {
+    let fasta = bioscript_libs::pyfaidx::Fasta::from_path(PathBuf::from(path))
+        .map_err(to_py_value_error)?;
+    let record = fasta.get(contig).map_err(to_py_value_error)?;
+    record.slice(start, stop).map_err(to_py_value_error)
+}
+
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
 fn kestrel_call_sequences_native(
@@ -318,6 +326,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(bcftools_view_native, module)?)?;
     module.add_function(wrap_pyfunction!(bcftools_sort_native, module)?)?;
     module.add_function(wrap_pyfunction!(bcftools_index_native, module)?)?;
+    module.add_function(wrap_pyfunction!(pyfaidx_fetch_native, module)?)?;
     module.add_function(wrap_pyfunction!(kestrel_call_sequences_native, module)?)?;
     module.add_function(wrap_pyfunction!(kestrel_call_fastq_native, module)?)?;
     module.add_function(wrap_pyfunction!(

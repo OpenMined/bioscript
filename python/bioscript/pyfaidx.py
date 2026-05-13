@@ -11,7 +11,7 @@ from .runtime import BackendMode, ModuleBackendPolicy, selected_backend
 BACKEND_POLICY = ModuleBackendPolicy(
     auto="use real pyfaidx when installed; otherwise use the pure Python FASTA fallback",
     python="requires real pyfaidx",
-    rust="native pyfaidx shim is pending",
+    rust="uses bioscript._native backed by htslib-rs faidx_compat",
 )
 
 
@@ -24,6 +24,8 @@ class Fasta:
 
     def __init__(self, path: str | Path, **kwargs: Any) -> None:
         backend = selected_backend()
+        self._path = Path(path)
+        self._native = None
         if backend in {BackendMode.AUTO, BackendMode.PYTHON}:
             try:
                 self._inner = _real_pyfaidx().Fasta(path, **kwargs)
@@ -33,13 +35,18 @@ class Fasta:
                 if backend == BackendMode.PYTHON:
                     raise
         if backend == BackendMode.RUST:
-            raise NotImplementedError("Rust-backed bioscript.pyfaidx is not available yet")
+            self._inner = None
+            self._simple = None
+            self._native = _native()
+            return
         self._inner = None
         self._simple = _SimpleFasta(Path(path))
 
     def __getitem__(self, contig: str) -> Any:
         if self._inner is not None:
             return self._inner[contig]
+        if self._native is not None:
+            return _NativeRecord(self._native, self._path, contig)
         return self._simple[contig]
 
 
@@ -77,6 +84,24 @@ class _SimpleSequence:
         return NotImplemented
 
 
+class _NativeRecord:
+    def __init__(self, native: Any, path: Path, contig: str) -> None:
+        self._native = native
+        self._path = path
+        self._contig = contig
+
+    def __getitem__(self, key: slice) -> "_SimpleSequence":
+        if not isinstance(key, slice):
+            raise TypeError("BioScript pyfaidx native shim only supports slicing")
+        start = 0 if key.start is None else int(key.start)
+        if key.stop is None:
+            raise TypeError("BioScript pyfaidx native shim requires an explicit slice stop")
+        stop = int(key.stop)
+        return _SimpleSequence(
+            str(self._native.pyfaidx_fetch_native(str(self._path), self._contig, start, stop))
+        )
+
+
 def _read_fasta(path: Path) -> dict[str, str]:
     records: dict[str, str] = {}
     name: str | None = None
@@ -99,3 +124,11 @@ def _read_fasta(path: Path) -> dict[str, str]:
     if not records:
         raise ValueError("FASTA did not contain any records")
     return records
+
+
+def _native() -> Any:
+    try:
+        from . import _native as native
+    except ImportError as exc:
+        raise NotImplementedError("BioScript native pyfaidx backend is not installed") from exc
+    return native
