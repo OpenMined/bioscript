@@ -61,9 +61,12 @@ This is not just a facade spike. The finish line is:
       `PYTHONPATH=python:ports/vntyper/bioscript python -m unittest discover -s ports/vntyper/tests -p 'test_*.py'`.
       Verified 2026-05-14: 70 tests, 7 skipped. Skips are opt-in large-data or
       external-tool gates.
-- [ ] Establish opt-in commands for large-data parity gates:
+- [x] Establish opt-in commands for large-data parity gates:
       `BIOSCRIPT_RUN_EXTERNAL_BAM_PARITY=1`,
       `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1`, and any new FASTQ/native parity gate.
+      Documented in `docs/lib-support.md`. Added
+      `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1` via
+      `ports/vntyper/tests/test_native_fastq_pipeline_gate.py`.
 - [x] Add a short `docs/lib-support.md` or equivalent section documenting these
       gates so future work cannot silently regress the old BioScript behavior.
       See `docs/lib-support.md` "Verification Gates".
@@ -193,8 +196,10 @@ This is not just a facade spike. The finish line is:
 - [ ] Add BioScript runtime tests that execute the VNtyper BioScript program on
       tiny deterministic fixtures.
 - [ ] Add large-data opt-in parity tests for positive and negative BAM fixtures.
-- [ ] Add large-data opt-in parity tests for positive and negative FASTQ
+- [x] Add large-data opt-in parity tests for positive and negative FASTQ
       fixtures.
+      Added `test_native_fastq_pipeline_gate.py`, gated by
+      `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1`.
 - [ ] Compare generated `kestrel_result.tsv` to expected fixture output.
 - [ ] Compare generated `report.json` to expected fixture output, with explicit
       allowances for paths, timestamps, and tool-version metadata.
@@ -242,8 +247,10 @@ This is not just a facade spike. The finish line is:
 - [x] Keep `ports/vntyper/tests/data_manifest.py` as the single source for
       large fixture paths and expected output paths.
       Existing large-data gates and manifest tests route through this helper.
-- [ ] Add FASTQ native prerequisites to the manifest, parallel to the existing
+- [x] Add FASTQ native prerequisites to the manifest, parallel to the existing
       BAM native prerequisites.
+      Added `require_native_fastq_pipeline_prerequisites()` and
+      `REPRESENTATIVE_FASTQ_CASES` in `ports/vntyper/tests/data_manifest.py`.
 - [ ] Add or regenerate expected outputs for any checked-in representative
       FASTQ native fixtures.
 - [x] Keep `ports/vntyper/test-data` ignored except for README/manifest files.

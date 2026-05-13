@@ -77,5 +77,14 @@ BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 \
   python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate
 ```
 
-FASTQ native parity is still a target gate and should be added next to the BAM
-gate once Kestrel FASTQ fixture expectations are locked down.
+Opt-in large FASTQ parity:
+
+```sh
+BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 \
+  PYTHONPATH=python:ports/vntyper/bioscript \
+  python -m unittest ports.vntyper.tests.test_native_fastq_pipeline_gate
+```
+
+This gate runs native Kestrel and native BCFtools against representative
+positive and negative FASTQ fixtures, then compares the generated classification
+and report shape to expected VNtyper outputs.
