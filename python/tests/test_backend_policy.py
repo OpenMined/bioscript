@@ -25,6 +25,7 @@ class BackendPolicyTests(unittest.TestCase):
         self.assertIn("samtools-rs", samtools.BACKEND_POLICY.rust)
         self.assertIn("real pysam", pysam.BACKEND_POLICY.python)
         self.assertIn("pure Python FASTA fallback", pyfaidx.BACKEND_POLICY.auto)
+        self.assertIn("htslib-rs", pyfaidx.BACKEND_POLICY.rust)
 
     def test_selected_backend_reports_invalid_values(self) -> None:
         with patch.dict(os.environ, {"BIOSCRIPT_BACKEND": "bad"}):

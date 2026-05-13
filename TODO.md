@@ -205,8 +205,10 @@ uses those built-in primitives.
 - [x] Add Python tests that call the real native extension for each engine
       facade with tiny fixtures.
       `python/tests/test_tools.py` now exercises real `_native` calls for
-      Kestrel, Samtools, and BCFtools. `pysam` and `pyfaidx` remain documented
-      as pending Rust-backed shims rather than native engine facades.
+      Kestrel, Samtools, and BCFtools. `pyfaidx` now has a Rust-backend Python
+      wrapper around `pyfaidx_fetch_native` with mocked-extension coverage and
+      `bioscript-python` compile coverage; `pysam` remains documented as a
+      pending Python native facade.
 - [x] Keep mocked-extension tests for argument normalization and missing-native
       behavior.
 - [x] Make Python-only fallback behavior explicit per module:
