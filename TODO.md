@@ -138,8 +138,9 @@ uses those built-in primitives.
 - [ ] Add adapter tests for VCF input/output, compressed output, filter
       expressions used by VNtyper, and useful error messages.
       Initial coverage verifies `bcftools-rs` header extraction through
-      `bioscript-libs` and Python wrapper delegation. Broader filter/compressed
-      output coverage remains to add.
+      `bioscript-libs`, Python wrapper delegation, and the real PyO3 native
+      extension when installed. Broader filter/compressed output coverage
+      remains to add.
 
 ## HTS / Pysam / Pyfaidx Facades
 

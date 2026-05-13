@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -294,6 +296,38 @@ class ToolCommandTests(unittest.TestCase):
         with patch.dict("sys.modules", {"bioscript._native": None}):
             with self.assertRaises(NotImplementedError):
                 bcftools.view_header_native("calls.vcf", "header.vcf")
+
+    def test_bcftools_native_view_header_real_extension_extracts_header(self) -> None:
+        try:
+            import bioscript as bioscript_package
+
+            native = importlib.import_module("bioscript._native")
+        except ImportError as exc:
+            self.skipTest(f"BioScript native extension is not installed: {exc}")
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                input_vcf = Path(tmp) / "input.vcf"
+                output_vcf = Path(tmp) / "header.vcf"
+                input_vcf.write_text(
+                    "##fileformat=VCFv4.2\n"
+                    "##contig=<ID=chr1,length=16>\n"
+                    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+                    "chr1\t5\t.\tC\tT\t.\tPASS\t.\n",
+                    encoding="utf-8",
+                )
+
+                bcftools.view_header_native(str(input_vcf), str(output_vcf))
+
+                header = output_vcf.read_text(encoding="utf-8")
+        finally:
+            if getattr(bioscript_package, "_native", None) is native:
+                delattr(bioscript_package, "_native")
+            sys.modules.pop("bioscript._native", None)
+
+        self.assertIn("##fileformat=VCFv4.2\n", header)
+        self.assertIn("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n", header)
+        self.assertNotIn("chr1\t5\t.\tC\tT", header)
 
 
 if __name__ == "__main__":
