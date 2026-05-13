@@ -1,7 +1,7 @@
 use bioscript_core::{RuntimeError, VariantObservation, VariantSpec};
 
 use super::{
-    lookup_indexed_vcf_variants, scan_delimited_variants, scan_vcf_variants,
+    describe_query, lookup_indexed_vcf_variants, scan_delimited_variants, scan_vcf_variants,
     types::{DelimitedBackend, GenotypeSourceFormat, RsidMapBackend, VcfBackend},
 };
 
@@ -39,9 +39,30 @@ impl RsidMapBackend {
             }
         }
 
+        if let Some(locus) = variant.grch38.as_ref().or(variant.grch37.as_ref())
+            && let Some((value, matched_rsid, source)) = self.locus_values.get(&(
+                locus.chrom.trim_start_matches("chr").to_ascii_lowercase(),
+                locus.start,
+            ))
+        {
+            return Ok(VariantObservation {
+                backend: self.backend_name().to_owned(),
+                matched_rsid: matched_rsid.clone(),
+                genotype: Some(value.clone()),
+                evidence: vec![
+                    format!("resolved by locus {}:{}", locus.chrom, locus.start),
+                    format!("source line: {source}"),
+                ],
+                ..VariantObservation::default()
+            });
+        }
+
         Ok(VariantObservation {
             backend: self.backend_name().to_owned(),
-            evidence: vec!["no matching rsid found".to_owned()],
+            evidence: vec![format!(
+                "no matching rsid or locus found for {}",
+                describe_query(variant)
+            )],
             ..VariantObservation::default()
         })
     }

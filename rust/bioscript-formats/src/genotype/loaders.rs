@@ -4,7 +4,7 @@ use bioscript_core::RuntimeError;
 
 use super::{
     COMMENT_PREFIXES, GenotypeSourceFormat, GenotypeStore, QueryBackend, RowParser, RsidMapBackend,
-    detect_delimiter, vcf_tokens::genotype_from_vcf_gt,
+    delimited::sanitize_evidence_line, detect_delimiter, vcf_tokens::genotype_from_vcf_gt,
 };
 
 pub(crate) fn from_vcf_reader<R: BufRead>(
@@ -27,6 +27,7 @@ pub(crate) fn from_vcf_reader<R: BufRead>(
     Ok(from_rsid_map(
         GenotypeSourceFormat::Vcf,
         values,
+        HashMap::new(),
         HashMap::new(),
     ))
 }
@@ -64,9 +65,10 @@ pub(crate) fn from_delimited_reader<R: BufRead>(
 
     let mut parser = RowParser::new(delimiter.unwrap_or(super::Delimiter::Tab));
     let mut values = HashMap::new();
+    let mut locus_values = HashMap::new();
     let mut source_lines = HashMap::new();
     for line in prelude {
-        consume_delimited_line(&mut parser, &line, &mut values, &mut source_lines)?;
+        consume_delimited_line(&mut parser, &line, &mut values, &mut locus_values, &mut source_lines)?;
     }
     loop {
         buf.clear();
@@ -80,11 +82,12 @@ pub(crate) fn from_delimited_reader<R: BufRead>(
             &mut parser,
             buf.trim_end_matches(['\n', '\r']),
             &mut values,
+            &mut locus_values,
             &mut source_lines,
         )?;
     }
 
-    Ok(from_rsid_map(format, values, source_lines))
+    Ok(from_rsid_map(format, values, locus_values, source_lines))
 }
 
 pub(crate) fn from_vcf_lines(lines: Vec<String>) -> Result<GenotypeStore, RuntimeError> {
@@ -95,6 +98,7 @@ pub(crate) fn from_vcf_lines(lines: Vec<String>) -> Result<GenotypeStore, Runtim
     Ok(from_rsid_map(
         GenotypeSourceFormat::Vcf,
         values,
+        HashMap::new(),
         HashMap::new(),
     ))
 }
@@ -135,12 +139,21 @@ fn consume_delimited_line(
     parser: &mut RowParser,
     line: &str,
     values: &mut HashMap<String, String>,
+    locus_values: &mut HashMap<(String, i64), (String, Option<String>, String)>,
     source_lines: &mut HashMap<String, String>,
 ) -> Result<(), RuntimeError> {
-    let trimmed = line.trim().to_owned();
-    if let Some((rsid, genotype)) = parser.consume_line(line)? {
-        values.insert(rsid.clone(), genotype);
-        source_lines.insert(rsid, trimmed);
+    if let Some(row) = parser.consume_record(line)? {
+        let source_line = sanitize_evidence_line(line);
+        if let (Some(chrom), Some(position)) = (row.chrom.as_ref(), row.position) {
+            locus_values.insert(
+                (chrom.trim_start_matches("chr").to_ascii_lowercase(), position),
+                (row.genotype.clone(), row.rsid.clone(), source_line.clone()),
+            );
+        }
+        if let Some(rsid) = row.rsid {
+            values.insert(rsid.clone(), row.genotype);
+            source_lines.insert(rsid, source_line);
+        }
     }
     Ok(())
 }
@@ -148,12 +161,14 @@ fn consume_delimited_line(
 fn from_rsid_map(
     format: GenotypeSourceFormat,
     values: HashMap<String, String>,
+    locus_values: HashMap<(String, i64), (String, Option<String>, String)>,
     source_lines: HashMap<String, String>,
 ) -> GenotypeStore {
     GenotypeStore {
         backend: QueryBackend::RsidMap(RsidMapBackend {
             format,
             values,
+            locus_values,
             source_lines,
         }),
     }

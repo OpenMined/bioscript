@@ -71,6 +71,8 @@ pub(super) struct ReportOptionsInput {
     detect_sex: bool,
     #[serde(default)]
     filters: Vec<String>,
+    #[serde(default)]
+    output_dir: Option<String>,
     /// Optional explicit sample sex (mirrors the CLI's `--sample-sex` flag).
     /// When set, takes precedence over inference: the report carries
     /// `method=explicit_sample_sex` like the CLI.
@@ -181,13 +183,11 @@ pub fn run_package_report_bytes(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let analysis_observations =
-        analysis_cache_observations(&manifest_output.observations, &observations);
     let analyses = workspace.run_manifest_analyses(
         manifest_path,
         input_name,
         input_bytes,
-        &analysis_observations,
+        &[],
         &participant_id,
         &loader,
         &options,

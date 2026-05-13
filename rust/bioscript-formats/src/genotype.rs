@@ -120,6 +120,7 @@ impl GenotypeStore {
             backend: QueryBackend::RsidMap(RsidMapBackend {
                 format: GenotypeSourceFormat::Text,
                 values: HashMap::new(),
+                locus_values: HashMap::new(),
                 source_lines: HashMap::new(),
             }),
         }
@@ -465,17 +466,18 @@ fn match_cached_observation<'a>(
     }) {
         return Some(matched);
     }
-    let assembly_loci = [spec.grch37.as_ref(), spec.grch38.as_ref()];
+    let assembly_loci = [spec.grch37.as_ref(), spec.grch38.as_ref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     let target_ref = spec.reference.as_deref();
     let target_alt = spec.alternate.as_deref();
     observations.iter().find(|obs| {
-        let Some(loci) = assembly_loci.iter().find_map(|l| *l) else {
-            return false;
-        };
-        let evidence_match = obs
-            .evidence
-            .iter()
-            .any(|line| line.contains(&loci.chrom) && line.contains(&loci.start.to_string()));
+        let evidence_match = assembly_loci.iter().any(|loci| {
+            obs.evidence
+                .iter()
+                .any(|line| line.contains(&loci.chrom) && line.contains(&loci.start.to_string()))
+        });
         if !evidence_match {
             return false;
         }
@@ -660,6 +662,34 @@ mod tests {
         assert_eq!(variant_sort_key(&variant).0, 0);
         assert_eq!(describe_query(&variant), "variant_by_locus");
         assert_eq!(describe_query(&VariantSpec::default()), "variant_by_rsid");
+    }
+
+    #[test]
+    fn cached_observation_match_checks_all_variant_assemblies() {
+        let spec = VariantSpec {
+            rsids: vec!["rs60910145".to_owned()],
+            grch37: Some(locus("22", 36_662_034, 36_662_034)),
+            grch38: Some(locus("22", 36_265_988, 36_265_988)),
+            reference: Some("T".to_owned()),
+            alternate: Some("G".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        };
+        let observations = vec![VariantObservation {
+            backend: "cram".to_owned(),
+            matched_rsid: None,
+            assembly: Some(Assembly::Grch38),
+            genotype: Some("TT".to_owned()),
+            evidence: vec![
+                "observed SNP pileup at 22:36265988-36265988 ref=T alt=G".to_owned(),
+            ],
+            ..VariantObservation::default()
+        }];
+
+        let matched = match_cached_observation(&observations, &spec)
+            .expect("GRCh38 observation should match even when GRCh37 is listed first");
+
+        assert_eq!(matched.genotype.as_deref(), Some("TT"));
     }
 
     #[test]

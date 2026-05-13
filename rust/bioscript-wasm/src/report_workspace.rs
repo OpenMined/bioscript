@@ -246,7 +246,7 @@ impl PackageWorkspace {
         let depth = parse_optional_u32(row.get("depth"));
         let ref_count = parse_optional_u32(row.get("ref_count"));
         let alt_count = parse_optional_u32(row.get("alt_count"));
-        let genotype_display = deletion_copy_number_display(row, &manifest, depth, alt_count)
+        let raw_genotype_display = deletion_copy_number_display(row, &manifest, depth, alt_count)
             .or_else(|| row.get("genotype").cloned())
             .unwrap_or_default();
         let assembly = row
@@ -266,7 +266,7 @@ impl PackageWorkspace {
         };
         let chrom = locus.map_or(String::new(), |locus| locus.chrom.clone());
         let (genotype, zygosity) = normalize_app_genotype(
-            &genotype_display,
+            &raw_genotype_display,
             &ref_allele,
             &alt_allele,
             manifest.spec.kind,
@@ -281,6 +281,12 @@ impl PackageWorkspace {
             "variant"
         } else {
             "unknown"
+        };
+        let evidence_raw = observation_evidence_raw(row, &chrom, inferred_sex);
+        let genotype_display = if raw_genotype_display.is_empty() && matches!(outcome, "no_call" | "not_covered") {
+            "??".to_owned()
+        } else {
+            raw_genotype_display.clone()
         };
         Ok(serde_json::json!({
             "participant_id": row.get("participant_id").cloned().unwrap_or_default(),
@@ -297,7 +303,7 @@ impl PackageWorkspace {
             "ref": ref_allele,
             "alt": alt_allele,
             "kind": manifest.spec.kind.map_or("unknown".to_owned(), |kind| format!("{kind:?}").to_lowercase()),
-            "match_status": if row.get("matched_rsid").is_some_and(|value| !value.is_empty()) || !genotype_display.is_empty() { "found" } else { "not_found" },
+            "match_status": if row.get("matched_rsid").is_some_and(|value| !value.is_empty()) || !raw_genotype_display.is_empty() { "found" } else { "not_found" },
             "coverage_status": "covered",
             "call_status": if genotype == "./." { "no_call" } else { "called" },
             "genotype": genotype,
@@ -310,7 +316,7 @@ impl PackageWorkspace {
             "allele_balance": serde_json::Value::Null,
             "outcome": outcome,
             "evidence_type": "genotype_file",
-            "evidence_raw": row.get("evidence").cloned().unwrap_or_default(),
+            "evidence_raw": evidence_raw,
             "source": variant_primary_source_from_yaml(&value),
             "facets": serde_json::Value::Null,
         }))
@@ -462,4 +468,66 @@ impl PackageWorkspace {
         }
         Ok(links.into_values().collect())
     }
+}
+
+fn observation_evidence_raw(
+    row: &BTreeMap<String, String>,
+    chrom: &str,
+    inferred_sex: Option<&SexInference>,
+) -> String {
+    let mut evidence_raw = row.get("evidence").cloned().unwrap_or_default();
+    if !is_haploid_sex_chromosome(chrom) {
+        return evidence_raw;
+    }
+    let Some(inferred_sex) = inferred_sex else {
+        return evidence_raw;
+    };
+    let sex_evidence = sex_inference_evidence_raw(inferred_sex);
+    if sex_evidence.is_empty() {
+        return evidence_raw;
+    }
+    if evidence_raw.is_empty() {
+        evidence_raw = sex_evidence;
+    } else {
+        evidence_raw.push_str(" | ");
+        evidence_raw.push_str(&sex_evidence);
+    }
+    evidence_raw
+}
+
+fn sex_inference_evidence_raw(inferred_sex: &SexInference) -> String {
+    let sex = match inferred_sex.sex {
+        InferredSex::Male => "male",
+        InferredSex::Female => "female",
+        InferredSex::Unknown => "unknown",
+    };
+    let confidence = match inferred_sex.confidence {
+        SexDetectionConfidence::High => "high",
+        SexDetectionConfidence::Medium => "medium",
+        SexDetectionConfidence::Low => "low",
+    };
+    let mut fields = vec![
+        format!("detected_sex={sex}"),
+        format!("sex_confidence={confidence}"),
+        format!("sex_method={}", inferred_sex.method),
+    ];
+    fields.extend(
+        inferred_sex
+            .evidence
+            .iter()
+            .map(|item| format!("sex_{item}")),
+    );
+    fields.join(" ")
+}
+
+fn is_haploid_sex_chromosome(chrom: &str) -> bool {
+    matches!(
+        chrom
+            .trim()
+            .trim_start_matches("chr")
+            .trim_start_matches("CHR")
+            .to_ascii_uppercase()
+            .as_str(),
+        "X" | "Y" | "23" | "24"
+    )
 }

@@ -85,11 +85,17 @@ impl PackageWorkspace {
                 )));
             }
             let script_path = self.resolve(manifest_path, &interpretation.path)?;
-            let output_file = format!(
+            let analysis_output_file = format!(
                 "analysis/{participant_id}/{}.{}",
                 interpretation.id,
                 interpretation.output_format.as_deref().unwrap_or("json")
             );
+            let output_file = options
+                .output_dir
+                .as_deref()
+                .filter(|dir| !dir.is_empty())
+                .map(|dir| format!("{}/{}", dir.trim_end_matches('/'), analysis_output_file))
+                .unwrap_or(analysis_output_file);
             let mut virtual_text_files = self.files.clone();
             let mut virtual_binary_files = BTreeMap::new();
             virtual_binary_files.insert(input_name.to_owned(), input_bytes.to_vec());
