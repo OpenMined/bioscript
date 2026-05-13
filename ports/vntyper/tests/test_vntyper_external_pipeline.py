@@ -74,7 +74,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                 "bioscript.samtools.view_region_native",
                 "bioscript.samtools.fastq_native",
                 "bioscript.samtools.depth_native",
-                "bioscript.kestrel.call_fastq_references_native",
+                "bioscript.kestrel.run_native",
             ],
         )
         self.assertEqual(result.commands[-1][-1], "work/sample1/kestrel/output.vcf")
@@ -205,13 +205,10 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                     return {"mean": 10.0, "median": 10.0, "region_length": 1}
 
             class FakeNativeKestrel:
-                def load_reference_regions(self, path):
-                    calls.append(("load_refs", path))
-                    return [("MUC1", "ACGT", "md5")]
-
-                def call_fastq_references_native(self, references, fastqs, kmer_size, **kwargs):
-                    calls.append(("kestrel", references, fastqs, kmer_size, kwargs))
-                    return FIXTURE_VCF.read_text(encoding="utf-8")
+                def run_native(self, reference_fasta, fastqs, output_vcf, **kwargs):
+                    calls.append(("kestrel", reference_fasta, fastqs, output_vcf, kwargs))
+                    shutil.copyfile(FIXTURE_VCF, output_vcf)
+                    return output_vcf
 
             result = vntyper_external_pipeline.run_bam_pipeline(
                 "sample.bam",
@@ -223,7 +220,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                 native_kestrel=FakeNativeKestrel(),
             )
 
-            self.assertEqual([call[0] for call in calls], ["view", "fastq", "depth", "load_refs", "kestrel"])
+            self.assertEqual([call[0] for call in calls], ["view", "fastq", "depth", "kestrel"])
             self.assertEqual(calls[-1][4]["max_haplotypes"], 2)
             self.assertEqual(calls[-1][4]["max_saved_states"], 2)
             self.assertEqual(calls[-1][4]["max_bases"], 120)
@@ -231,7 +228,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
             with open(result.report_json, "r", encoding="utf-8") as handle:
                 report = json.load(handle)
             self.assertEqual(report["metadata"]["alignment_pipeline"], "native bioscript samtools/kestrel")
-            self.assertEqual(report["pipeline_log"][-1]["command"][0], "bioscript.kestrel.call_fastq_references_native")
+            self.assertEqual(report["pipeline_log"][-1]["command"][0], "bioscript.kestrel.run_native")
 
     def test_coverage_from_depth_ignores_malformed_lines(self):
         coverage = vntyper_external_pipeline.coverage_from_depth(
@@ -274,13 +271,10 @@ class VntyperExternalPipelineTests(unittest.TestCase):
             calls = []
 
             class FakeNativeKestrel:
-                def load_reference_regions(self, path):
-                    calls.append(("load_refs", path))
-                    return [("MUC1", "ACGT", "md5")]
-
-                def call_fastq_references_native(self, references, fastqs, kmer_size, **kwargs):
-                    calls.append(("kestrel", references, fastqs, kmer_size, kwargs))
-                    return FIXTURE_VCF.read_text(encoding="utf-8")
+                def run_native(self, reference_fasta, fastqs, output_vcf, **kwargs):
+                    calls.append(("kestrel", reference_fasta, fastqs, output_vcf, kwargs))
+                    shutil.copyfile(FIXTURE_VCF, output_vcf)
+                    return output_vcf
 
             result = vntyper_external_pipeline.run_fastq_kestrel(
                 "sample_R1.fastq.gz",
@@ -291,7 +285,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                 native_kestrel=FakeNativeKestrel(),
             )
 
-            self.assertEqual([call[0] for call in calls], ["load_refs", "kestrel"])
+            self.assertEqual([call[0] for call in calls], ["kestrel"])
             self.assertEqual(calls[-1][4]["max_haplotypes"], 2)
             self.assertTrue(Path(result.kestrel_tsv).exists())
             with open(result.report_json, "r", encoding="utf-8") as handle:

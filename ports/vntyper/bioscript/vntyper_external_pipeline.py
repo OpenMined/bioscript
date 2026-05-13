@@ -216,7 +216,7 @@ def native_kestrel_command(
     muc1_reference: str,
 ) -> list[str]:
     return [
-        "bioscript.kestrel.call_fastq_references_native",
+        "bioscript.kestrel.run_native",
         muc1_reference,
         plan.fastq_1,
         plan.fastq_2,
@@ -231,17 +231,16 @@ def run_native_kestrel(
     plan: vntyper_commands.VntyperCommandPlan,
     output_vcf: str,
 ) -> None:
-    references = backend.load_reference_regions(muc1_reference)
-    vcf = backend.call_fastq_references_native(
-        references,
+    backend.run_native(
+        muc1_reference,
         [plan.fastq_1, plan.fastq_2],
-        20,
+        output_vcf,
+        kmer_size=20,
         sample_name=plan.participant_id,
         max_haplotypes=NATIVE_KESTREL_MAX_HAPLOTYPES,
         max_saved_states=NATIVE_KESTREL_MAX_SAVED_STATES,
         max_bases=NATIVE_KESTREL_MAX_BASES,
     )
-    Path(output_vcf).write_text(vcf, encoding="utf-8")
 
 
 def alignment_pipeline_label(use_native_samtools: bool, use_native_kestrel: bool) -> str:
@@ -337,7 +336,7 @@ def native_kestrel_fastq_command(
     output_vcf: str,
 ) -> list[str]:
     return [
-        "bioscript.kestrel.call_fastq_references_native",
+        "bioscript.kestrel.run_native",
         muc1_reference,
         fastq_1,
         fastq_2,
