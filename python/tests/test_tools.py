@@ -75,7 +75,7 @@ class ToolCommandTests(unittest.TestCase):
 
         def call_sequences(*args):
             calls.append(args)
-            return "##fileformat=VCF4.2\n"
+            return "##fileformat=VCFv4.2\n"
 
         fake_native = SimpleNamespace(kestrel_call_sequences_native=call_sequences)
         with patch.dict("sys.modules", {"bioscript._native": fake_native}):
@@ -90,7 +90,7 @@ class ToolCommandTests(unittest.TestCase):
                     difference_quantile=0.0,
                     locus_depth=10,
                 ),
-                "##fileformat=VCF4.2\n",
+                "##fileformat=VCFv4.2\n",
             )
         self.assertEqual(
             calls,
@@ -128,7 +128,7 @@ class ToolCommandTests(unittest.TestCase):
 
         def call_fastq(*args):
             calls.append(args)
-            return "##fileformat=VCF4.2\n"
+            return "##fileformat=VCFv4.2\n"
 
         fake_native = SimpleNamespace(kestrel_call_fastq_native=call_fastq)
         with patch.dict("sys.modules", {"bioscript._native": fake_native}):
@@ -143,7 +143,7 @@ class ToolCommandTests(unittest.TestCase):
                     difference_quantile=0.0,
                     locus_depth=10,
                 ),
-                "##fileformat=VCF4.2\n",
+                "##fileformat=VCFv4.2\n",
             )
         self.assertEqual(calls[0][0:5], ("MUC1", "ACGT", ["reads.fastq"], 3, "sample1"))
 
@@ -152,7 +152,7 @@ class ToolCommandTests(unittest.TestCase):
 
         def call_fastq_references(*args):
             calls.append(args)
-            return "##fileformat=VCF4.2\n"
+            return "##fileformat=VCFv4.2\n"
 
         fake_native = SimpleNamespace(kestrel_call_fastq_references_native=call_fastq_references)
         with patch.dict("sys.modules", {"bioscript._native": fake_native}):
@@ -166,7 +166,7 @@ class ToolCommandTests(unittest.TestCase):
                     difference_quantile=0.0,
                     locus_depth=10,
                 ),
-                "##fileformat=VCF4.2\n",
+                "##fileformat=VCFv4.2\n",
             )
         self.assertEqual(
             calls[0][0:5],
@@ -212,7 +212,7 @@ class ToolCommandTests(unittest.TestCase):
                 self.assertEqual(args[0], [("REF1", "ACGT", "f1f8f4bf413b16ad135722aa4591043e")])
                 self.assertEqual(args[1], ["reads.fastq"])
                 self.assertEqual(args[2], 4)
-                return "##fileformat=VCF4.2\n#CHROM\tPOS\n"
+                return "##fileformat=VCFv4.2\n#CHROM\tPOS\n"
 
             fake_native = SimpleNamespace(kestrel_call_fastq_references_native=call_fastq_references)
             with patch.dict("sys.modules", {"bioscript._native": fake_native}):
@@ -221,7 +221,7 @@ class ToolCommandTests(unittest.TestCase):
                     str(output),
                 )
 
-            self.assertEqual(output.read_text(encoding="utf-8"), "##fileformat=VCF4.2\n#CHROM\tPOS\n")
+            self.assertEqual(output.read_text(encoding="utf-8"), "##fileformat=VCFv4.2\n#CHROM\tPOS\n")
 
     def test_kestrel_native_sequences_wrapper_reports_missing_extension(self) -> None:
         with patch.dict("sys.modules", {"bioscript._native": None}):
@@ -256,7 +256,7 @@ class ToolCommandTests(unittest.TestCase):
                 delattr(bioscript_package, "_native")
             sys.modules.pop("bioscript._native", None)
 
-        self.assertIn("##fileformat=VCF4.2\n", vcf)
+        self.assertIn("##fileformat=VCFv4.2\n", vcf)
         self.assertIn("##contig=<ID=chr1,length=16", vcf)
         self.assertIn("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1", vcf)
         self.assertIn("chr1\t5\t.\tC\tT", vcf)
