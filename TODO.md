@@ -266,7 +266,7 @@ This is not just a facade spike. The finish line is:
       `test_view_bam_as_fastq_split_routes_missing_mates_to_singletons`.
       Verified with
       `BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_samtools_fastq_oracle`.
-- [ ] `kestrel-rs`: run VNtyper FASTQ positive/negative fixtures and compare
+- [x] `kestrel-rs`: run VNtyper FASTQ positive/negative fixtures and compare
       VCF records against Java Kestrel expected outputs.
       Attempted 2026-05-14 via
       `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_fastq_pipeline_gate`.
@@ -275,8 +275,16 @@ This is not just a facade spike. The finish line is:
       Reconfirmed after the samtools FASTQ singleton fix and native extension
       rebuild: the same negative FASTQ classification mismatch remains, so this
       is still a `kestrel-rs`/Kestrel-output parity issue.
-- [ ] `kestrel-rs`: any Java parity gaps should be reduced into
+- [x] `kestrel-rs`: any Java parity gaps should be reduced into
       `vendor/rust/kestrel-rs` tests, not hidden in BioScript tests.
+      Added opt-in vendor test
+      `crates/kestrel/tests/vntyper_fastq_parity.rs`, gated by
+      `KESTREL_RUN_VNTYPER_FASTQ_PARITY=1`. It runs the representative
+      positive and negative VNtyper FASTQ fixtures through `kestrel-rs`
+      directly and compares VCF records with the Java-generated expected VCFs.
+      Current expected failures:
+      `positive` has 2417 Rust records vs 3737 expected Java records;
+      `negative` has 2322 Rust records vs 4897 expected Java records.
 - [x] `bcftools-rs`: confirm the VNtyper-required sort/compress/index path is
       complete for all generated VCFs.
       Confirmed for tiny Kestrel-generated VCFs in
