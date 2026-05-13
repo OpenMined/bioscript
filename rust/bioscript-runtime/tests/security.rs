@@ -219,6 +219,48 @@ if __name__ == "__main__":
 }
 
 #[test]
+fn bioscript_bcftools_native_methods_materialize_outputs() {
+    let dir = temp_dir("bcftools-native-methods");
+    let runtime = run_script_with_inputs(
+        &dir,
+        r###"
+from bioscript import bcftools
+
+def main():
+    bioscript.write_text(
+        "calls.vcf",
+        "##fileformat=VCFv4.2\n"
+        + "##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+        + "##contig=<ID=chr1,length=1000>\n"
+        + "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+        + "chr1\t5\t.\tC\tT\t.\tPASS\t.\n",
+    )
+    bcftools.view_header_native("calls.vcf", "header.vcf")
+    bcftools.view_native("calls.vcf", "calls.vcf.gz", "z")
+    bcftools.index_native("calls.vcf.gz", "calls.vcf.gz.tbi", True, True)
+
+if __name__ == "__main__":
+    main()
+"###,
+        Vec::new(),
+    )
+    .unwrap();
+
+    let header = fs::read_to_string(dir.join("header.vcf")).unwrap();
+    assert!(header.contains("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"));
+    assert!(!header.contains("chr1\t5\t.\tC\tT"));
+    assert!(fs::metadata(dir.join("calls.vcf.gz")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("calls.vcf.gz.tbi")).unwrap().len() > 0);
+    let timings = runtime.timing_snapshot();
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=bcftools.view_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=bcftools.index_native")
+    }));
+}
+
+#[test]
 fn bioscript_vcf_read_kestrel_returns_records() {
     let dir = temp_dir("vcf-read-kestrel");
     fs::write(
