@@ -89,6 +89,24 @@ impl GenotypeStore {
             backend: QueryBackend::Cached {
                 observations,
                 fallback: Box::new(fallback.backend),
+                require_hit: false,
+            },
+        }
+    }
+
+    /// Wrap an existing store with a required cache of pre-resolved
+    /// observations. Unlike `with_cached_observations`, lookup misses are
+    /// errors. Report analysis uses this to avoid silently producing analysis
+    /// output from a different lookup path than the observations table.
+    pub fn with_required_cached_observations(
+        observations: Vec<VariantObservation>,
+        fallback: GenotypeStore,
+    ) -> Self {
+        Self {
+            backend: QueryBackend::Cached {
+                observations,
+                fallback: Box::new(fallback.backend),
+                require_hit: true,
             },
         }
     }
@@ -323,12 +341,19 @@ impl GenotypeStore {
             QueryBackend::Cached {
                 observations,
                 fallback,
+                require_hit,
             } => {
                 if let Some(matched) = observations
                     .iter()
                     .find(|obs| obs.matched_rsid.as_deref().is_some_and(|r| r == rsid))
                 {
                     return Ok(matched.genotype.clone());
+                }
+                if *require_hit {
+                    return Err(required_cache_miss(&VariantSpec {
+                        rsids: vec![rsid.to_owned()],
+                        ..VariantSpec::default()
+                    }));
                 }
                 let inner = GenotypeStore {
                     backend: (**fallback).clone(),
@@ -350,9 +375,13 @@ impl GenotypeStore {
             QueryBackend::Cached {
                 observations,
                 fallback,
+                require_hit,
             } => {
                 if let Some(hit) = match_cached_observation(observations, variant) {
                     return Ok(hit.clone());
+                }
+                if *require_hit {
+                    return Err(required_cache_miss(variant));
                 }
                 let inner = GenotypeStore {
                     backend: (**fallback).clone(),
@@ -369,6 +398,7 @@ impl GenotypeStore {
         if let QueryBackend::Cached {
             observations,
             fallback,
+            require_hit,
         } = &self.backend
         {
             // Resolve cache hits up-front; only round-trip the fallback for
@@ -381,6 +411,9 @@ impl GenotypeStore {
                 if let Some(hit) = match_cached_observation(observations, spec) {
                     results[idx] = Some(hit.clone());
                 } else {
+                    if *require_hit {
+                        return Err(required_cache_miss(spec));
+                    }
                     miss_indices.push(idx);
                     miss_specs.push(spec.clone());
                 }
@@ -454,6 +487,29 @@ fn match_cached_observation<'a>(
             _ => true,
         }
     })
+}
+
+fn required_cache_miss(spec: &VariantSpec) -> RuntimeError {
+    let rsids = if spec.rsids.is_empty() {
+        "<none>".to_owned()
+    } else {
+        spec.rsids.join("|")
+    };
+    let loci = [
+        spec.grch37
+            .as_ref()
+            .map(|locus| format!("grch37:{}:{}-{}", locus.chrom, locus.start, locus.end)),
+        spec.grch38
+            .as_ref()
+            .map(|locus| format!("grch38:{}:{}-{}", locus.chrom, locus.start, locus.end)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(",");
+    RuntimeError::InvalidArguments(format!(
+        "required preloaded genotype observation missing for rsids={rsids} loci={loci}"
+    ))
 }
 
 #[cfg(test)]

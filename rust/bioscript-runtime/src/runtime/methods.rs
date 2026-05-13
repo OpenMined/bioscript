@@ -51,13 +51,12 @@ impl BioscriptRuntime {
         // Layer pre-resolved observations on top of whatever backend the path
         // resolves to. The report pipeline collects every variant the panel
         // declares before running analyses, so `genotypes.lookup_variants(...)`
-        // hits the cache and we don't re-walk the genome inside Python. On a
-        // miss (script asks about a novel rsid) we fall through to the inner
-        // store — same behavior as before this cache existed.
+        // must hit this cache. A miss is an error: falling through to a second
+        // lookup path can make analysis disagree with the observations table.
         let store = if self.config.preloaded_observations.is_empty() {
             inner_store
         } else {
-            GenotypeStore::with_cached_observations(
+            GenotypeStore::with_required_cached_observations(
                 self.config.preloaded_observations.clone(),
                 inner_store,
             )

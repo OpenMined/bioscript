@@ -26,6 +26,7 @@ pub(crate) enum QueryBackend {
     Cached {
         observations: Vec<VariantObservation>,
         fallback: Box<QueryBackend>,
+        require_hit: bool,
     },
 }
 
