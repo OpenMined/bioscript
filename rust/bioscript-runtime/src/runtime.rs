@@ -14,6 +14,7 @@ mod dispatch;
 mod genotype_load;
 mod host_io;
 mod imports;
+mod kestrel_native_methods;
 mod lib_methods;
 mod methods;
 mod objects;

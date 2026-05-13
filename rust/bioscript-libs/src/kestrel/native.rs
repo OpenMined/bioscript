@@ -123,6 +123,53 @@ pub fn call_fastq_paths_to_vcf_references<'a>(
     run_kestrel_to_string(&temp, &[reference_path], &fastq_paths, kmer_size, options)
 }
 
+pub fn load_reference_regions(path: &Path) -> LibResult<Vec<NativeReferenceRegion>> {
+    let content = std::fs::read_to_string(path).map_err(io_error)?;
+    let mut records = Vec::new();
+    let mut current_name: Option<String> = None;
+    let mut current_sequence = String::new();
+
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(header) = line.strip_prefix('>') {
+            if let Some(name) =
+                current_name.replace(header.split_whitespace().next().unwrap_or("").to_owned())
+            {
+                records.push(NativeReferenceRegion::new(
+                    name,
+                    std::mem::take(&mut current_sequence),
+                    ".",
+                ));
+            }
+        } else {
+            if current_name.is_none() {
+                return Err(LibError::InvalidArguments(
+                    "FASTA sequence appeared before a record header".to_owned(),
+                ));
+            }
+            current_sequence.push_str(line);
+        }
+    }
+
+    if let Some(name) = current_name {
+        records.push(NativeReferenceRegion::new(name, current_sequence, "."));
+    }
+    if records.is_empty() {
+        return Err(LibError::InvalidArguments(format!(
+            "FASTA file contains no records: {}",
+            path.display()
+        )));
+    }
+    for record in &records {
+        validate_name(&record.reference_name)?;
+        validate_sequence(&record.sequence)?;
+    }
+    Ok(records)
+}
+
 fn run_kestrel_to_string(
     temp: &TempDir,
     reference_paths: &[PathBuf],

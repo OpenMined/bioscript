@@ -224,7 +224,8 @@ Each Python shim exposes `BACKEND_POLICY`, a `ModuleBackendPolicy` with `auto`,
   `fastq_native(bam, region, ...)`. `plan_*` remains the command-planning
   surface.
 - `kestrel`: `plan_command` is the command-planning surface. Native execution
-  currently uses explicit low-level helpers such as `run_native` /
+  uses `kestrel.run_native(reference_fasta, fastq_paths, output_vcf, ...)` in
+  the BioScript runtime, or lower-level Python helpers such as `run_native` /
   `call_fastq_references_native`.
 - Python shim modules keep command-builder compatibility names for now; native
   helpers still require `bioscript._native`.
