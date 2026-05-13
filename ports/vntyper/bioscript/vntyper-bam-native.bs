@@ -51,6 +51,8 @@ def main():
             "kestrel_tsv": kestrel_tsv,
         },
         rows,
+        {"alignment_pipeline": "native bioscript samtools/kestrel"},
+        depth_summary,
     )
     bioscript.write_text(report_json, report_json_text)
 

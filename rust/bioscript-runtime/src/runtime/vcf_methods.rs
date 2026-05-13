@@ -46,17 +46,36 @@ impl BioscriptRuntime {
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
         reject_kwargs(kwargs, "vcf.build_vntyper_report_json")?;
-        if args.len() != 4 {
+        if !(4..=6).contains(&args.len()) {
             return Err(RuntimeError::InvalidArguments(
-                "vcf.build_vntyper_report_json expects sample_name, input_files, rows".to_owned(),
+                "vcf.build_vntyper_report_json expects sample_name, input_files, rows, optional metadata, and optional coverage".to_owned(),
             ));
         }
         let sample_name = expect_string_arg(args, 1, "vcf.build_vntyper_report_json")?;
         let input_files = string_dict(&args[2], "vcf.build_vntyper_report_json input_files")?;
         let rows = row_dicts(&args[3], "vcf.build_vntyper_report_json rows")?;
-        let report = vcf::vntyper_report_json(&sample_name, &input_files, &rows)
-            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        let metadata = optional_string_dict(args, 4, "vcf.build_vntyper_report_json metadata")?;
+        let coverage = optional_string_dict(args, 5, "vcf.build_vntyper_report_json coverage")?;
+        let report = vcf::vntyper_report_json_with_context(
+            &sample_name,
+            &input_files,
+            &rows,
+            &metadata,
+            &coverage,
+        )
+        .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
         Ok(MontyObject::String(report))
+    }
+}
+
+fn optional_string_dict(
+    args: &[MontyObject],
+    idx: usize,
+    context: &str,
+) -> Result<vcf::VcfRecord, RuntimeError> {
+    match args.get(idx) {
+        None | Some(MontyObject::None) => Ok(vcf::VcfRecord::new()),
+        Some(value) => string_dict(value, context),
     }
 }
 

@@ -19,38 +19,49 @@ pub fn vntyper_report_json(
     input_files: &VcfRecord,
     rows: &[VcfRecord],
 ) -> LibResult<String> {
-    let quality_pass = true;
+    vntyper_report_json_with_context(
+        sample_name,
+        input_files,
+        rows,
+        &VcfRecord::new(),
+        &VcfRecord::new(),
+    )
+}
+
+pub fn vntyper_report_json_with_context(
+    sample_name: &str,
+    input_files: &VcfRecord,
+    rows: &[VcfRecord],
+    metadata: &VcfRecord,
+    coverage: &VcfRecord,
+) -> LibResult<String> {
+    let coverage_qc = coverage_json(coverage);
+    let quality_pass = coverage_quality_pass(coverage);
     let kestrel_result = compute_kestrel_result(rows);
     let screening_summary = screening_summary(&kestrel_result, quality_pass);
     let best_call = best_kestrel_call(rows).map(best_call_json);
+    let report_date = metadata_value(metadata, "report_date", "runtime-generated");
+    let alignment_pipeline = metadata_value(
+        metadata,
+        "alignment_pipeline",
+        "native bioscript kestrel from FASTQ",
+    );
     let value = serde_json::json!({
         "sample_name": sample_name,
         "version": "bioscript-vntyper-port",
-        "report_date": "runtime-generated",
+        "report_date": report_date,
         "metadata": {
             "sample_name": sample_name,
             "vntyper_version": "bioscript-vntyper-port",
-            "report_date": "runtime-generated",
+            "report_date": report_date,
             "input_files": input_files,
-            "alignment_pipeline": "native bioscript kestrel from FASTQ",
-            "detected_assembly": "unknown",
-            "detected_contig": "unknown",
+            "alignment_pipeline": alignment_pipeline,
+            "detected_assembly": metadata_value(metadata, "detected_assembly", "unknown"),
+            "detected_contig": metadata_value(metadata, "detected_contig", "unknown"),
             "bam_header_warnings": [],
         },
         "input_files": input_files,
-        "coverage": {
-            "mean": null,
-            "median": null,
-            "stdev": null,
-            "min": null,
-            "max": null,
-            "region_length": null,
-            "uncovered_bases": null,
-            "percent_uncovered": null,
-            "threshold": 100,
-            "quality_pass": quality_pass,
-            "status": "pass",
-        },
+        "coverage": coverage_qc,
         "fastp": {
             "available": false,
         },
@@ -274,6 +285,41 @@ fn parse_row_float(row: &VcfRecord, key: &str) -> f64 {
     row.get(key)
         .and_then(|value| value.parse::<f64>().ok())
         .unwrap_or(0.0)
+}
+
+fn metadata_value<'a>(metadata: &'a VcfRecord, key: &str, default: &'a str) -> &'a str {
+    metadata.get(key).map_or(default, String::as_str)
+}
+
+fn coverage_json(coverage: &VcfRecord) -> serde_json::Value {
+    let quality_pass = coverage_quality_pass(coverage);
+    serde_json::json!({
+        "mean": numeric_or_null(coverage, "mean"),
+        "median": numeric_or_null(coverage, "median"),
+        "stdev": numeric_or_null(coverage, "stdev"),
+        "min": numeric_or_null(coverage, "min"),
+        "max": numeric_or_null(coverage, "max"),
+        "region_length": numeric_or_null(coverage, "region_length"),
+        "uncovered_bases": numeric_or_null(coverage, "uncovered_bases"),
+        "percent_uncovered": numeric_or_null(coverage, "percent_uncovered"),
+        "threshold": 100,
+        "quality_pass": quality_pass,
+        "status": if quality_pass { "pass" } else { "warning" },
+    })
+}
+
+fn coverage_quality_pass(coverage: &VcfRecord) -> bool {
+    coverage
+        .get("mean")
+        .and_then(|value| value.parse::<f64>().ok())
+        .is_none_or(|mean| mean >= 100.0)
+}
+
+fn numeric_or_null(coverage: &VcfRecord, key: &str) -> serde_json::Value {
+    coverage
+        .get(key)
+        .and_then(|value| value.parse::<f64>().ok())
+        .map_or(serde_json::Value::Null, serde_json::Value::from)
 }
 
 fn title_bool(value: bool) -> String {

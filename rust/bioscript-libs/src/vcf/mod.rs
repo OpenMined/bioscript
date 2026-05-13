@@ -44,6 +44,16 @@ pub fn vntyper_report_json(
     vntyper::vntyper_report_json(sample_name, input_files, rows)
 }
 
+pub fn vntyper_report_json_with_context(
+    sample_name: &str,
+    input_files: &VcfRecord,
+    rows: &[VcfRecord],
+    metadata: &VcfRecord,
+    coverage: &VcfRecord,
+) -> LibResult<String> {
+    vntyper::vntyper_report_json_with_context(sample_name, input_files, rows, metadata, coverage)
+}
+
 pub fn parse_kestrel_vcf(contents: &str) -> LibResult<Vec<VcfRecord>> {
     let mut header: Option<Vec<String>> = None;
     let mut records = Vec::new();

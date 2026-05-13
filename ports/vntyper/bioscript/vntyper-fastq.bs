@@ -36,6 +36,7 @@ def main():
             "kestrel_tsv": kestrel_tsv,
         },
         rows,
+        {"alignment_pipeline": "native bioscript kestrel from FASTQ"},
     )
     bioscript.write_text(report_json, report_json_text)
 
