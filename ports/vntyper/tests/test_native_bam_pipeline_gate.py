@@ -1,6 +1,7 @@
 import csv
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -10,11 +11,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = ROOT / "python"
 BIOSCRIPT_PORT = ROOT / "ports" / "vntyper" / "bioscript"
+TESTS_ROOT = ROOT / "ports" / "vntyper" / "tests"
 MANIFEST_PATH = ROOT / "ports" / "vntyper" / "tests" / "data_manifest.py"
 PIPELINE_PATH = BIOSCRIPT_PORT / "vntyper_external_pipeline.py"
 
 sys.path.insert(0, str(PYTHON_ROOT))
 sys.path.insert(0, str(BIOSCRIPT_PORT))
+sys.path.insert(0, str(TESTS_ROOT))
 
 manifest_spec = importlib.util.spec_from_file_location("data_manifest", MANIFEST_PATH)
 data_manifest = importlib.util.module_from_spec(manifest_spec)
@@ -27,6 +30,12 @@ pipeline_spec = importlib.util.spec_from_file_location(
 vntyper_external_pipeline = importlib.util.module_from_spec(pipeline_spec)
 sys.modules["vntyper_external_pipeline"] = vntyper_external_pipeline
 pipeline_spec.loader.exec_module(vntyper_external_pipeline)
+
+from parity_helpers import (
+    normalized_report_summary,
+    normalized_tsv_fingerprint,
+    parity_context,
+)
 
 
 class VntyperNativeBamPipelineGateTests(unittest.TestCase):
@@ -174,6 +183,54 @@ class VntyperNativeBamPipelineGateTests(unittest.TestCase):
                     "native bioscript samtools/kestrel",
                 )
                 self.assertEqual(actual_report["metadata"]["detected_assembly"], "hg19")
+
+    def test_native_bam_output_fingerprints_match_expected_outputs(self):
+        if os.environ.get("BIOSCRIPT_RUN_NATIVE_BAM_OUTPUT_PARITY") != "1":
+            self.skipTest("BIOSCRIPT_RUN_NATIVE_BAM_OUTPUT_PARITY=1")
+        try:
+            prereqs = data_manifest.require_all_native_bam_pipeline_prerequisites()
+        except unittest.SkipTest as skip:
+            self.skipTest(str(skip))
+
+        for label, bam in prereqs["bam_cases"].items():
+            with self.subTest(label=label):
+                expected_root = data_manifest.EXPECTED_OUTPUT_ROOT / label
+                with (expected_root / "report.json").open("r", encoding="utf-8") as handle:
+                    expected_report = json.load(handle)
+                with (expected_root / "kestrel" / "kestrel_result.tsv").open(
+                    "r",
+                    encoding="utf-8",
+                    newline="",
+                ) as handle:
+                    expected_rows = list(csv.DictReader(handle, delimiter="\t"))
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    result = vntyper_external_pipeline.run_bam_pipeline(
+                        bam,
+                        label,
+                        str(Path(tmp) / label),
+                        muc1_reference=prereqs["muc1_reference"],
+                        use_native_samtools=True,
+                        use_native_kestrel=True,
+                        use_native_bcftools=True,
+                    )
+
+                    with open(result.report_json, "r", encoding="utf-8") as handle:
+                        actual_report = json.load(handle)
+                    with open(result.kestrel_tsv, "r", encoding="utf-8", newline="") as handle:
+                        rows = list(csv.DictReader(handle, delimiter="\t"))
+
+                context = parity_context(rows, expected_rows, actual_report, expected_report)
+                self.assertEqual(
+                    normalized_tsv_fingerprint(rows),
+                    normalized_tsv_fingerprint(expected_rows),
+                    context,
+                )
+                self.assertEqual(
+                    normalized_report_summary(actual_report),
+                    normalized_report_summary(expected_report),
+                    context,
+                )
 
 
 if __name__ == "__main__":
