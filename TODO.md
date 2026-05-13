@@ -267,8 +267,12 @@ This is not just a facade spike. The finish line is:
       `rust/bioscript-libs/tests/vntyper_facades.rs` and existing BCFtools
       adapter tests. Large-data generated VCF coverage remains part of the
       opt-in VNtyper parity gates.
-- [ ] `bcftools-rs`: only implement native `view -i/-e` filtering if the
+- [x] `bcftools-rs`: only implement native `view -i/-e` filtering if the
       BioScript VNtyper port actually needs it.
+      Confirmed the current VNtyper native path only calls
+      `bcftools.sort_native/index_native` after BioScript post-processing
+      filters Kestrel records. `view_filter` remains a command-planning
+      compatibility surface, so native `view -i/-e` is not a VNtyper blocker.
 - [x] `htslib-rs`: confirm shared BAM/CRAM/FASTA/VCF primitives are used through
       facades, not duplicated in BioScript-specific code.
       Confirmed by the current facade wiring: `pyfaidx/fasta.rs` uses
