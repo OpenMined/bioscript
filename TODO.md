@@ -192,11 +192,12 @@ uses those built-in primitives.
 
 - [x] Support `from bioscript import x` import rewriting for current modules.
 - [x] Bind initial module objects and method calls in `bioscript-runtime`.
-- [ ] Add runtime method bindings for native samtools/bcftools operations once
+- [x] Add runtime method bindings for native samtools/bcftools operations once
       facades are stable.
       BCFtools native bindings now cover `view_header_native`, `view_native`,
-      `sort_native`, and `index_native`; Samtools native bindings route through
-      the BioScript facade, which is now backed by `samtools-rs`.
+      `sort_native`, and `index_native`; Samtools native bindings now cover
+      `view_region_native`, `fastq_native`, and `depth_native` through the
+      BioScript facade, which is backed by `samtools-rs`.
 - [ ] Keep runtime responsible for language/object adaptation only.
 - [ ] Keep file/path/security policy centralized and reused across facades.
 

@@ -18,6 +18,7 @@ mod lib_methods;
 mod methods;
 mod objects;
 mod paths;
+mod samtools_native_methods;
 mod state;
 mod timing;
 mod tool_methods;
