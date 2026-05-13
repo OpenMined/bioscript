@@ -66,7 +66,47 @@ fn vntyper_bioscript_program_runs_through_runtime() {
 fn vntyper_fastq_bioscript_program_runs_through_runtime() {
     let root = repo_root();
     let output_path = unique_output_path(&root);
+    let fixture_dir = root.join(format!(
+        "target/vntyper-runtime-native-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&fixture_dir).unwrap();
+    let reference_path = fixture_dir.join("ref.fa");
+    let fastq_1_path = fixture_dir.join("r1.fastq");
+    let fastq_2_path = fixture_dir.join("r2.fastq");
+    let output_dir = fixture_dir.join("out");
+    fs::write(&reference_path, ">chr1\nAAAACCCCGGGGTTTT\n").unwrap();
+    fs::write(
+        &fastq_1_path,
+        "@r1\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n@r2\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n@r3\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n",
+    )
+    .unwrap();
+    fs::write(
+        &fastq_2_path,
+        "@r4\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n@r5\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n",
+    )
+    .unwrap();
     let output_arg = output_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let reference_arg = reference_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let fastq_1_arg = fastq_1_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let fastq_2_arg = fastq_2_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let output_dir_arg = output_dir
         .strip_prefix(&root)
         .unwrap()
         .display()
@@ -78,18 +118,10 @@ fn vntyper_fastq_bioscript_program_runs_through_runtime() {
             root.join("ports/vntyper/bioscript/vntyper-fastq.bs"),
             None,
             vec![
-                (
-                    "fastq_1",
-                    MontyObject::String(
-                        "ports/vntyper/test-data/example_6449_hg19_subset_R1.fastq.gz".to_owned(),
-                    ),
-                ),
-                (
-                    "fastq_2",
-                    MontyObject::String(
-                        "ports/vntyper/test-data/example_6449_hg19_subset_R2.fastq.gz".to_owned(),
-                    ),
-                ),
+                ("fastq_1", MontyObject::String(fastq_1_arg)),
+                ("fastq_2", MontyObject::String(fastq_2_arg)),
+                ("reference_fasta", MontyObject::String(reference_arg)),
+                ("output_dir", MontyObject::String(output_dir_arg)),
                 ("output_file", MontyObject::String(output_arg)),
                 ("participant_id", MontyObject::String("positive".to_owned())),
             ],
@@ -98,7 +130,15 @@ fn vntyper_fastq_bioscript_program_runs_through_runtime() {
 
     let plan = fs::read_to_string(&output_path).unwrap();
     assert!(plan.contains("fastq_1"));
-    assert!(plan.contains("kestrel_command"));
-    assert!(plan.contains("bcftools_sort_command"));
+    assert!(plan.contains("kestrel_vcf"));
+    assert!(plan.contains("first_variant_alt"));
+    assert!(plan.contains("\tT"));
+    assert!(output_dir.join("positive/kestrel/output.vcf").exists());
+    assert!(
+        output_dir
+            .join("positive/kestrel/output.sorted.vcf.gz")
+            .exists()
+    );
     fs::remove_file(output_path).unwrap();
+    fs::remove_dir_all(fixture_dir).unwrap();
 }
