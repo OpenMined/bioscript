@@ -267,7 +267,7 @@ This is not just a facade spike. The finish line is:
 
 - [x] `rust/bioscript-libs/tests/vntyper_facades.rs`
       for native Samtools/Kestrel/BCFtools orchestration on tiny fixtures.
-- [ ] `rust/bioscript-libs/tests/vntyper_vcf.rs`
+- [x] `rust/bioscript-libs/tests/vntyper_vcf.rs`
       for VNtyper-relevant VCF parsing and call-table conversion if moved to
       Rust.
 - [x] `rust/bioscript-runtime/tests/vntyper_program.rs`
