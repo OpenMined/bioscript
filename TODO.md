@@ -249,10 +249,16 @@ This is not just a facade spike. The finish line is:
 
 ## Engine Parity Gaps To Close Or Escalate
 
-- [ ] `samtools-rs`: verify FASTQ extraction matches the VNtyper command chain
+- [x] `samtools-rs`: verify FASTQ extraction matches the VNtyper command chain
       `view -P | sort -n | fastq -1/-2/-0/-s` for representative fixtures.
-- [ ] `samtools-rs`: if counts differ from real samtools, reduce to a small
+- [x] `samtools-rs`: if counts differ from real samtools, reduce to a small
       fixture and fix in the engine crate or document an intentional difference.
+      Fixed in the shared vendored `htslib-rs` FASTQ split helper by grouping
+      BAM records by qname and routing missing mates to the singleton output.
+      Added the reduced regression
+      `test_view_bam_as_fastq_split_routes_missing_mates_to_singletons`.
+      Verified with
+      `BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_samtools_fastq_oracle`.
 - [ ] `kestrel-rs`: run VNtyper FASTQ positive/negative fixtures and compare
       VCF records against Java Kestrel expected outputs.
       Attempted 2026-05-14 via
