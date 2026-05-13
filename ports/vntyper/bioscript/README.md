@@ -25,6 +25,14 @@ The port should expose two entry points.
 ```python
 run_vntyper(
     bam=input_file,
+    bai=input_bai,
+    bam_region=bam_region,
+    vntr_region=vntr_region,
+    reference_fasta=reference_fasta,
+    kmer_size=20,
+    minimum_difference=5,
+    max_haplotypes=2,
+    max_saved_states=2,
     reference_build="hg19",
     output_dir=output_dir,
     participant_id=participant_id,
@@ -48,6 +56,11 @@ BAM -> bioscript.samtools.view_region_native
 run_vntyper_fastq(
     r1=fastq_1,
     r2=fastq_2,
+    reference_fasta=reference_fasta,
+    kmer_size=20,
+    minimum_difference=5,
+    max_haplotypes=2,
+    max_saved_states=2,
     reference_build="hg19",
     output_dir=output_dir,
     participant_id=participant_id,
@@ -73,6 +86,11 @@ rows. Full HTML report generation still lives in the Python scaffold.
 on caller-provided regions and reference paths. They run Samtools, Kestrel,
 BCFtools, and VCF facades through the BioScript runtime and materialize
 BAM-slice, FASTQ, VCF, TSV, and report JSON artifacts.
+
+The tiny runtime tests pass small Kestrel values so short synthetic references
+can produce calls. VNtyper production-style runs should pass `kmer_size=20`,
+`minimum_difference=5`, `max_haplotypes=2`, and `max_saved_states=2`, matching
+the current native parity gates.
 
 ## Local Test Gates
 

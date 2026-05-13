@@ -178,8 +178,11 @@ This is not just a facade spike. The finish line is:
       `samtools.view_region_native`, `samtools.fastq_native`, and
       `samtools.depth_native`. Core Kestrel call-table conversion and report
       JSON are in `rust/bioscript-libs/src/vcf/vntyper.rs`, with fixture tests
-      in `rust/bioscript-libs/tests/vntyper_vcf.rs`. The Python scaffold remains
-      as test/oracle support for upstream parity work, not as the runtime path.
+      in `rust/bioscript-libs/tests/vntyper_vcf.rs`. Kestrel parameters are
+      runtime inputs, so tiny tests can use synthetic values while VNtyper gates
+      use `kmer_size=20`, `minimum_difference=5`, `max_haplotypes=2`, and
+      `max_saved_states=2`. The Python scaffold remains as test/oracle support
+      for upstream parity work, not as the runtime path.
 - [x] If Monty syntax is missing required features, add the smallest runtime or
       syntax support needed and cover it with runtime tests.
       No new Monty syntax was required for the native BAM or FASTQ runtime
