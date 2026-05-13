@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -10,6 +11,13 @@ class BackendMode(str, Enum):
     AUTO = "auto"
     PYTHON = "python"
     RUST = "rust"
+
+
+@dataclass(frozen=True)
+class ModuleBackendPolicy:
+    auto: str
+    python: str
+    rust: str
 
 
 def selected_backend() -> BackendMode:

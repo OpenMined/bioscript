@@ -6,7 +6,13 @@ import importlib
 from pathlib import Path
 from typing import Any
 
-from .runtime import BackendMode, selected_backend
+from .runtime import BackendMode, ModuleBackendPolicy, selected_backend
+
+BACKEND_POLICY = ModuleBackendPolicy(
+    auto="use real pyfaidx when installed; otherwise use the pure Python FASTA fallback",
+    python="requires real pyfaidx",
+    rust="native pyfaidx shim is pending",
+)
 
 
 def _real_pyfaidx() -> Any:

@@ -163,7 +163,7 @@ uses those built-in primitives.
       facade with tiny fixtures.
 - [ ] Keep mocked-extension tests for argument normalization and missing-native
       behavior.
-- [ ] Make Python-only fallback behavior explicit per module:
+- [x] Make Python-only fallback behavior explicit per module:
       real Python library, pure Python fallback, or native-required.
 
 ## Runtime / Monty Integration

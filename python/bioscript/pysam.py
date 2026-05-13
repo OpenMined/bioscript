@@ -5,7 +5,13 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-from .runtime import BackendMode, selected_backend
+from .runtime import BackendMode, ModuleBackendPolicy, selected_backend
+
+BACKEND_POLICY = ModuleBackendPolicy(
+    auto="use real pysam when installed; otherwise native pysam shim is pending",
+    python="requires real pysam",
+    rust="native pysam shim is pending",
+)
 
 
 def _real_pysam() -> Any:

@@ -6,6 +6,14 @@ import hashlib
 from pathlib import Path
 from typing import Any, Iterable
 
+from .runtime import ModuleBackendPolicy
+
+BACKEND_POLICY = ModuleBackendPolicy(
+    auto="command builders and FASTA parsing are pure Python; native calls require bioscript._native",
+    python="command builders and FASTA parsing are pure Python; native calls require bioscript._native",
+    rust="native calls require bioscript._native backed by kestrel-rs",
+)
+
 
 def build_command(
     jar_path: str,

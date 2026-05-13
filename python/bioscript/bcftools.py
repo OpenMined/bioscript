@@ -5,6 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .runtime import ModuleBackendPolicy
+
+BACKEND_POLICY = ModuleBackendPolicy(
+    auto="command builders are pure Python; native helpers require bioscript._native",
+    python="command builders are pure Python; native helpers require bioscript._native",
+    rust="native helpers require bioscript._native backed by bcftools-rs",
+)
+
 
 def sort(input_vcf: str, output_vcf_gz: str) -> list[str]:
     return ["bcftools", "sort", "-Oz", "-o", _path_arg(output_vcf_gz), _path_arg(input_vcf)]

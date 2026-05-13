@@ -148,6 +148,16 @@ vendor/
 - let authors run the same scripts in normal Python before running them in
   BioScript
 
+Each Python shim exposes `BACKEND_POLICY`, a `ModuleBackendPolicy` with `auto`,
+`python`, and `rust` descriptions. This makes fallback behavior explicit:
+
+- `kestrel`, `bcftools`, and `samtools`: command builders are pure Python;
+  native helpers require `bioscript._native`
+- `pyfaidx`: auto mode uses real `pyfaidx` when installed, otherwise a small
+  pure Python FASTA fallback; rust mode is pending
+- `pysam`: auto/python mode delegates to real `pysam` when installed; rust mode
+  is pending
+
 ## Current Dependency Graph
 
 The graph should stay narrow: BioScript owns language/runtime adaptation,
