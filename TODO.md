@@ -348,6 +348,12 @@ This is not just a facade spike. The finish line is:
       Current expected failures:
       `positive` has 2417 Rust records vs 3737 expected Java records;
       `negative` has 2322 Rust records vs 4897 expected Java records.
+      Note: upstream Java VNtyper config uses `max_align_states=40` and
+      `max_hap_states=40`. The current native BioScript parity gate uses the
+      bounded native settings `max_haplotypes=2` and `max_saved_states=2`.
+      A one-off native FASTQ run with `40/40` was stopped after exceeding five
+      minutes without output, so full upstream-parameter parity is also a
+      `kestrel-rs` performance/parity task.
 - [x] `bcftools-rs`: confirm the VNtyper-required sort/compress/index path is
       complete for all generated VCFs.
       Confirmed for tiny Kestrel-generated VCFs in
