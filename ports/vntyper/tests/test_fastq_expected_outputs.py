@@ -1,7 +1,9 @@
 import csv
+import gzip
 import importlib.util
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -9,7 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 MANIFEST_PATH = ROOT / "ports" / "vntyper" / "tests" / "data_manifest.py"
 BIOSCRIPT_PORT = ROOT / "ports" / "vntyper" / "bioscript"
+PYTHON_ROOT = ROOT / "python"
 
+sys.path.insert(0, str(PYTHON_ROOT))
 sys.path.insert(0, str(BIOSCRIPT_PORT))
 
 
@@ -67,6 +71,35 @@ class VntyperFastqExpectedOutputsTests(unittest.TestCase):
                     rebuilt["algorithm_results"]["kestrel"],
                     report["algorithm_results"]["kestrel"],
                 )
+
+    def test_native_kestrel_rs_adapter_emits_expected_tiny_variant(self):
+        try:
+            from bioscript import kestrel
+
+            data_manifest.import_native_module()
+        except Exception as exc:
+            self.skipTest(f"bioscript native extension is unavailable: {exc}")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fastq = Path(tmp) / "reads.fastq.gz"
+            with gzip.open(fastq, "wt", encoding="utf-8") as handle:
+                for index in range(5):
+                    handle.write(f"@r{index}\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n")
+
+            vcf = kestrel.call_fastq_references_native(
+                [("chr1", "AAAACCCCGGGGTTTT", "2a9fd43653a81f9ec44e34c7ec038636")],
+                [str(fastq)],
+                4,
+                sample_name="sample1",
+                minimum_difference=1,
+                max_haplotypes=4,
+                max_saved_states=4,
+            )
+
+        self.assertIn("##fileformat=VCF4.2\n", vcf)
+        self.assertIn("##contig=<ID=chr1,length=16", vcf)
+        self.assertIn("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1", vcf)
+        self.assertIn("chr1\t5\t.\tC\tT", vcf)
 
 
 if __name__ == "__main__":

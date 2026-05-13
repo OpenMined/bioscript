@@ -1,7 +1,8 @@
 use std::path::Path;
+use std::{ffi::OsString, process::ExitCode};
 
 use crate::{
-    LibResult,
+    LibError, LibResult,
     tools::{CommandSpec, path_arg},
 };
 
@@ -63,4 +64,21 @@ pub fn norm(
             path_arg(input_vcf)?,
         ],
     )
+}
+
+pub fn view_header_native(input_vcf: &Path, output_vcf: &Path) -> LibResult<()> {
+    let argv = [
+        OsString::from("view"),
+        OsString::from("--no-version"),
+        OsString::from("-h"),
+        OsString::from("-o"),
+        output_vcf.as_os_str().to_owned(),
+        input_vcf.as_os_str().to_owned(),
+    ];
+    match bcftools_rs::commands::view::main(&argv) {
+        ExitCode::SUCCESS => Ok(()),
+        status => Err(LibError::InvalidArguments(format!(
+            "bcftools.view header extraction failed with status {status:?}"
+        ))),
+    }
 }

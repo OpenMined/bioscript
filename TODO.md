@@ -1,433 +1,249 @@
-# BioScript VNtyper Port TODO
+# BioScript Library Support TODO
 
-This tracks the VNtyper port from <https://github.com/hassansaei/VNtyper> into
-BioScript. The goal is not to rewrite every upstream dependency immediately.
-The goal is to make VNtyper run in BioScript while extending BioScript,
-`bioscript-libs`, and native/external tool wrappers only where the VNtyper
-surface requires it.
+Goal: make BioScript support recognizable bioinformatics library/tool surfaces
+through thin `bioscript-libs` facades backed by vendored Rust engine crates.
+Build the reusable primitives first, wire Samtools next, and then make the
+VNtyper BioScript port a small amount of pipeline code plus data/config that
+uses those built-in primitives.
 
-## Directory Layout
+## Direction
 
-- [x] `ports/vntyper/vntyper`
-      Upstream VNtyper source, added as a git submodule for source reading and
-      parity checks.
-- [x] `ports/vntyper/kestrel`
-      Upstream Kestrel Java source, added as a git submodule for source reading
-      and eventual native porting.
-- [x] `ports/vntyper/bioscript`
-      BioScript implementation of the VNtyper pipeline and small ported helper
-      modules.
-- [x] `ports/vntyper/tests`
-      BioScript-owned tests that compare the port against upstream behavior.
-- [x] `ports/vntyper/test-data`
-      Ignored local data drop zone for BAM/BAI, FASTQ, VCF, and expected output
-      files copied in from elsewhere.
+- [x] Use explicit BioScript imports:
+      `from bioscript import samtools, bcftools, kestrel, pysam, pyfaidx`.
+- [ ] Treat BioScript library support as the product:
+      common pipeline code should read like standard bioinformatics workflows,
+      not like private BioScript internals.
+- [ ] Build in layers:
+      engine crates -> BioScript facades -> facade tests -> VNtyper port.
+- [x] Keep BioScript-owned code as compatibility/adaptation code, not full
+      algorithm ports.
+- [x] Put heavy native implementations in reusable Rust engine crates under
+      `vendor/rust`.
+- [x] Keep upstream Python API references under `vendor/python`.
+- [ ] Refactor existing BioScript methods to call these higher-level facades
+      instead of private lower-level helpers where the public bioinformatics
+      name is clearer.
 
-## Port Strategy
+## Vendor Layout
 
-- [x] Treat upstream VNtyper as the behavioral reference.
-- [x] Start with the smallest faithful path:
-      BAM input -> MUC1 read extraction -> Kestrel VCF -> frameshift/depth
-      classification -> TSV/JSON report.
-- [x] Keep Kestrel as an external tool adapter first.
-- [x] Keep samtools/bcftools/fastp/bwa as external tool adapters first, then
-      replace the narrowest needed pieces with Rust wrappers when useful.
-- [x] Keep optional modules separate:
-      `adVNTR`, `SHARK`, cohort summaries, HTML reports, and mutation counter.
-- [x] Prefer deterministic TSV/JSON parity tests before full HTML/report
-      parity.
+- [x] Move Python reference submodules:
+      `vendor/python/pysam`
+      `vendor/python/pyfaidx`
+- [x] Add Kestrel Rust engine:
+      `vendor/rust/kestrel-rs`
+- [x] Add HTS Rust engine:
+      `vendor/rust/htslib-rs`
+- [x] Add BCFtools Rust engine:
+      `vendor/rust/bcftools-rs`
+- [ ] Add Samtools Rust engine once ready:
+      `vendor/rust/samtools-rs`
+- [ ] Keep vendored engine crate tests inside their own repos/workspaces.
+- [ ] Keep BioScript tests focused on adapter behavior and pipeline integration.
 
-## Upstream Inventory
+## Rust Crate Wiring
 
-- [x] Read upstream CLI flow:
-      `ports/vntyper/vntyper/vntyper/cli.py`.
-- [x] Read upstream pipeline orchestration:
-      `ports/vntyper/vntyper/vntyper/scripts/pipeline.py`.
-- [x] Read Kestrel flow:
-      `ports/vntyper/vntyper/vntyper/scripts/kestrel_genotyping.py`.
-- [x] Read alignment/read extraction flow:
-      `ports/vntyper/vntyper/vntyper/scripts/fastq_bam_processing.py`.
-- [x] Read VCF and indel processing:
-      `ports/vntyper/vntyper/vntyper/scripts/file_processing.py`,
-      `variant_parsing.py`, and `motif_processing.py`.
-- [x] Read scoring/confidence/filtering:
-      `scoring.py`, `confidence_assignment.py`, `flagging.py`, and
-      `kestrel_config.json`.
-- [x] Read region/reference registry helpers:
-      `region_utils.py`, `reference_registry.py`, and `chromosome_utils.py`.
-- [x] Identify exact upstream outputs needed for parity:
-      `kestrel_result.tsv`, `kestrel_pre_result.tsv`, filtered VCFs,
-      pipeline summary JSON, and selected report fields.
+- [x] Wire `rust/bioscript-libs` to local `kestrel-rs` path dependencies:
+      `kestrel` and `kanalyze`.
+- [ ] Wire `rust/bioscript-libs` to local `htslib-rs`.
+      Top-level `vendor/rust/htslib-rs` is present, but direct Cargo wiring is
+      deferred until the duplicated nested `htslib-rs` dependency inside
+      `bcftools-rs` is unified.
+- [x] Wire `rust/bioscript-libs` to local `bcftools-rs`.
+- [ ] Wire `rust/bioscript-libs` to local `samtools-rs` when available.
+- [ ] Add `[patch]` entries only where nested crate dependencies would
+      otherwise pull remote git/crates.io versions instead of local submodules.
+- [ ] Document the dependency graph:
+      BioScript -> `bioscript-libs` facade -> vendored Rust engine crate.
 
-## Test Data
+## Crate Publishing
 
-- [x] Copy local VNtyper test data into `ports/vntyper/test-data`.
-- [x] Inventory copied data:
-      117 files, about 1.2 GiB, including hg19/hg38 subset BAM/BAI files,
-      paired FASTQs, and remapped BWA BAM/BAI files across GRCh37/GRCh38,
-      hg19/hg38, and Ensembl naming variants.
-- [x] Add or generate expected Kestrel VCF/TSV outputs for large integration
-      data; copied data currently contains alignment/FASTQ inputs but no
-      `.vcf`, `.tsv`, or result `.json` files. Tiny expected TSV/JSON fixtures
-      exist for unit tests. A dry-run generator now exists at
-      `ports/vntyper/tests/generate_expected_outputs.py`; it records sample
-      labels, planned commands, and the ignored expected-output layout. Without
-      `--dry-run`, it uses the external pipeline runner to materialize VCF, TSV,
-      and JSON outputs once local samtools/bcftools/Kestrel prerequisites and
-      validated sample labels are available. `--fastq-only` can bootstrap
-      Kestrel VCF/TSV/report outputs from existing copied FASTQ pairs without
-      samtools/bcftools. Generated local ignored FASTQ-backed outputs now exist
-      under `ports/vntyper/test-data/expected/{positive,negative}`.
-- [x] Mirror upstream `tests/test_data_config.json` filenames and MD5s in a
-      BioScript-side manifest.
-- [x] Add a data validator that checks required files.
-- [x] Wire the data validator into integration tests so they skip with a clear
-      message when large data is absent.
-- [x] Keep large copied data out of git.
-- [x] Add tiny synthetic VCF fixtures for unit tests that do not need BAM or
-      Kestrel.
-
-## BioScript Port Files
-
-- [x] Add `ports/vntyper/bioscript/vntyper.bs.py` or equivalent top-level
-      BioScript pipeline entry point.
-- [x] Add BioScript modules for:
-      region selection, command planning, Kestrel VCF parsing, frameshift
-      classification, confidence assignment, and report row generation.
-- [x] Add first BioScript-side post-processing module for Kestrel VCF parsing,
-      frameshift classification, confidence assignment, and report JSON.
-- [x] Keep BioScript code close to upstream naming where that helps parity.
-- [x] Use `from bioscript import ...` imports for supported libraries and tool
-      wrappers.
-- [x] Avoid class-heavy ports until Monty class support is ready; use functions
-      and plain dict/list records for the first pass.
-
-## `bioscript-libs` Work
-
-- [x] Add a `bioscript-libs::tools` or module-specific external tool wrapper
-      layer with safe command construction.
-- [x] Add `bioscript.samtools` wrapper surface for the VNtyper subset:
-      `view`, `fastq`, `depth`, `index`, and possibly `faidx`.
-- [x] Add `bioscript.bcftools` wrapper surface for optional VCF sort/compress
-      fallback behavior.
-- [x] Add `bioscript.kestrel` wrapper surface for invoking the vendored or
-      configured Kestrel JAR.
-- [x] Design `bioscript.kestrel` as a Python-shaped API rather than a direct
-      Java clone. Initial surface:
-      `kestrel.run(...)`, `kestrel.build_command(...)`, and
-      `kestrel.read_vcf(...)`.
-- [x] Add a BioScript-owned Kestrel build helper for environments without Ant:
-      `ports/vntyper/tests/build_kestrel_jar.py` compiles the vendored Java
-      sources with Java 8 compatibility and packages an ignored local
-      `ports/vntyper/test-data/tools/kestrel/kestrel.jar` for integration
-      tests.
-- [ ] Port the Kestrel Java internals only after the external-tool-backed
-      wrapper passes VNtyper parity. Candidate internal packages:
-      `counter`, `activeregion`, `align`, `variant`, and `writer.vcf`.
-      The first native surface now exists in
-      `rust/bioscript-libs/src/kestrel/native.rs`: a Rust Kestrel VCF writer
-      model that mirrors the Java `writer.vcf` headers, FORMAT fields,
-      multi-sample genotype/depth fields, validation, and record ordering.
-      Native SNP/insertion/deletion VCF normalization now mirrors the Java
-      `variant` package rules for VCF POS/REF/ALT anchoring against a reference
-      region. The native Rust code has also been split into focused
-      `native::{kmer, variant, vcf}` modules, and `native::KmerCountMap`
-      provides the first `counter` package equivalent for counting canonical
-      sequence k-mers from in-memory strings, FASTQ, and FASTQ.gz inputs. The
-      native `ActiveRegion` and `RegionStats` types now mirror the Java
-      `activeregion` data model for anchor k-mers and percentile count
-      summaries. A first native `detect_active_regions` candidate scanner now
-      computes reference k-mer counts and Java-shaped difference thresholds,
-      then emits anchored and right-open depth-drop regions for downstream
-      haplotype work. It now also exposes Java-shaped `anchor_both_ends`
-      behavior, defaults reverse-kmer counting and both-end anchoring to the
-      Java detector defaults, and emits left-open candidates for near-left-end
-      active regions when unanchored ends are explicitly allowed. Java's
-      exponential recovery-threshold shape is now implemented with `decay_min`
-      and `decay_alpha` controls and exposed through the native/Python wrapper
-      path. The right-scan peak detection heuristic is also partially ported:
-      `peak_scan_length` controls stable-recovery scanning and short recovery
-      spikes inside a low-count valley no longer prematurely terminate the
-      active region. The native detector also exposes a Java-shaped
-      `scan_limit_factor` control plus an explicit `max_gap_size` input for the
-      Java `maxGapSize + scanLimitFactor * k` shape; BioScript now ports the
-      Java default `AlignmentWeight.getMaxExclusiveGapSize(k)` calculation and
-      uses it as the native wrapper default when callers do not provide an
-      explicit gap component. The Java alignment-weight vector parser shape is
-      also ported for default/partial vectors, surrounding bounds, sign
-      normalization, and Java integer literal formats. Both left and right
-      scans discard candidates that exceed that limit. Java's
-      default `recoverRightAnchor` behavior is now partially ported as
-      `recover_right_anchor`: when the normal recovery threshold is never
-      reached inside the scan limit, the native detector searches for a later
-      abrupt count increase and uses that k-mer as a recovered right anchor.
-      The first left-scan peak suppression
-      rule is also ported: short isolated count increases can be skipped rather
-      than being emitted as left-end active regions, and left-open candidate
-      scans now respect the same scan-limit length used by right scans. The
-      left-scan recovery check now also follows Java's discard shape when
-      counts recover before the scan reaches the left end, which prevents those
-      internal recoveries from being emitted as left-end active regions.
-      Java's `callAmbiguousRegions` switch is now exposed as
-      `call_ambiguous_regions` through the native detector and Python wrapper,
-      with default-on behavior and optional rejection of active regions whose
-      reference span contains ambiguous bases. The
-      native `align_haplotype` and `call_alignment_variants` helpers provide a
-      first deterministic reference-vs-haplotype edit surface that emits
-      SNP/insertion/deletion calls using the same native VCF normalization path.
-      The upstream compiled Kestrel JUnit reference-reader fixture set has also
-      been ported into Rust tests: native reference parsing now covers FASTA,
-      FASTQ, mixed case, legal IUPAC/gap characters, and Kestrel's deterministic
-      ambiguous-base-to-ACGT k-mer normalization for k sizes 1, 2, 21, 32, and
-      64.
-      The separate upstream `paudano/kescases` publication pipeline is now
-      vendored as `ports/vntyper/kescases` for the next parity layer; it
-      contains Kestrel CLI/Snakemake workflows, bundled Kestrel jars, reference
-      FASTA data, and comparison pipelines rather than ordinary unit-test
-      sources.
-      `call_explicit_haplotypes_to_vcf` now ties explicit haplotype evidence to
-      the native aligner, variant caller, and VCF writer for an end-to-end
-      non-assembling caller path. The first graph-backed Rust haplotype
-      assembler now walks counted k-mer paths between active-region anchors and
-      feeds assembled haplotypes into the native VCF caller. The native
-      `call_sequences_to_vcf` path now ties read sequence counting, active-region
-      detection, graph haplotype assembly, alignment, variant calling, and VCF
-      writing together for small synthetic fixtures, and
-      `bioscript.kestrel.call_sequences_native` exposes that path through the
-      Python wrapper/PyO3 layer. `call_fastq_paths_to_vcf` and
-      `bioscript.kestrel.call_fastq_native` extend the same native caller to
-      FASTQ inputs produced by the BioScript samtools extraction path. A
-      multi-reference native VCF path now counts FASTQ reads once, emits all
-      reference contig headers, and scans each reference region for variants,
-      with Python/PyO3 wrapper access through
-      `bioscript.kestrel.call_fastq_references_native`. Python-side
-      `bioscript.kestrel.load_reference_regions` reads multi-record FASTA files
-      into `(name, sequence, md5)` triples for that native path, matching the
-      shape of VNtyper motif dictionaries. The VNtyper execution layer now has
-      an opt-in `use_native_kestrel` path for both BAM-derived FASTQs and
-      direct FASTQ inputs; it loads the motif FASTA, runs
-      `call_fastq_references_native`, writes `output.vcf`, and reuses the
-      existing TSV/report materialization. For development runs, that VNtyper
-      native path uses a bounded haplotype beam (`max_haplotypes=2`,
-      `max_saved_states=2`, `max_bases=120`) so the full 551-record motif
-      dictionary completes on representative FASTQs; a local positive-sample
-      probe now materializes VCF/TSV/report in about 12 seconds. The
-      BioScript post-processor now correctly reads Kestrel VCFs whose final
-      sample column is named with the actual sample ID rather than the literal
-      `SAMPLE`; this exposes the current native parity gap more clearly:
-      Java expected output for `example_6449_hg19_subset` remains negative
-      because no high-confidence row is a VNtyper-valid frameshift, while the
-      bounded native caller currently emits many high-confidence valid
-      frameshift rows and over-calls. The BioScript post-processing path now
-      applies the first motif annotation/filtering layer from upstream VNtyper
-      (`position_threshold`, right-motif exclusions, `GG` motif rules, and
-      combined motif/ALT exclusions), which makes the remaining false positives
-      a native haplotype/alignment parity issue rather than a missing
-      post-processing filter. The Java parity gate now includes a
-      multi-reference FASTQ fixture that emits all contig headers and calls the
-      matching reference record, which is the next required shape for full
-      VNtyper motif-reference parity. The
-      haplotype assembler now tracks repeated k-mers and trims saved states by
-      path depth using exposed `max_repeat_count` and `max_saved_states`
-      controls. A first opt-in Java parity gate now exists at
-      `rust/bioscript-libs/tests/kestrel_java_parity.rs`; when
-      `BIOSCRIPT_RUN_KESTREL_JAVA_PARITY=1` and a Kestrel jar are available, it
-      compares native FASTQ-to-VCF output with Java Kestrel on tiny
-      perfect-reference no-variant, MUC1 SNP, nonrepetitive SNP, adjacent
-      nonrepetitive SNPs, k=20 nonrepetitive SNP/deletion/insertion fixtures,
-      mixed reference/alternate SNP and deletion depth, a mixed insertion
-      no-call, sparse split-read, and multi-reference fixtures.
-      The native assembler now tracks observed adjacent k-mer transitions from
-      each read/FASTQ record and refuses to bridge k-mers that were never
-      adjacent in an input read, which fixes the Java-confirmed sparse
-      reference-consistent case (`AAAACCC`, `CCCTGGG`, `GGGTTTT`) against
-      `AAAACCCCGGGGTTTT`. It also assigns VCF DP from the total assembled
-      active-region haplotype depth, matching Java's mixed reference/alternate
-      depth shape. The native VCF engine now also scores assembled haplotypes
-      with Java-shaped affine alignment weights and emits only the best-scoring
-      alternate haplotypes for each active region, while preserving all current
-      synthetic Java parity cases. A local full VNtyper motif FASTQ probe
-      currently shows that
-      the native path is still not yet proven for the 551-record motif
-      dictionary: after replacing the internal k-mer/transition store with
-      `HashMap`, a constrained single-reference full-FASTQ run improved from
-      about 22 seconds to about 6.3 seconds, and a bounded full-dictionary run
-      also completes in about 6.3 seconds before post-processing. After the
-      first alignment-score pruning pass, the representative positive FASTQ
-      native run completes in about 11.8 seconds and drops from the previous
-      5,252 VCF rows / 932 VNtyper-passing rows to 2,191 VCF rows / 205
-      VNtyper-passing rows, but still reports `High_Precision` where the Java
-      expected report is negative. The remaining
-      work is the full Java active-region detector heuristics, Java-equivalent
-      haplotype-state pruning at `maxhapstates=40`, and broader parity against
-      Java Kestrel outputs on larger synthetic and VNtyper fixtures.
-- [x] Add `bioscript.fastp` wrapper surface only if FASTQ QC is in the first
-      milestone.
-- [x] Add `bioscript.bwa` wrapper surface only if FASTQ input alignment is in
-      the first milestone.
-- [x] Add lightweight `bioscript.vcf` parsing helpers for Kestrel VCF rows.
-- [x] Add TSV/CSV/table helpers if the port would otherwise need a pandas-like
-      surface.
-- [x] Add a first native noodles replacement slice:
-      `pysam.AlignmentFile.fetch` now supports indexed BAM inputs through
-      `bioscript-formats::alignment::query_bam_records`, while CRAM continues
-      through the existing noodles CRAM path.
-
-## Runtime / Security
-
-- [x] Decide the external command policy for BioScript:
-      allowlist commands, fixed argv builders, workspace-confined inputs, and
-      controlled output paths.
-- [x] Add runtime bindings for new modules imported via
-      `from bioscript import samtools, kestrel, vcf, bcftools`.
-- [x] Add runtime method bindings for `samtools` and `kestrel` command-builder
-      calls.
-- [x] Ensure `bioscript.kestrel` accepts structured arguments only; no arbitrary
-      command strings.
-- [x] Add tests that unsupported shell strings, remote paths, and write modes
-      fail closed.
-- [x] Record tool execution in runtime trace/timing output.
-
-## Python Compatibility Package
-
-- [x] Add Python-side `bioscript.kestrel` command builders matching the Rust
-      structured argv surface.
-- [x] Add Python-side `bioscript.samtools` command builders matching the Rust
-      structured argv surface.
-- [x] Add Python tests for VNtyper tool command builders.
-
-## Test Plan
-
-- [x] Port upstream unit tests first:
-      confidence assignment, scoring, flagging, variant parsing, motif
-      filtering, region utilities, chromosome utilities, and reference registry.
-- [x] Add parity tests that run the upstream Python function and BioScript port
-      on the same tiny fixture and compare TSV/JSON values.
-- [x] Add integration tests against `ports/vntyper/test-data` once copied:
-      one positive BAM, one negative BAM, and one FASTQ pair if available.
-      Current coverage plans commands for two representative BAMs and one FASTQ
-      pair, and a fake-runner test covers the BAM path running slice, index,
-      FASTQ extraction, depth, Kestrel, bcftools, and TSV/JSON materialization.
-      A second fake-runner path now covers native BioScript samtools slice,
-      FASTQ extraction, and depth followed by Kestrel without requiring
-      bcftools. A gated real-data native BAM pipeline test now exists and skips
-      until explicitly enabled with `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1` and
-      `bioscript._native`, Java/Kestrel, BAM/BAI inputs, and expected outputs
-      are all available. A separate `samtools` oracle gate now exists at
-      `ports/vntyper/tests/test_samtools_fastq_oracle.py`; it is opt-in with
-      `BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1` and compares native FASTQ extraction
-      counts against `samtools view -P`, name-sort, and `samtools fastq`.
-      The local environment is Arch Linux, and `sudo pacman -Sy --needed
-      --noconfirm samtools bcftools` cannot run non-interactively here because
-      sudo requires a terminal password. To unblock comparison gates, local
-      ignored builds of `htslib`, `samtools`, and `bcftools` 1.23.1 were built
-      under `ports/vntyper/test-data/tools/local`; the manifest discovers those
-      binaries when system installs are absent.
-      FASTQ-backed Kestrel expected outputs are gated by
-      `test_fastq_expected_outputs.py`; native BAM-backed positive and negative
-      representative samples are gated by `test_native_bam_pipeline_gate.py`.
-      The native BAM gate verifies sample classification, report shape,
-      screening summary, nonempty Kestrel rows, variant-table linkage, and VNTR
-      coverage fields against the generated expected report set. The external
-      BAM gate in `test_full_pipeline_gate.py` is opt-in with
-      `BIOSCRIPT_RUN_EXTERNAL_BAM_PARITY=1` and runs the samtools/bcftools plus
-      Kestrel path for the representative positive and negative BAMs.
-- [x] Run upstream VNtyper tests from the submodule as a reference check when
-      Python dependencies and external tools are installed.
-- [x] Run BioScript tests without external tools by using fixed Kestrel VCF
-      fixtures.
-- [x] Run full pipeline tests only when Kestrel/samtools/test data are present.
-
-## Reporting / UI Parity
-
-- [x] Treat upstream `generate_report.py`, `report_template.html`, and
-      `report_config.json` as the reporting reference.
-- [x] Emit a structured BioScript report JSON before generating HTML.
-- [x] Include run metadata:
-      report date, VNtyper version, input files, alignment pipeline, detected
-      assembly/contig, and BAM header warnings.
-- [x] Include VNTR coverage QC:
-      mean, median, stdev, min, max, region length, uncovered bases, percent
-      uncovered, and pass/warning status.
-- [x] Include fastp QC when available:
-      sequencing setup, duplication rate, Q20 rate, Q30 rate, passed-filter read
-      rate, and threshold pass/warning status.
-- [x] Include screening summary logic from `report_config.json`:
-      Kestrel result, optional adVNTR result, quality pass/fail, and validation
-      recommendations.
-- [x] Include cross-match summary when adVNTR results are present.
-- [x] Include Kestrel identified variants table:
-      motif, variant, position, REF, ALT, motif sequence, variant depth,
-      active-region depth, depth score, confidence, and flag.
-- [x] Include adVNTR identified variants table when available:
-      VID, variant, supporting reads, mean coverage, p-value, RU, POS, REF,
-      ALT, and flag.
-- [x] Preserve interactive HTML features after JSON parity:
-      searchable/sortable tables, show/hide flagged rows, colored confidence
-      values, flag icons/tooltips, detailed coverage toggle, and collapsible
-      pipeline log.
-- [x] Add IGV visualization after core report parity:
-      embedded IGV.js, variant selector table, and BAM/VCF track sessions.
-- [x] Make the first BioScript HTML report useful without IGV or adVNTR:
-      final screening summary, Kestrel table, VNTR coverage QC, metadata, and
-      pipeline log.
+- [ ] Keep local path dependencies while `kestrel-rs`, `htslib-rs`,
+      `bcftools-rs`, and `samtools-rs` APIs are still changing quickly.
+- [ ] Publish those engine crates once their public APIs and test suites are
+      stable enough for external consumers.
+- [ ] After publishing, replace stable path dependencies with versioned crates
+      where that simplifies the Cargo graph.
+- [ ] Keep submodules available for upstream test fixtures, source comparison,
+      and local patching even after published crates are used by default.
 
 ## Milestones
 
-- [x] M1: Upstream source vendored and BioScript port skeleton committed.
-- [x] M2: Kestrel VCF post-processing works in BioScript from fixture VCFs.
-- [x] M3: Confidence/depth/frame classification parity with upstream unit
-      tests.
-- [x] M4: BAM path works using external samtools and Kestrel wrappers.
-      The execution layer now exists in
-      `ports/vntyper/bioscript/vntyper_external_pipeline.py` and is covered
-      with an injected fake runner. Local ignored `htslib`, `samtools`, and
-      `bcftools` 1.23.1 builds provide comparison tools when system packages are
-      unavailable. The opt-in external BAM gate runs the real-tool path against
-      representative positive and negative BAMs, requires nonempty Kestrel rows,
-      and compares classification/report shape with generated expected reports.
-      Native BioScript BAM FASTQ extraction now writes complete primary R1/R2
-      pairs only and matches the copied representative FASTQ fixture counts
-      for `example_6449_hg19_subset.bam` (`82523/82523`) and
-      `example_66bf_hg19_subset.bam` (`19877/19877`). The native BAM/Kestrel
-      gate now passes locally when explicitly enabled with
-      `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1` and a temporarily copied
-      `bioscript._native` extension.
-- [x] M5: Native Rust Kestrel feasibility spike:
-      reproduce Kestrel VCF output for one tiny fixture or document why the JVM
-      adapter remains the practical first target.
-- [x] M6: Structured report JSON parity for the minimal BAM/Kestrel path.
-      Fake-runner coverage now captures `samtools depth -a` output and feeds
-      mean/median/stdev/min/max/uncovered-base fields into the structured JSON;
-      FASTQ-backed Kestrel reports are now generated locally, and the runner
-      can use native BioScript samtools wrappers before Kestrel. The opt-in
-      native BAM gate now validates copied positive and negative BAM samples
-      against generated expected reports, including report schema, Kestrel
-      classification, screening summary, variant-table linkage, and populated
-      VNTR coverage metrics. The external `samtools`/`bcftools` gate also runs
-      locally through the ignored user-space tool build.
-- [x] M7: HTML report parity for core summary, Kestrel table, coverage QC, and
-      logs.
-- [x] M8: FASTQ path works using external fastp/bwa or documented prealigned
-      inputs.
-- [x] M9: Optional adVNTR/SHARK/cohort/report modules triaged.
-- [x] M10: IGV visualization parity.
-- [x] M11: Replace selected external-tool behavior with Rust/noodles wrappers
-      where the benefit is clear.
-      Selected replacements now cover indexed BAM region fetch, indexed BAM
-      depth summary, BAM region slicing, and BAM-region-to-paired-FASTQ
-      extraction through noodles, with `bioscript-python` native samtools
-      wrappers for CPython tests. Remaining future candidates are VCF
-      sorting/indexing.
+- [x] M1: Kestrel Rust engine is vendored and callable through BioScript.
+- [ ] M2: HTS and BCFtools Rust engines are vendored and wired by path.
+      Both engines are vendored. BCFtools is wired into `bioscript-libs`;
+      top-level HTS direct wiring is still pending dependency unification.
+- [ ] M3: Samtools Rust engine is vendored and wired by path.
+- [ ] M4: BioScript facades expose a minimal, recognizable built-in toolkit:
+      `samtools`, `bcftools`, `kestrel`, `pysam`, `pyfaidx`, and VCF/table
+      helpers.
+- [ ] M5: Existing BioScript lower-level helper paths are refactored to use the
+      public facades where possible.
+- [ ] M6: VNtyper is reimplemented as a small BioScript pipeline that mostly
+      coordinates built-in primitives and carries only VNtyper-specific
+      constants, motif data, filtering rules, and report logic.
 
-## Open Decisions
+## Kestrel Facade
 
-- [x] Whether the first public BioScript API should be command-like:
-      `vntyper.run(config)` or step-oriented:
-      `vntyper.extract_reads`, `vntyper.call_kestrel`, `vntyper.classify`.
-- [x] Whether Kestrel is stored under `ports/vntyper/test-data/tools`, resolved
-      from `PATH`, or configured via an environment/runtime option.
-- [x] Whether pandas-like table operations should become `bioscript.table` or
-      remain VNtyper-local helper functions.
-- [x] Whether VNtyper references should be copied into BioScript-owned fixtures
-      or read from the upstream submodule reference directory.
+- [x] Remove old in-tree custom Rust Kestrel algorithm modules from
+      `rust/bioscript-libs/src/kestrel/native/`.
+- [x] Replace them with `rust/bioscript-libs/src/kestrel/native.rs`, a thin
+      adapter around `vendor/rust/kestrel-rs`.
+- [x] Preserve the Python-facing API names used by VNtyper:
+      `call_sequences_native`, `call_fastq_native`,
+      `call_fastq_references_native`.
+- [x] Add adapter support for `.fastq.gz` inputs by normalizing them before
+      calling `kestrel-rs`.
+- [x] Remove the stale BioScript Java-parity test that targeted the deleted
+      in-tree Kestrel internals.
+- [x] Add small deterministic adapter tests proving `kestrel-rs` emits an
+      expected SNP VCF through the BioScript facade.
+- [ ] Decide whether BioScript should expose a more direct `kestrel.run(...)`
+      path that writes output files, or keep the current string-returning VCF
+      helpers for Python/VNtyper integration.
+- [ ] Move any remaining Kestrel algorithm parity expectations into
+      `vendor/rust/kestrel-rs`.
+
+## Samtools Facade
+
+- [x] Existing BioScript command-builder surface:
+      `samtools.view_region`, `samtools.fastq`, `samtools.depth`.
+- [x] Existing native prototype supports BAM slicing, FASTQ extraction, and
+      depth summary through BioScript-owned primitives.
+- [ ] Replace native prototype internals with calls into `samtools-rs` once the
+      crate is available.
+- [ ] Prioritize Samtools after vendoring HTS/BCFtools because VNtyper's BAM
+      path should become:
+      `samtools.view` -> `samtools.index/sort` if needed ->
+      `samtools.fastq` -> `samtools.depth`.
+- [ ] Keep the public BioScript API shaped like familiar samtools operations:
+      `view`, `fastq`, `sort`, `index`, `depth`, `faidx`.
+- [ ] Add adapter tests for:
+      region parsing, indexed BAM input, `.bam/.bai` discovery, paired FASTQ
+      output counts, depth summary fields, and error mapping.
+- [ ] Keep oracle tests against real samtools opt-in only.
+
+## BCFtools Facade
+
+- [x] Existing BioScript command-builder surface:
+      `bcftools.sort`, `bcftools.view_filter`.
+- [x] Add `vendor/rust/bcftools-rs`.
+- [x] Inspect the `bcftools-rs` public API and choose the thinnest adapter
+      surface for VNtyper.
+- [x] Replace command-only behavior with native calls where the Rust crate
+      supports them.
+      Initial native method: `view_header_native`, backed by
+      `bcftools_rs::commands::view`.
+- [ ] Initial target operations:
+      `view`, `sort`, `norm`, compression/index helpers if needed.
+- [ ] Add adapter tests for VCF input/output, compressed output, filter
+      expressions used by VNtyper, and useful error messages.
+      Initial coverage verifies `bcftools-rs` header extraction through
+      `bioscript-libs` and Python wrapper delegation. Broader filter/compressed
+      output coverage remains to add.
+
+## HTS / Pysam / Pyfaidx Facades
+
+- [x] Keep `pysam` and `pyfaidx` as recognizable compatibility namespaces.
+- [x] `pyfaidx.Fasta` has a small Rust/Python-compatible FASTA slice surface.
+- [x] `pysam.AlignmentFile.fetch` has initial BAM/CRAM read support.
+- [ ] Refactor lower-level alignment code to flow through `pysam` or
+      `samtools` facades where that makes scripts more recognizable.
+- [ ] Use `htslib-rs` as the shared backend for BAM/CRAM/VCF/FASTA primitives
+      once vendored.
+- [ ] Add parity tests from focused upstream `pysam` and `pyfaidx` cases, not
+      the full upstream test suites.
+
+## Python Package
+
+- [x] Keep top-level `python/bioscript` matching BioScript import names.
+- [x] Keep optional delegation to real Python libraries where useful.
+- [x] Expose native functions through `rust/bioscript-python`.
+- [ ] Add Python tests that call the real native extension for each engine
+      facade with tiny fixtures.
+- [ ] Keep mocked-extension tests for argument normalization and missing-native
+      behavior.
+- [ ] Make Python-only fallback behavior explicit per module:
+      real Python library, pure Python fallback, or native-required.
+
+## Runtime / Monty Integration
+
+- [x] Support `from bioscript import x` import rewriting for current modules.
+- [x] Bind initial module objects and method calls in `bioscript-runtime`.
+- [ ] Add runtime method bindings for native samtools/bcftools operations once
+      facades are stable.
+- [ ] Keep runtime responsible for language/object adaptation only.
+- [ ] Keep file/path/security policy centralized and reused across facades.
+
+## VNtyper Proof Port
+
+- [x] Keep upstream VNtyper source vendored at `ports/vntyper/vntyper`.
+- [x] Keep local large test data ignored under `ports/vntyper/test-data`.
+- [x] Keep BioScript VNtyper port under `ports/vntyper/bioscript`.
+- [x] Keep BioScript-owned VNtyper tests under `ports/vntyper/tests`.
+- [x] Current tests cover command planning, Kestrel VCF parsing, scoring,
+      report JSON/HTML shape, and fake-runner pipeline behavior.
+- [x] Current adapter smoke tests prove BioScript can call `kestrel-rs`.
+- [ ] Reframe the final VNtyper port as its own BioScript code, not as a copy
+      of every upstream dependency. The VNtyper-specific layer should contain:
+      MUC1 regions, motif/reference data, Kestrel parameter choices,
+      frameshift/depth classification, report rows, and CLI/pipeline glue.
+- [ ] Keep generic work out of the VNtyper port. Generic work belongs in
+      BioScript facades:
+      BAM/CRAM slicing, FASTQ extraction, depth, VCF parsing/filtering,
+      Kestrel calling, FASTA lookup, TSV/JSON helpers.
+- [ ] Refactor VNtyper pipeline code to prefer:
+      `samtools.*`, `bcftools.*`, `kestrel.*`, `pysam.*`, and `pyfaidx.*`
+      over private helper names.
+- [ ] Define the minimal VNtyper BioScript interface, for example:
+      `run_vntyper(bam=..., reference_build="hg19", output_dir=...)` and
+      `run_vntyper_fastq(r1=..., r2=..., reference_build="hg19", output_dir=...)`.
+- [ ] Keep VNtyper data/config small and explicit:
+      MUC1 coordinates, motif FASTA path, confidence thresholds, report schema,
+      and optional validation toggles.
+- [ ] Once `samtools-rs` and `bcftools-rs` are wired, rerun the BAM path using
+      only BioScript native facades.
+- [ ] Compare native-facade VNtyper output against expected positive/negative
+      fixtures for:
+      FASTQ path, BAM path, report JSON, and HTML report.
+- [ ] Keep large real-data parity tests opt-in with clear skip messages.
+
+## Test Policy
+
+- [x] Engine crates own engine correctness:
+      e.g. `vendor/rust/kestrel-rs` owns Kestrel Java/algorithm parity.
+- [x] BioScript owns facade correctness:
+      argument normalization, path handling, output shape, error mapping, and
+      integration with BioScript/Python/VNtyper.
+- [ ] Add tiny fixture tests for every facade method before wiring it into
+      VNtyper.
+- [ ] Add opt-in oracle tests against real CLI tools where useful.
+- [ ] Add one end-to-end VNtyper native-facade test after each major backend is
+      swapped in.
+
+## Near-Term Order
+
+- [x] Commit the Kestrel vendor/facade swap.
+- [x] Add `vendor/rust/htslib-rs`.
+- [x] Add `vendor/rust/bcftools-rs`.
+- [x] Inspect `bcftools-rs` and `htslib-rs` APIs.
+- [x] Implement the first `bcftools` native adapter method.
+- [x] Add adapter tests for that method.
+- [ ] Add `vendor/rust/samtools-rs` when ready.
+- [ ] Implement the Samtools native facade methods needed for VNtyper.
+- [ ] Add Samtools adapter tests using tiny BAM/FASTQ/depth fixtures.
+- [ ] Refactor existing BioScript helper methods to call public facades.
+- [ ] Build the minimal VNtyper BioScript pipeline on top of those facades.
+
+## Verification Commands
+
+```sh
+cd rust
+cargo test -p bioscript-libs
+cargo test -p bioscript-python
+cargo test --manifest-path ../vendor/rust/kestrel-rs/Cargo.toml
+```
+
+```sh
+PYTHONPATH=python python -m unittest discover -s python/tests -p 'test_*.py'
+PYTHONPATH=python:ports/vntyper/bioscript python -m unittest discover -s ports/vntyper/tests -p 'test_*.py'
+```

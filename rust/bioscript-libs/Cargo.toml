@@ -6,7 +6,11 @@ edition = "2024"
 [dependencies]
 bioscript-core = { path = "../bioscript-core" }
 bioscript-formats = { path = "../bioscript-formats" }
+bcftools-rs = { path = "../../vendor/rust/bcftools-rs/crates/bcftools-rs" }
 flate2 = "1.1.9"
+kanalyze = { path = "../../vendor/rust/kestrel-rs/crates/kanalyze" }
+kestrel = { path = "../../vendor/rust/kestrel-rs/crates/kestrel" }
+tempfile = "3"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

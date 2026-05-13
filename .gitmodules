@@ -6,11 +6,11 @@
 	path = noodles
 	url = git@github.com:madhavajay/noodles.git
 	branch = madhava/streaming-slice-records
-[submodule "vendor/upstream/python/pysam"]
-	path = vendor/upstream/python/pysam
+[submodule "vendor/python/pysam"]
+	path = vendor/python/pysam
 	url = https://github.com/pysam-developers/pysam.git
-[submodule "vendor/upstream/python/pyfaidx"]
-	path = vendor/upstream/python/pyfaidx
+[submodule "vendor/python/pyfaidx"]
+	path = vendor/python/pyfaidx
 	url = https://github.com/mdshw5/pyfaidx.git
 [submodule "ports/vntyper/vntyper"]
 	path = ports/vntyper/vntyper
@@ -21,3 +21,12 @@
 [submodule "ports/vntyper/kescases"]
 	path = ports/vntyper/kescases
 	url = https://github.com/paudano/kescases.git
+[submodule "vendor/rust/kestrel-rs"]
+	path = vendor/rust/kestrel-rs
+	url = git@github.com:madhavajay/kestrel-rs.git
+[submodule "vendor/rust/htslib-rs"]
+	path = vendor/rust/htslib-rs
+	url = git@github.com:madhavajay/htslib-rs.git
+[submodule "vendor/rust/bcftools-rs"]
+	path = vendor/rust/bcftools-rs
+	url = git@github.com:madhavajay/bcftools-rs.git

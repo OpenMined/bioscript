@@ -278,6 +278,23 @@ class ToolCommandTests(unittest.TestCase):
             ["bcftools", "view", "-i", 'FILTER="PASS"', "-Oz", "-o", "pass.vcf.gz", "calls.vcf"],
         )
 
+    def test_bcftools_native_view_header_wrapper_delegates_to_extension(self) -> None:
+        calls = []
+
+        def view_header(input_vcf, output_vcf):
+            calls.append((input_vcf, output_vcf))
+
+        fake_native = SimpleNamespace(bcftools_view_header_native=view_header)
+        with patch.dict("sys.modules", {"bioscript._native": fake_native}):
+            self.assertIsNone(bcftools.view_header_native("calls.vcf", "header.vcf"))
+
+        self.assertEqual(calls, [("calls.vcf", "header.vcf")])
+
+    def test_bcftools_native_view_header_reports_missing_extension(self) -> None:
+        with patch.dict("sys.modules", {"bioscript._native": None}):
+            with self.assertRaises(NotImplementedError):
+                bcftools.view_header_native("calls.vcf", "header.vcf")
+
 
 if __name__ == "__main__":
     unittest.main()
