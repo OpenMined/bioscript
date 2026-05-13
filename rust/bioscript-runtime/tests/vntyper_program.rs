@@ -152,6 +152,7 @@ fn vntyper_fastq_bioscript_program_runs_through_runtime() {
     assert!(report.contains("\"algorithm_results\""));
     assert!(report.contains("\"kestrel\""));
     assert!(report.contains("\"Low_Precision\""));
+    assert!(report.contains("\"native bioscript kestrel from FASTQ\""));
     fs::remove_file(output_path).unwrap();
     fs::remove_dir_all(fixture_dir).unwrap();
 }
@@ -218,7 +219,11 @@ fn vntyper_bam_native_bioscript_program_runs_through_runtime() {
     assert!(output_dir.join("tiny-bam_kestrel.vcf").exists());
     assert!(output_dir.join("tiny-bam_kestrel.sorted.vcf.gz").exists());
     assert!(output_dir.join("tiny-bam_kestrel_result.tsv").exists());
-    assert!(output_dir.join("tiny-bam_report.json").exists());
+    let report_json = output_dir.join("tiny-bam_report.json");
+    assert!(report_json.exists());
+    let report = fs::read_to_string(&report_json).unwrap();
+    assert!(report.contains("\"native bioscript samtools/kestrel\""));
+    assert!(report.contains("\"region_length\""));
     fs::remove_file(output_path).unwrap();
     fs::remove_dir_all(fixture_dir).unwrap();
 }

@@ -282,6 +282,11 @@ This is not just a facade spike. The finish line is:
       Large FASTQ/BAM TSV parity remains blocked by `kestrel-rs` output parity.
 - [ ] Compare generated `report.json` to expected fixture output, with explicit
       allowances for paths, timestamps, and tool-version metadata.
+      Partial 2026-05-14: `vcf.build_vntyper_report_json(...)` now accepts
+      optional metadata and coverage dictionaries. The FASTQ and native BAM
+      runtime slices pass pipeline metadata; the BAM slice also passes
+      `samtools.depth_native(...)` coverage into report JSON. Large-data report
+      parity remains blocked by Kestrel output row-count differences.
       Current all-native BAM status after the samtools singleton fix:
       classification and `screening_summary` match expected reports, but
       `kestrel_result.tsv` row counts still differ from expected fixtures
