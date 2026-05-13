@@ -21,8 +21,20 @@ def view_region(bam: str, region: str, output_bam: str, include_unmapped: bool =
     return args
 
 
+def view(bam: str, region: str, output_bam: str) -> list[str]:
+    return view_region(bam, region, output_bam)
+
+
 def fastq(bam: str, fastq_1: str, fastq_2: str) -> list[str]:
     return ["samtools", "fastq", "-1", _path_arg(fastq_1), "-2", _path_arg(fastq_2), _path_arg(bam)]
+
+
+def sort(bam: str, output_bam: str, by_name: bool = False) -> list[str]:
+    args = ["samtools", "sort"]
+    if by_name:
+        args.append("-n")
+    args.extend(["-o", _path_arg(output_bam), _path_arg(bam)])
+    return args
 
 
 def depth(bam: str, region: str, include_zero: bool = False) -> list[str]:
@@ -35,6 +47,10 @@ def depth(bam: str, region: str, include_zero: bool = False) -> list[str]:
 
 def index(bam: str) -> list[str]:
     return ["samtools", "index", _path_arg(bam)]
+
+
+def faidx(fasta: str) -> list[str]:
+    return ["samtools", "faidx", _path_arg(fasta)]
 
 
 def view_region_native(bam: str, region: str, output_bam: str, index: str | None = None) -> int:

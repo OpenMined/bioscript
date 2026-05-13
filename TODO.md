@@ -126,8 +126,11 @@ uses those built-in primitives.
       path should become:
       `samtools.view` -> `samtools.index/sort` if needed ->
       `samtools.fastq` -> `samtools.depth`.
-- [ ] Keep the public BioScript API shaped like familiar samtools operations:
+- [x] Keep the public BioScript API shaped like familiar samtools operations:
       `view`, `fastq`, `sort`, `index`, `depth`, `faidx`.
+      Command-builder facades for those names are exposed in Rust, Python, and
+      the runtime; VNtyper-specific template extraction stays in the native
+      `fastq_native` adapter.
 - [x] Add adapter tests for:
       region parsing, indexed BAM input, `.bam/.bai` discovery, paired FASTQ
       output counts, depth summary fields, and error mapping.

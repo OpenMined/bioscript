@@ -38,10 +38,13 @@ impl BioscriptRuntime {
             ("VcfModule", "VariantFile") => self.method_vcf_variant_file(args, kwargs),
             ("VcfModule", "read_kestrel") => self.method_vcf_read_kestrel(args, kwargs),
             ("KestrelModule", "build_command") => self.method_kestrel_build_command(args, kwargs),
+            ("SamtoolsModule", "view") => self.method_samtools_view(args, kwargs),
             ("SamtoolsModule", "view_region") => self.method_samtools_view_region(args, kwargs),
             ("SamtoolsModule", "fastq") => self.method_samtools_fastq(args, kwargs),
+            ("SamtoolsModule", "sort") => self.method_samtools_sort(args, kwargs),
             ("SamtoolsModule", "depth") => self.method_samtools_depth(args, kwargs),
             ("SamtoolsModule", "index") => self.method_samtools_index(args, kwargs),
+            ("SamtoolsModule", "faidx") => self.method_samtools_faidx(args, kwargs),
             ("SamtoolsModule", "view_region_native") => {
                 self.method_samtools_view_region_native(args, kwargs)
             }

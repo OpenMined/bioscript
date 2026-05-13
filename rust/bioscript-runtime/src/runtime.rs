@@ -16,6 +16,7 @@ mod imports;
 mod lib_methods;
 mod methods;
 mod objects;
+mod samtools_command_methods;
 mod samtools_native_methods;
 mod state;
 mod timing;

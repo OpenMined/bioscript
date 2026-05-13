@@ -263,6 +263,10 @@ class ToolCommandTests(unittest.TestCase):
 
     def test_samtools_fastq_and_view_region(self) -> None:
         self.assertEqual(
+            samtools.view("sample.bam", "chr1:1-10", "slice.bam"),
+            ["samtools", "view", "-b", "sample.bam", "chr1:1-10", "-o", "slice.bam"],
+        )
+        self.assertEqual(
             samtools.fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz"),
             ["samtools", "fastq", "-1", "r1.fastq.gz", "-2", "r2.fastq.gz", "slice.bam"],
         )
@@ -274,6 +278,11 @@ class ToolCommandTests(unittest.TestCase):
             samtools.depth("slice.bam", "chr1:1-10", include_zero=True),
             ["samtools", "depth", "-a", "-r", "chr1:1-10", "slice.bam"],
         )
+        self.assertEqual(
+            samtools.sort("slice.bam", "slice.name.bam", by_name=True),
+            ["samtools", "sort", "-n", "-o", "slice.name.bam", "slice.bam"],
+        )
+        self.assertEqual(samtools.faidx("ref.fa"), ["samtools", "faidx", "ref.fa"])
 
     def test_samtools_native_wrappers_delegate_to_extension(self) -> None:
         calls = []

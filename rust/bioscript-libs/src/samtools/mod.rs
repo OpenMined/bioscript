@@ -10,6 +10,10 @@ use crate::{
 
 pub const MODULE: &str = "samtools";
 
+pub fn view(bam: &Path, region: &str, output_bam: &Path) -> LibResult<CommandSpec> {
+    view_region(bam, region, output_bam, false)
+}
+
 pub fn view_region(
     bam: &Path,
     region: &str,
@@ -45,6 +49,15 @@ pub fn fastq(bam: &Path, fastq_1: &Path, fastq_2: &Path) -> LibResult<CommandSpe
     )
 }
 
+pub fn sort(bam: &Path, output_bam: &Path, by_name: bool) -> LibResult<CommandSpec> {
+    let mut args = vec!["sort".to_owned()];
+    if by_name {
+        args.push("-n".to_owned());
+    }
+    args.extend(["-o".to_owned(), path_arg(output_bam)?, path_arg(bam)?]);
+    CommandSpec::new("samtools", args)
+}
+
 pub fn depth(bam: &Path, region: &str) -> LibResult<CommandSpec> {
     CommandSpec::new(
         "samtools",
@@ -59,6 +72,10 @@ pub fn depth(bam: &Path, region: &str) -> LibResult<CommandSpec> {
 
 pub fn index(bam: &Path) -> LibResult<CommandSpec> {
     CommandSpec::new("samtools", vec!["index".to_owned(), path_arg(bam)?])
+}
+
+pub fn faidx(fasta: &Path) -> LibResult<CommandSpec> {
+    CommandSpec::new("samtools", vec!["faidx".to_owned(), path_arg(fasta)?])
 }
 
 pub fn view_region_native(
