@@ -355,6 +355,9 @@ def main():
     records = samtools.view("11_target.bam", "ref1:1-10", "slice.bam", "11_target.bam.bai")
     if records != 0:
         raise Exception("unexpected records return")
+    region_records = samtools.view_region("11_target.bam", "ref1:1-10", "slice_region.bam", False)
+    if region_records != 0:
+        raise Exception("unexpected view_region return")
     depth = samtools.depth("11_target.bam", "ref1:1-10", "11_target.bam.bai")
     if depth["region_length"] != 10 or depth["uncovered_bases"] != 0:
         raise Exception("bad depth summary")
@@ -365,6 +368,9 @@ def main():
     fastq = samtools.fastq_native("11_target.bam", "ref1:1-10", "r1.fastq.gz", "r2.fastq.gz", "11_target.bam.bai")
     if fastq["read1_records"] != 5 or fastq["read2_records"] != 5:
         raise Exception("bad FASTQ summary")
+    whole_fastq = samtools.fastq("slice.bam", "r1.default.fastq.gz", "r2.default.fastq.gz")
+    if whole_fastq["read1_records"] < 0 or whole_fastq["read2_records"] < 0:
+        raise Exception("bad default FASTQ summary")
 
 if __name__ == "__main__":
     main()
@@ -374,14 +380,20 @@ if __name__ == "__main__":
     .unwrap();
 
     assert!(fs::metadata(dir.join("slice.bam")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("slice_region.bam")).unwrap().len() > 0);
     assert!(fs::metadata(dir.join("sorted.bam")).unwrap().len() > 0);
     assert!(fs::metadata(dir.join("sorted.bam.bai")).unwrap().len() > 0);
     assert!(fs::metadata(dir.join("r1.fastq.gz")).unwrap().len() > 0);
     assert!(fs::metadata(dir.join("r2.fastq.gz")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("r1.default.fastq.gz")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("r2.default.fastq.gz")).unwrap().len() > 0);
     let timings = runtime.timing_snapshot();
     assert!(timings.iter().any(|timing| {
         timing.stage == "native_tool_call"
             && timing.detail.contains("method=samtools.view_region_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail == "method=samtools.fastq"
     }));
     assert!(timings.iter().any(|timing| {
         timing.stage == "native_tool_call" && timing.detail.contains("method=samtools.fastq_native")

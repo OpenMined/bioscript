@@ -89,6 +89,30 @@ impl BioscriptRuntime {
         ))
     }
 
+    pub(super) fn method_samtools_fastq_all_native(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "samtools.fastq")?;
+        if args.len() != 4 {
+            return Err(RuntimeError::InvalidArguments(
+                "samtools.fastq expects bam, fastq_1, and fastq_2".to_owned(),
+            ));
+        }
+        let started = RuntimeInstant::now();
+        let bam =
+            self.resolve_existing_user_path(&expect_string_arg(args, 1, "samtools.fastq")?)?;
+        let fastq_1 =
+            self.resolve_user_write_path(&expect_string_arg(args, 2, "samtools.fastq")?)?;
+        let fastq_2 =
+            self.resolve_user_write_path(&expect_string_arg(args, 3, "samtools.fastq")?)?;
+        let summary = samtools::fastq_all_native(&bam, fastq_1.as_path(), fastq_2.as_path())
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        record_native_tool_call(self, "samtools.fastq", started);
+        Ok(fastq_summary_object(summary))
+    }
+
     pub(super) fn method_samtools_depth_native(
         &self,
         args: &[MontyObject],
@@ -170,6 +194,27 @@ impl BioscriptRuntime {
         Ok(MontyObject::None)
     }
 
+    pub(super) fn method_samtools_view_region_default_native(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "samtools.view_region")?;
+        if args.len() != 5 {
+            return Err(RuntimeError::InvalidArguments(
+                "samtools.view_region expects bam, region, output_bam, and include_unmapped"
+                    .to_owned(),
+            ));
+        }
+        if expect_bool_arg(args, 4, "samtools.view_region")? {
+            return Err(RuntimeError::Unsupported(
+                "samtools.view_region include_unmapped=True is only supported by plan_view_region"
+                    .to_owned(),
+            ));
+        }
+        self.method_samtools_view_region_native(&args[..4], kwargs)
+    }
+
     pub(super) fn method_samtools_index_native(
         &self,
         args: &[MontyObject],
@@ -198,6 +243,26 @@ impl BioscriptRuntime {
         record_native_tool_call(self, "samtools.index_native", started);
         Ok(MontyObject::String(written.to_string_lossy().into_owned()))
     }
+}
+
+fn fastq_summary_object(summary: bioscript_formats::alignment::FastqPairSummary) -> MontyObject {
+    MontyObject::Dict(
+        vec![
+            (
+                MontyObject::String("read1_records".to_owned()),
+                MontyObject::Int(summary.read1_records as i64),
+            ),
+            (
+                MontyObject::String("read2_records".to_owned()),
+                MontyObject::Int(summary.read2_records as i64),
+            ),
+            (
+                MontyObject::String("skipped_records".to_owned()),
+                MontyObject::Int(summary.skipped_records as i64),
+            ),
+        ]
+        .into(),
+    )
 }
 
 fn optional_existing_path(

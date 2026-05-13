@@ -85,14 +85,16 @@ This is not just a facade spike. The finish line is:
       native implementation exists.
       Partial 2026-05-14: BioScript runtime dispatch now routes
       `bcftools.sort`, `bcftools.index`, `bcftools.view`, `samtools.view`,
-      `samtools.depth`, `samtools.sort`, and `samtools.index` to native Rust
-      facades by default. `plan_*` methods keep command planning behavior, and
+      `samtools.view_region`, `samtools.fastq`, `samtools.depth`,
+      `samtools.sort`, and `samtools.index` to native Rust facades by default
+      where the public signature has a native equivalent. `plan_*` methods keep
+      command planning behavior, and
       `vntyper.bs` / `vntyper-fastq.bs` were updated to use `plan_*` because
-      they are still command-plan sketches. Keep this open until
-      `samtools.fastq` / `samtools.view_region` native/default signatures and
-      Kestrel runtime execution naming are resolved. Verified with focused
-      `bioscript-runtime` security tests, `vntyper_program`, Python wrapper
-      tests, and the small VNtyper suite.
+      they are still command-plan sketches. Keep this open until Kestrel
+      runtime execution naming is resolved and the final VNtyper BioScript
+      program uses native runtime calls instead of the command-plan sketch.
+      Verified with focused `bioscript-runtime` security tests,
+      `vntyper_program`, Python wrapper tests, and the small VNtyper suite.
 - [x] Keep command-builder fallbacks for dry-run/planning, but mark them as
       planning surfaces rather than the primary implementation.
       Added explicit `plan_*` runtime and Python wrapper aliases for samtools,

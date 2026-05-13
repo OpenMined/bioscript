@@ -132,6 +132,27 @@ pub fn fastq_native(
     })
 }
 
+pub fn fastq_all_native(bam: &Path, fastq_1: &Path, fastq_2: &Path) -> LibResult<FastqPairSummary> {
+    let temp_dir = tempfile::tempdir().map_err(samtools_error)?;
+    let other_fastq = temp_dir.path().join("other.fastq.gz");
+    let singleton_fastq = temp_dir.path().join("singleton.fastq.gz");
+    samtools_native::fastq_native(
+        bam,
+        fastq_1,
+        fastq_2,
+        Some(&other_fastq),
+        Some(&singleton_fastq),
+        true,
+        None,
+    )
+    .map_err(samtools_error)?;
+    Ok(FastqPairSummary {
+        read1_records: fastq_record_count(fastq_1)?,
+        read2_records: fastq_record_count(fastq_2)?,
+        skipped_records: fastq_record_count(&singleton_fastq)?,
+    })
+}
+
 fn depth_summary(depths: impl IntoIterator<Item = u32>) -> DepthSummary {
     let mut depths = depths.into_iter().collect::<Vec<_>>();
     if depths.is_empty() {

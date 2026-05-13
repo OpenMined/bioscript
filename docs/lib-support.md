@@ -217,8 +217,12 @@ Each Python shim exposes `BACKEND_POLICY`, a `ModuleBackendPolicy` with `auto`,
   command-planning surfaces for dry runs and audit logs.
 - `samtools` in BioScript runtime: `view`, `depth`, `sort`, and `index`
   default to native Rust execution where the native signature matches the
-  public method. `plan_*` remains the command-planning surface. `fastq` and
-  `view_region` stay as planners until the public native signatures are settled.
+  public method. `view_region` defaults to native execution when
+  `include_unmapped=False`; use `plan_view_region` for the command-plan form
+  or for `include_unmapped=True`. `fastq` defaults to whole-BAM native FASTQ
+  conversion; VNtyper's region-sliced FASTQ path still uses
+  `fastq_native(bam, region, ...)`. `plan_*` remains the command-planning
+  surface.
 - `kestrel`: `plan_command` is the command-planning surface. Native execution
   currently uses explicit low-level helpers such as `run_native` /
   `call_fastq_references_native`.
