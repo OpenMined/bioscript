@@ -235,8 +235,13 @@ This is not just a facade spike. The finish line is:
       JSON/report rows, including summary, coverage QC, variant table controls,
       flags, pipeline log, and optional IGV configuration. Byte-for-byte
       upstream HTML parity is not available as an upstream fixture target.
-- [ ] Make every large-data parity skip message list exactly which file, tool,
+- [x] Make every large-data parity skip message list exactly which file, tool,
       environment variable, or native extension is missing.
+      `ports/vntyper/tests/data_manifest.py` centralizes the skip checks and
+      `test_data_manifest.py` now asserts the opt-in BAM, FASTQ, and samtools
+      oracle gates name their required environment variables. Missing data,
+      tools, expected outputs, and native-extension imports are reported by
+      concrete path/tool/import labels in the same helper.
 
 ## Engine Parity Gaps To Close Or Escalate
 
@@ -260,8 +265,13 @@ This is not just a facade spike. The finish line is:
       opt-in VNtyper parity gates.
 - [ ] `bcftools-rs`: only implement native `view -i/-e` filtering if the
       BioScript VNtyper port actually needs it.
-- [ ] `htslib-rs`: confirm shared BAM/CRAM/FASTA/VCF primitives are used through
+- [x] `htslib-rs`: confirm shared BAM/CRAM/FASTA/VCF primitives are used through
       facades, not duplicated in BioScript-specific code.
+      Confirmed by the current facade wiring: `pyfaidx/fasta.rs` uses
+      `htslib_rs::faidx_compat`, `pysam/alignment_file.rs` and
+      `pysam/aligned_segment.rs` use `htslib_rs` alignment/SAM primitives,
+      `samtools/mod.rs` delegates to `samtools_rs::native`, and
+      `bcftools/mod.rs` delegates to `bcftools_rs::commands`.
 
 ## Rust Test Targets To Add
 
@@ -272,8 +282,12 @@ This is not just a facade spike. The finish line is:
       Rust.
 - [x] `rust/bioscript-runtime/tests/vntyper_program.rs`
       for executing the BioScript VNtyper test program through the runtime.
-- [ ] Keep large real-data tests opt-in and out of normal `cargo test` unless
+- [x] Keep large real-data tests opt-in and out of normal `cargo test` unless
       they use tiny checked-in fixtures.
+      Large VNtyper BAM/FASTQ/oracle gates are Python unittest gates controlled
+      by explicit `BIOSCRIPT_RUN_*` environment variables. Normal Cargo coverage
+      uses tiny in-test fixtures, including `vntyper_facades.rs` and
+      `vntyper_program.rs`.
 
 ## Python/Test Harness Work
 
