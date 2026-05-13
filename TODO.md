@@ -178,7 +178,8 @@ This is not just a facade spike. The finish line is:
       conversion now lives in `rust/bioscript-libs/src/vcf/vntyper.rs` and is
       covered by `rust/bioscript-libs/tests/vntyper_vcf.rs`. The FASTQ runtime
       slice also writes `report.json` through
-      `vcf.build_vntyper_report_json(...)`. Full VNtyper HTML report logic and
+      `vcf.build_vntyper_report_json(...)` and materializes
+      `kestrel_result.tsv` from facade rows. Full VNtyper HTML report logic and
       the BAM program are still scaffold-backed.
 - [ ] If Monty syntax is missing required features, add the smallest runtime or
       syntax support needed and cover it with runtime tests.
@@ -269,6 +270,11 @@ This is not just a facade spike. The finish line is:
       Added `test_native_fastq_pipeline_gate.py`, gated by
       `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1`.
 - [ ] Compare generated `kestrel_result.tsv` to expected fixture output.
+      Partial 2026-05-14: `vntyper-fastq.bs` now writes
+      `kestrel_result.tsv` from `vcf.read_vntyper_kestrel(...)` rows, and
+      `rust/bioscript-libs/tests/vntyper_vcf.rs` compares the tiny fixture row
+      fields against `ports/vntyper/tests/fixtures/kestrel_minimal_expected.tsv`.
+      Large FASTQ/BAM TSV parity remains blocked by `kestrel-rs` output parity.
 - [ ] Compare generated `report.json` to expected fixture output, with explicit
       allowances for paths, timestamps, and tool-version metadata.
       Current all-native BAM status after the samtools singleton fix:
