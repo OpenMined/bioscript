@@ -180,7 +180,9 @@ This is not just a facade spike. The finish line is:
       slice also writes `report.json` through
       `vcf.build_vntyper_report_json(...)` and materializes
       `kestrel_result.tsv` from facade rows. Full VNtyper HTML report logic and
-      the BAM program are still scaffold-backed.
+      the final `vntyper.bs` BAM entry point are still scaffold-backed.
+      `ports/vntyper/bioscript/vntyper-bam-native.bs` now exercises the native
+      BAM runtime slice on runtime-provided regions/reference paths.
 - [ ] If Monty syntax is missing required features, add the smallest runtime or
       syntax support needed and cover it with runtime tests.
       No new Monty syntax was required for the native FASTQ execution slice.
@@ -260,8 +262,11 @@ This is not just a facade spike. The finish line is:
 - [x] Add BioScript runtime tests that execute the VNtyper BioScript program on
       tiny deterministic fixtures.
       Added `rust/bioscript-runtime/tests/vntyper_program.rs`, which executes
-      `ports/vntyper/bioscript/vntyper.bs` through `BioscriptRuntime` and
-      verifies the generated command plan.
+      `ports/vntyper/bioscript/vntyper.bs`,
+      `ports/vntyper/bioscript/vntyper-fastq.bs`, and
+      `ports/vntyper/bioscript/vntyper-bam-native.bs` through
+      `BioscriptRuntime` and verifies generated native artifacts or the command
+      plan.
 - [x] Add large-data opt-in parity tests for positive and negative BAM fixtures.
       Covered by `test_native_bam_pipeline_gate.py` and the existing external
       BAM gate.
