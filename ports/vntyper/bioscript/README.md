@@ -88,9 +88,11 @@ BCFtools, and VCF facades through the BioScript runtime and materialize
 BAM-slice, FASTQ, VCF, TSV, and report JSON artifacts.
 
 The tiny runtime tests pass small Kestrel values so short synthetic references
-can produce calls. VNtyper production-style runs should pass `kmer_size=20`,
-`minimum_difference=5`, `max_haplotypes=2`, and `max_saved_states=2`, matching
-the current native parity gates.
+can produce calls. Current native parity gates use `kmer_size=20`,
+`minimum_difference=5`, `max_haplotypes=2`, and `max_saved_states=2` as bounded
+native-engine settings. Upstream Java VNtyper config uses `max_align_states=40`
+and `max_hap_states=40`; matching those limits in `kestrel-rs` is still part of
+the Kestrel parity/performance gap.
 
 ## Local Test Gates
 
