@@ -88,11 +88,11 @@ This is not just a facade spike. The finish line is:
       `samtools.view_region`, `samtools.fastq`, `samtools.depth`,
       `samtools.sort`, and `samtools.index` to native Rust facades by default
       where the public signature has a native equivalent. `plan_*` methods keep
-      command planning behavior, and
-      `vntyper.bs` / `vntyper-fastq.bs` were updated to use `plan_*` because
-      they are still command-plan sketches. Kestrel native execution is exposed
-      to the runtime as explicit `kestrel.run_native(...)`; `kestrel.plan_command`
-      remains the command-planning surface. Verified with focused
+      command planning behavior. Kestrel native execution is exposed to the
+      runtime as explicit `kestrel.run_native(...)`; `kestrel.plan_command`
+      remains the command-planning surface. `vntyper.bs`,
+      `vntyper-bam-native.bs`, and `vntyper-fastq.bs` now run native runtime
+      facades directly. Verified with focused
       `bioscript-runtime` security tests, `vntyper_program`, Python wrapper
       tests, and the small VNtyper suite.
 - [x] Keep command-builder fallbacks for dry-run/planning, but mark them as
@@ -408,7 +408,8 @@ This is not just a facade spike. The finish line is:
       cover the behavior.
       The scaffold tests remain in `ports/vntyper/tests` and still cover
       `vntyper_port.py`, `vntyper_external_pipeline.py`, `vntyper_report.py`,
-      and `vntyper_commands.py` while runtime coverage is partial. Verified
+      and `vntyper_commands.py` as oracle coverage beside the runtime tests.
+      Verified
       2026-05-14 with
       `PYTHONPATH=python:ports/vntyper/bioscript python -m unittest discover -s ports/vntyper/tests -p 'test_*.py'`
       passing 74 tests with 8 opt-in skips.
@@ -476,5 +477,10 @@ This is not just a facade spike. The finish line is:
       pytest file under `ports/vntyper/vntyper/tests`, plus benchmark/docker
       exclusions and known engine-owned gaps. Remaining parity failures are
       explicitly owned by `kestrel-rs` or the normalized TSV/JSON parity gates.
-- [ ] `TODO.md` contains no ambiguous "done enough" items; each completed item
+- [x] `TODO.md` contains no ambiguous "done enough" items; each completed item
       points to a file, test, command, or documented decision.
+      Audited 2026-05-14 with
+      `rg -n "done enough|good enough|partial|Partial|TBD|maybe|should|open|blocked|Keep open|scaffold-backed|command-plan sketches|runtime coverage is partial" TODO.md`
+      and direct TODO review. Remaining "Partial"/"Keep open" language is only
+      attached to unchecked parity blockers. Completed items point to concrete
+      files, test names, commands, or documented decisions.
