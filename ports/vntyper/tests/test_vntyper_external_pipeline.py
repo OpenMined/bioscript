@@ -106,6 +106,30 @@ class VntyperExternalPipelineTests(unittest.TestCase):
         )
         self.assertEqual(result.commands[-1][-1], "work/sample1/kestrel/output.vcf")
 
+    def test_dry_run_can_plan_native_bcftools_bam_path(self):
+        result = vntyper_external_pipeline.run_bam_pipeline(
+            "sample.bam",
+            "sample1",
+            "work/sample1",
+            dry_run=True,
+            use_native_kestrel=True,
+            use_native_bcftools=True,
+        )
+
+        self.assertEqual(
+            [command[0] for command in result.commands],
+            [
+                "samtools",
+                "samtools",
+                "samtools",
+                "samtools",
+                "bioscript.kestrel.run_native",
+                "bioscript.bcftools.sort_native",
+            ],
+        )
+        self.assertEqual(result.commands[-1][1], "work/sample1/kestrel/output.vcf")
+        self.assertEqual(result.commands[-1][2], "work/sample1/kestrel/output.sorted.vcf.gz")
+
     def test_runner_materializes_kestrel_tsv_and_report_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             calls = []
@@ -256,6 +280,59 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                 report = json.load(handle)
             self.assertEqual(report["metadata"]["alignment_pipeline"], "native bioscript samtools/kestrel")
             self.assertEqual(report["pipeline_log"][-1]["command"][0], "bioscript.kestrel.run_native")
+
+    def test_native_bam_path_can_materialize_sorted_vcf_with_bcftools_facade(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = []
+
+            class FakeNativeSamtools:
+                def view_region_native(self, bam, region, output_bam, index=None):
+                    calls.append(("view", bam, region, output_bam, index))
+                    Path(output_bam).write_bytes(b"bam")
+                    return 1
+
+                def fastq_native(self, bam, region, fastq_1, fastq_2, index=None):
+                    calls.append(("fastq", bam, region, fastq_1, fastq_2, index))
+                    Path(fastq_1).write_bytes(b"r1")
+                    Path(fastq_2).write_bytes(b"r2")
+                    return {"read1_records": 1, "read2_records": 1, "skipped_records": 0}
+
+                def depth_native(self, bam, region, index=None):
+                    calls.append(("depth", bam, region, index))
+                    return {"mean": 10.0, "median": 10.0, "region_length": 1}
+
+            class FakeNativeKestrel:
+                def run_native(self, reference_fasta, fastqs, output_vcf, **kwargs):
+                    calls.append(("kestrel", reference_fasta, fastqs, output_vcf, kwargs))
+                    shutil.copyfile(FIXTURE_VCF, output_vcf)
+                    return output_vcf
+
+            class FakeNativeBcftools:
+                def sort_native(self, input_vcf, output_vcf, *, output_type="z", write_index=True):
+                    calls.append(("bcftools", input_vcf, output_vcf, output_type, write_index))
+                    shutil.copyfile(input_vcf, output_vcf)
+                    Path(f"{output_vcf}.csi").write_bytes(b"index")
+
+            result = vntyper_external_pipeline.run_bam_pipeline(
+                "sample.bam",
+                "sample1",
+                str(Path(tmp) / "sample1"),
+                use_native_samtools=True,
+                use_native_kestrel=True,
+                use_native_bcftools=True,
+                native_samtools=FakeNativeSamtools(),
+                native_kestrel=FakeNativeKestrel(),
+                native_bcftools=FakeNativeBcftools(),
+            )
+
+            self.assertEqual([call[0] for call in calls], ["view", "fastq", "depth", "kestrel", "bcftools"])
+            sorted_vcf = Path(result.output_dir) / "kestrel" / "output.sorted.vcf.gz"
+            self.assertTrue(sorted_vcf.exists())
+            self.assertTrue(Path(f"{sorted_vcf}.csi").exists())
+            with open(result.report_json, "r", encoding="utf-8") as handle:
+                report = json.load(handle)
+            self.assertEqual(report["input_files"]["sorted_vcf"], str(sorted_vcf))
+            self.assertEqual(report["pipeline_log"][-1]["command"][0], "bioscript.bcftools.sort_native")
 
     def test_coverage_from_depth_ignores_malformed_lines(self):
         coverage = vntyper_external_pipeline.coverage_from_depth(

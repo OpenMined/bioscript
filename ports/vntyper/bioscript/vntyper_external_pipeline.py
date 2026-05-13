@@ -104,8 +104,10 @@ def run_bam_pipeline(
     runner: Runner | None = None,
     use_native_samtools: bool = False,
     use_native_kestrel: bool = False,
+    use_native_bcftools: bool = False,
     native_samtools: object | None = None,
     native_kestrel: object | None = None,
+    native_bcftools: object | None = None,
 ) -> ExternalPipelineResult:
     out_dir = Path(output_dir)
     plan = vntyper_commands.plan_bam_pipeline(
@@ -123,6 +125,7 @@ def run_bam_pipeline(
         muc1_reference,
         use_native_samtools,
         use_native_kestrel,
+        use_native_bcftools,
     )
 
     result = ExternalPipelineResult(
@@ -148,16 +151,23 @@ def run_bam_pipeline(
             run_native_kestrel(native_kestrel or kestrel, muc1_reference, plan, result.kestrel_vcf)
         else:
             command_runner(plan.kestrel_command, check=True)
+        if use_native_bcftools:
+            run_native_bcftools(native_bcftools or bcftools, plan)
         materialize_post_kestrel_outputs(
             result,
             input_bam,
             assembly,
             coverage,
+            input_files=bam_input_files(input_bam, result.kestrel_vcf, plan, use_native_bcftools),
             alignment_pipeline=alignment_pipeline_label(use_native_samtools, use_native_kestrel),
         )
     else:
         depth_output = ""
-        for command in external_commands(plan, include_kestrel=not use_native_kestrel):
+        for command in external_commands(
+            plan,
+            include_kestrel=not use_native_kestrel,
+            include_bcftools=not use_native_bcftools,
+        ):
             if command == plan.samtools_depth_command:
                 completed = command_runner(command, check=True, capture_output=True, text=True)
                 depth_output = getattr(completed, "stdout", "") or ""
@@ -165,11 +175,14 @@ def run_bam_pipeline(
                 command_runner(command, check=True)
         if use_native_kestrel:
             run_native_kestrel(native_kestrel or kestrel, muc1_reference, plan, result.kestrel_vcf)
+        if use_native_bcftools:
+            run_native_bcftools(native_bcftools or bcftools, plan)
         materialize_post_kestrel_outputs(
             result,
             input_bam,
             assembly,
             coverage_from_depth(depth_output),
+            input_files=bam_input_files(input_bam, result.kestrel_vcf, plan, use_native_bcftools),
             alignment_pipeline=alignment_pipeline_label(use_native_samtools, use_native_kestrel),
         )
     return result
@@ -181,21 +194,29 @@ def pipeline_commands(
     muc1_reference: str,
     use_native_samtools: bool,
     use_native_kestrel: bool,
+    use_native_bcftools: bool,
 ) -> list[list[str]]:
     if use_native_samtools:
         commands = native_samtools_commands(input_bam, plan)
         if not use_native_kestrel:
             commands.append(plan.kestrel_command)
     else:
-        commands = external_commands(plan, include_kestrel=not use_native_kestrel)
+        commands = external_commands(
+            plan,
+            include_kestrel=not use_native_kestrel,
+            include_bcftools=not use_native_bcftools,
+        )
     if use_native_kestrel:
         commands.append(native_kestrel_command(plan, muc1_reference))
+    if use_native_bcftools:
+        commands.append(native_bcftools_sort_command(plan.kestrel_vcf, plan.sorted_vcf))
     return commands
 
 
 def external_commands(
     plan: vntyper_commands.VntyperCommandPlan,
     include_kestrel: bool = True,
+    include_bcftools: bool = True,
 ) -> list[list[str]]:
     commands = [
         plan.samtools_view_command,
@@ -204,13 +225,9 @@ def external_commands(
         plan.samtools_depth_command,
     ]
     if include_kestrel:
-        commands.extend(
-            [
-                plan.kestrel_command,
-                plan.bcftools_sort_command,
-                plan.bcftools_index_command,
-            ]
-        )
+        commands.append(plan.kestrel_command)
+        if include_bcftools:
+            commands.extend([plan.bcftools_sort_command, plan.bcftools_index_command])
     return commands
 
 
@@ -277,6 +294,30 @@ def run_native_kestrel(
         max_saved_states=NATIVE_KESTREL_MAX_SAVED_STATES,
         max_bases=NATIVE_KESTREL_MAX_BASES,
     )
+
+
+def run_native_bcftools(
+    backend: object,
+    plan: vntyper_commands.VntyperCommandPlan,
+) -> None:
+    backend.sort_native(
+        plan.kestrel_vcf,
+        plan.sorted_vcf,
+        output_type="z",
+        write_index=True,
+    )
+
+
+def bam_input_files(
+    input_bam: str,
+    kestrel_vcf: str,
+    plan: vntyper_commands.VntyperCommandPlan,
+    include_sorted_vcf: bool,
+) -> dict[str, str]:
+    files = {"bam": input_bam, "vcf": kestrel_vcf}
+    if include_sorted_vcf:
+        files["sorted_vcf"] = plan.sorted_vcf
+    return files
 
 
 def alignment_pipeline_label(use_native_samtools: bool, use_native_kestrel: bool) -> str:
