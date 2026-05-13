@@ -393,8 +393,16 @@ class ToolCommandTests(unittest.TestCase):
             ["bcftools", "sort", "-Oz", "-o", "calls.vcf.gz", "calls.vcf"],
         )
         self.assertEqual(
+            bcftools.view("calls.vcf", "calls.bcf", output_type="b"),
+            ["bcftools", "view", "-O", "b", "-o", "calls.bcf", "calls.vcf"],
+        )
+        self.assertEqual(
             bcftools.view_filter("calls.vcf", "pass.vcf.gz", 'FILTER="PASS"'),
             ["bcftools", "view", "-i", 'FILTER="PASS"', "-Oz", "-o", "pass.vcf.gz", "calls.vcf"],
+        )
+        self.assertEqual(
+            bcftools.norm("calls.vcf", "ref.fa", "norm.vcf.gz"),
+            ["bcftools", "norm", "-f", "ref.fa", "-Oz", "-o", "norm.vcf.gz", "calls.vcf"],
         )
 
     def test_bcftools_native_view_header_wrapper_delegates_to_extension(self) -> None:

@@ -167,8 +167,11 @@ uses those built-in primitives.
       `index_native`, backed by `bcftools_rs::commands::{view,index}`.
       Native sort now calls `bcftools_rs::commands::sort` for the VNtyper
       `sort -o output.vcf.gz -W -O z` path.
-- [ ] Initial target operations:
+- [x] Initial target operations:
       `view`, `sort`, `norm`, compression/index helpers if needed.
+      Command-builder facades now cover `view`, `sort`, `norm`,
+      `view_filter`, and `index`; native helpers cover `view`, `sort`, and
+      indexing where `bcftools-rs` already supports them.
 - [ ] Add adapter tests for VCF input/output, compressed output, filter
       expressions used by VNtyper, and useful error messages.
       Initial coverage verifies `bcftools-rs` header extraction, VCF output,

@@ -62,6 +62,45 @@ fn bcftools_vntyper_subset_builds_allowed_commands() {
     assert_eq!(filtered.program(), "bcftools");
     assert_eq!(filtered.args()[0], "view");
     assert!(filtered.args().contains(&"FILTER=\"PASS\"".to_owned()));
+
+    let viewed = bcftools::view(
+        PathBuf::from("calls.vcf").as_path(),
+        PathBuf::from("calls.bcf").as_path(),
+        "b",
+    )
+    .unwrap();
+    assert_eq!(
+        viewed.argv(),
+        vec![
+            "bcftools",
+            "view",
+            "-O",
+            "b",
+            "-o",
+            "calls.bcf",
+            "calls.vcf"
+        ]
+    );
+
+    let normalized = bcftools::norm(
+        PathBuf::from("calls.vcf").as_path(),
+        PathBuf::from("ref.fa").as_path(),
+        PathBuf::from("norm.vcf.gz").as_path(),
+    )
+    .unwrap();
+    assert_eq!(
+        normalized.argv(),
+        vec![
+            "bcftools",
+            "norm",
+            "-f",
+            "ref.fa",
+            "-Oz",
+            "-o",
+            "norm.vcf.gz",
+            "calls.vcf"
+        ]
+    );
 }
 
 #[test]

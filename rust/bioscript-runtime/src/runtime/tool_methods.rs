@@ -58,6 +58,32 @@ impl BioscriptRuntime {
         )
     }
 
+    pub(super) fn method_bcftools_view(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bcftools.view")?;
+        if args.len() != 4 {
+            return Err(RuntimeError::InvalidArguments(
+                "bcftools.view expects input_vcf, output_vcf, and output_type".to_owned(),
+            ));
+        }
+        let started = RuntimeInstant::now();
+        command_argv_object(
+            self,
+            "bcftools.view",
+            started,
+            bcftools::view(
+                PathBuf::from(expect_string_arg(args, 1, "bcftools.view")?).as_path(),
+                PathBuf::from(expect_string_arg(args, 2, "bcftools.view")?).as_path(),
+                &expect_string_arg(args, 3, "bcftools.view")?,
+            )
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?
+            .argv(),
+        )
+    }
+
     pub(super) fn method_bcftools_view_filter(
         &self,
         args: &[MontyObject],
