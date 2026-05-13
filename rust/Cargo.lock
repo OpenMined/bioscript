@@ -233,6 +233,7 @@ dependencies = [
  "flate2",
  "kanalyze",
  "kestrel",
+ "samtools-rs",
  "tempfile",
 ]
 
@@ -482,6 +483,7 @@ dependencies = [
  "anstyle",
  "clap_lex",
  "strsim",
+ "terminal_size",
 ]
 
 [[package]]
@@ -1413,6 +1415,24 @@ name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+
+[[package]]
+name = "libdeflate-sys"
+version = "1.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72753e0008ea87963d2f0770042d0df7abe51fafbb8dcaf618ac440f2f1fec0a"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "libdeflater"
+version = "1.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1ee41cf6fb1bb6030dfb59ffb7bc01ab26aade44142084c87f0fc7a1658fe71"
+dependencies = [
+ "libdeflate-sys",
+]
 
 [[package]]
 name = "libm"
@@ -2384,6 +2404,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "samtools-rs"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "bstr",
+ "bytes",
+ "clap",
+ "flate2",
+ "htslib-rs",
+ "indexmap",
+ "libdeflater",
+ "md-5 0.10.6",
+ "memchr",
+ "regex",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2655,6 +2693,16 @@ dependencies = [
  "fastrand",
  "getrandom 0.3.4",
  "once_cell",
+ "rustix",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "terminal_size"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
+dependencies = [
  "rustix",
  "windows-sys 0.61.2",
 ]

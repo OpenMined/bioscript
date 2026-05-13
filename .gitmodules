@@ -30,3 +30,6 @@
 [submodule "vendor/rust/bcftools-rs"]
 	path = vendor/rust/bcftools-rs
 	url = git@github.com:madhavajay/bcftools-rs.git
+[submodule "vendor/rust/samtools-rs"]
+	path = vendor/rust/samtools-rs
+	url = git@github.com:madhavajay/samtools-rs.git
