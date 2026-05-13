@@ -281,7 +281,13 @@ This is not just a facade spike. The finish line is:
       `kestrel_result.tsv` from `vcf.read_vntyper_kestrel(...)` rows, and
       `rust/bioscript-libs/tests/vntyper_vcf.rs` compares the tiny fixture row
       fields against `ports/vntyper/tests/fixtures/kestrel_minimal_expected.tsv`.
-      Large FASTQ/BAM TSV parity remains blocked by `kestrel-rs` output parity.
+      The opt-in native FASTQ parity gate now compares normalized TSV
+      fingerprints over stable columns. Current native FASTQ status:
+      `positive` classification matches but TSV fingerprint differs
+      (`2417` Rust rows vs `3737` Java expected rows);
+      `negative` differs in both TSV fingerprint and classification
+      (`2322` Rust rows vs `4897` Java expected rows). Keep open until
+      `kestrel-rs` output parity is fixed or accepted.
 - [ ] Compare generated `report.json` to expected fixture output, with explicit
       allowances for paths, timestamps, and tool-version metadata.
       Partial 2026-05-14: `vcf.build_vntyper_report_json(...)` now accepts
@@ -456,6 +462,10 @@ This is not just a facade spike. The finish line is:
       4897 rows, zero passing rows, and zero non-negative-confidence rows.
 - [ ] VNtyper report JSON and TSV outputs match expected fixtures with explicit
       normalized fields.
+      `ports/vntyper/tests/test_native_fastq_pipeline_gate.py` now records
+      normalized TSV fingerprints and report summaries in failure context.
+      It currently fails for both representative FASTQ samples because
+      `kestrel-rs` emits different rows than Java Kestrel.
 - [x] VNtyper HTML report structure test passes.
       Covered by `ports/vntyper/tests/test_vntyper_report.py`, which passes in
       the small VNtyper suite and checks the rendered report summary, coverage
