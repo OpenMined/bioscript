@@ -1,6 +1,6 @@
 use std::{
-    collections::BTreeMap,
-    fs,
+    fs::File,
+    io::{BufReader, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
@@ -9,24 +9,29 @@ use crate::{LibError, LibResult};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fasta {
     path: PathBuf,
-    records: BTreeMap<String, String>,
+    index: Option<htslib_rs::faidx_compat::Index>,
 }
 
 impl Fasta {
     pub fn open(path: impl Into<PathBuf>) -> Self {
         Self {
             path: path.into(),
-            records: BTreeMap::new(),
+            index: None,
         }
     }
 
     pub fn from_path(path: impl Into<PathBuf>) -> LibResult<Self> {
         let path = path.into();
-        let contents = fs::read_to_string(&path).map_err(|err| {
-            LibError::InvalidArguments(format!("failed to read FASTA {}: {err}", path.display()))
+        let file = File::open(&path).map_err(|err| {
+            LibError::InvalidArguments(format!("failed to open FASTA {}: {err}", path.display()))
         })?;
-        let records = parse_fasta_records(&contents)?;
-        Ok(Self { path, records })
+        let index = htslib_rs::faidx_compat::build_index(BufReader::new(file)).map_err(|err| {
+            LibError::InvalidArguments(format!("failed to index FASTA {}: {err}", path.display()))
+        })?;
+        Ok(Self {
+            path,
+            index: Some(index),
+        })
     }
 
     pub fn get(&self, contig: &str) -> LibResult<FastaRecord> {
@@ -35,74 +40,46 @@ impl Fasta {
                 "pyfaidx.Fasta contig name cannot be empty".to_owned(),
             ));
         }
-        let sequence = self.records.get(contig).ok_or_else(|| {
+        let Some(index) = self.index.as_ref() else {
+            return Err(LibError::InvalidArguments(format!(
+                "pyfaidx.Fasta record {contig:?} was not loaded from {}",
+                self.path.display()
+            )));
+        };
+        let mut file = File::open(&self.path).map_err(|err| {
             LibError::InvalidArguments(format!(
-                "pyfaidx.Fasta record {contig:?} was not found in {}",
+                "failed to open FASTA {}: {err}",
+                self.path.display()
+            ))
+        })?;
+        file.seek(SeekFrom::Start(0)).map_err(|err| {
+            LibError::InvalidArguments(format!(
+                "failed to seek FASTA {}: {err}",
+                self.path.display()
+            ))
+        })?;
+        let sequence = htslib_rs::faidx_compat::fetch_region_sequence(&mut file, index, contig)
+            .map_err(|err| {
+                LibError::InvalidArguments(format!(
+                    "pyfaidx.Fasta record {contig:?} was not found in {}: {err}",
+                    self.path.display()
+                ))
+            })?;
+        let sequence = String::from_utf8(sequence).map_err(|err| {
+            LibError::InvalidArguments(format!(
+                "pyfaidx.Fasta record {contig:?} in {} is not UTF-8: {err}",
                 self.path.display()
             ))
         })?;
         Ok(FastaRecord {
             name: contig.to_owned(),
-            sequence: sequence.clone(),
+            sequence,
         })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
-}
-
-fn parse_fasta_records(contents: &str) -> LibResult<BTreeMap<String, String>> {
-    let mut records = BTreeMap::new();
-    let mut current_name: Option<String> = None;
-    let mut current_sequence = String::new();
-
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Some(rest) = trimmed.strip_prefix('>') {
-            flush_record(&mut records, &mut current_name, &mut current_sequence)?;
-            let name = rest
-                .split_whitespace()
-                .next()
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| LibError::InvalidArguments("FASTA header is empty".to_owned()))?;
-            current_name = Some(name.to_owned());
-        } else if current_name.is_none() {
-            return Err(LibError::InvalidArguments(
-                "FASTA sequence appeared before first header".to_owned(),
-            ));
-        } else {
-            current_sequence.push_str(trimmed);
-        }
-    }
-
-    flush_record(&mut records, &mut current_name, &mut current_sequence)?;
-    if records.is_empty() {
-        return Err(LibError::InvalidArguments(
-            "FASTA did not contain any records".to_owned(),
-        ));
-    }
-    Ok(records)
-}
-
-fn flush_record(
-    records: &mut BTreeMap<String, String>,
-    current_name: &mut Option<String>,
-    current_sequence: &mut String,
-) -> LibResult<()> {
-    let Some(name) = current_name.take() else {
-        return Ok(());
-    };
-    if records.contains_key(&name) {
-        return Err(LibError::InvalidArguments(format!(
-            "duplicate FASTA record {name:?}"
-        )));
-    }
-    records.insert(name, std::mem::take(current_sequence));
-    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
