@@ -243,9 +243,13 @@ uses those built-in primitives.
       BioScript facades:
       BAM/CRAM slicing, FASTQ extraction, depth, VCF parsing/filtering,
       Kestrel calling, FASTA lookup, TSV/JSON helpers.
-- [ ] Refactor VNtyper pipeline code to prefer:
+- [x] Refactor VNtyper pipeline code to prefer:
       `samtools.*`, `bcftools.*`, `kestrel.*`, `pysam.*`, and `pyfaidx.*`
       over private helper names.
+      `ports/vntyper/bioscript/vntyper_commands.py` builds the BAM plan
+      through `bioscript.samtools`, `bioscript.bcftools`, and
+      `bioscript.kestrel`; `vntyper_external_pipeline.py` uses the same public
+      facade modules for native Samtools, Kestrel, and BCFtools execution.
       Native Kestrel execution now goes through `kestrel.run_native(...)`
       instead of VNtyper manually loading references and writing VCF text.
       The FASTQ-only path can now optionally run native Kestrel followed by
@@ -268,7 +272,13 @@ uses those built-in primitives.
 - [ ] Compare native-facade VNtyper output against expected positive/negative
       fixtures for:
       FASTQ path, BAM path, report JSON, and HTML report.
-- [ ] Keep large real-data parity tests opt-in with clear skip messages.
+- [x] Keep large real-data parity tests opt-in with clear skip messages.
+      Large VNtyper data gates live behind explicit environment switches such
+      as `BIOSCRIPT_RUN_EXTERNAL_BAM_PARITY=1`,
+      `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1`, and
+      `BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1`; missing data, tools, expected
+      outputs, and native extensions raise `unittest.SkipTest` with concrete
+      prerequisite messages.
 
 ## Test Policy
 
