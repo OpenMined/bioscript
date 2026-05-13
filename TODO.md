@@ -357,7 +357,10 @@ This is not just a facade spike. The finish line is:
       (`High_Precision` vs expected `negative`).
 - [ ] VNtyper report JSON and TSV outputs match expected fixtures with explicit
       normalized fields.
-- [ ] VNtyper HTML report structure test passes.
+- [x] VNtyper HTML report structure test passes.
+      Covered by `ports/vntyper/tests/test_vntyper_report.py`, which passes in
+      the small VNtyper suite and checks the rendered report summary, coverage
+      QC, variant table controls, flags, pipeline log, and IGV attributes.
 - [ ] Upstream VNtyper test map is complete and every relevant upstream behavior
       has a ported test, Rust facade test, runtime test, or documented exclusion.
 - [ ] `TODO.md` contains no ambiguous "done enough" items; each completed item
