@@ -1,4 +1,5 @@
-use bioscript_libs::vcf::{parse_kestrel_vcf, vntyper::vntyper_kestrel_rows};
+use bioscript_libs::vcf::{VcfRecord, parse_kestrel_vcf, vntyper::vntyper_kestrel_rows};
+use serde_json::Value;
 
 #[test]
 fn parses_kestrel_vcf_sample_depth_fields_for_vntyper() {
@@ -59,6 +60,50 @@ fn builds_vntyper_kestrel_call_rows_for_fixture() {
             "MUC1\t220\tC\tCGG\t5.0\t10000.0\t0.0005\tNegative\tFalse\tTrue\tFalse",
         ]
     );
+}
+
+#[test]
+fn builds_vntyper_report_summary_for_fixture() {
+    let records = parse_kestrel_vcf(include_str!(
+        "../../../ports/vntyper/tests/fixtures/kestrel_minimal.vcf"
+    ))
+    .unwrap();
+    let rows = vntyper_kestrel_rows(&records);
+    let mut input_files = VcfRecord::new();
+    input_files.insert("vcf".to_owned(), "kestrel_minimal.vcf".to_owned());
+    let report: Value = serde_json::from_str(
+        &bioscript_libs::vcf::vntyper_report_json("fixture", &input_files, &rows).unwrap(),
+    )
+    .unwrap();
+    let expected: Value = serde_json::from_str(include_str!(
+        "../../../ports/vntyper/tests/fixtures/kestrel_minimal_expected_report.json"
+    ))
+    .unwrap();
+
+    assert_eq!(report["sample_name"], "fixture");
+    assert_eq!(
+        report["algorithm_results"]["kestrel"],
+        expected["algorithm_results"]["kestrel"]
+    );
+    assert_eq!(
+        report["algorithm_results"]["advntr"],
+        expected["algorithm_results"]["advntr"]
+    );
+    assert_eq!(
+        report["algorithm_results"]["quality_metrics_pass"],
+        expected["algorithm_results"]["quality_metrics_pass"]
+    );
+    assert_eq!(report["coverage"]["status"], expected["coverage"]["status"]);
+    assert_eq!(
+        report["coverage"]["quality_pass"],
+        expected["coverage"]["quality_pass"]
+    );
+    assert_eq!(report["screening_summary"], expected["screening_summary"]);
+    assert_eq!(
+        report["kestrel_variant_count"],
+        expected["kestrel_variant_count"]
+    );
+    assert_eq!(report["best_call"], expected["best_call"]);
 }
 
 #[test]

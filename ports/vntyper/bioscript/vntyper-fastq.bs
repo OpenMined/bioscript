@@ -8,6 +8,7 @@ def main():
     work_dir = output_dir + "/" + sample
     kestrel_vcf = work_dir + "/kestrel/output.vcf"
     sorted_vcf = work_dir + "/kestrel/output.sorted.vcf.gz"
+    report_json = work_dir + "/report.json"
 
     native_vcf = kestrel.run_native(
         reference_fasta,
@@ -22,6 +23,18 @@ def main():
     bcftools.sort(kestrel_vcf, sorted_vcf)
     bcftools.index(sorted_vcf)
     rows = vcf.read_vntyper_kestrel(kestrel_vcf)
+    report_json_text = vcf.build_vntyper_report_json(
+        sample,
+        {
+            "fastq_1": fastq_1,
+            "fastq_2": fastq_2,
+            "reference_fasta": reference_fasta,
+            "vcf": kestrel_vcf,
+            "sorted_vcf": sorted_vcf,
+        },
+        rows,
+    )
+    bioscript.write_text(report_json, report_json_text)
 
     report = {
         "participant_id": sample,
@@ -30,6 +43,7 @@ def main():
         "fastq_2": fastq_2,
         "kestrel_vcf": native_vcf,
         "sorted_vcf": sorted_vcf,
+        "report_json": report_json,
         "first_variant_chrom": rows[0]["CHROM"],
         "first_variant_pos": rows[0]["POS"],
         "first_variant_ref": rows[0]["REF"],

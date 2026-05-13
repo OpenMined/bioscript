@@ -12,6 +12,7 @@ htslib-rs = { path = "../../vendor/rust/bcftools-rs/htslib-rs/crates/htslib-rs" 
 kanalyze = { path = "../../vendor/rust/kestrel-rs/crates/kanalyze" }
 kestrel = { path = "../../vendor/rust/kestrel-rs/crates/kestrel" }
 samtools-rs = { path = "../../vendor/rust/samtools-rs/crates/samtools-rs" }
+serde_json = "1"
 tempfile = "3"
 
 [lints.clippy]

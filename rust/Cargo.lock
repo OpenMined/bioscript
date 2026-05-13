@@ -235,6 +235,7 @@ dependencies = [
  "kanalyze",
  "kestrel",
  "samtools-rs",
+ "serde_json",
  "tempfile",
 ]
 

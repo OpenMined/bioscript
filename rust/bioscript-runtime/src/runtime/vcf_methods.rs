@@ -39,4 +39,63 @@ impl BioscriptRuntime {
                 .collect(),
         ))
     }
+
+    pub(super) fn method_vcf_build_vntyper_report_json(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "vcf.build_vntyper_report_json")?;
+        if args.len() != 4 {
+            return Err(RuntimeError::InvalidArguments(
+                "vcf.build_vntyper_report_json expects sample_name, input_files, rows".to_owned(),
+            ));
+        }
+        let sample_name = expect_string_arg(args, 1, "vcf.build_vntyper_report_json")?;
+        let input_files = string_dict(&args[2], "vcf.build_vntyper_report_json input_files")?;
+        let rows = row_dicts(&args[3], "vcf.build_vntyper_report_json rows")?;
+        let report = vcf::vntyper_report_json(&sample_name, &input_files, &rows)
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        Ok(MontyObject::String(report))
+    }
+}
+
+fn row_dicts(value: &MontyObject, context: &str) -> Result<Vec<vcf::VcfRecord>, RuntimeError> {
+    let MontyObject::List(rows) = value else {
+        return Err(RuntimeError::InvalidArguments(format!(
+            "{context} expects list"
+        )));
+    };
+    rows.iter()
+        .map(|row| string_dict(row, context))
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn string_dict(value: &MontyObject, context: &str) -> Result<vcf::VcfRecord, RuntimeError> {
+    let MontyObject::Dict(items) = value else {
+        return Err(RuntimeError::InvalidArguments(format!(
+            "{context} expects dict"
+        )));
+    };
+    let mut out = vcf::VcfRecord::new();
+    for (key, value) in items {
+        let MontyObject::String(key) = key else {
+            return Err(RuntimeError::InvalidArguments(format!(
+                "{context} dict keys must be strings"
+            )));
+        };
+        out.insert(key.clone(), monty_value_string(value));
+    }
+    Ok(out)
+}
+
+fn monty_value_string(value: &MontyObject) -> String {
+    match value {
+        MontyObject::None => String::new(),
+        MontyObject::Bool(value) => if *value { "True" } else { "False" }.to_owned(),
+        MontyObject::Int(value) => value.to_string(),
+        MontyObject::Float(value) => value.to_string(),
+        MontyObject::String(value) => value.clone(),
+        other => format!("{other:?}"),
+    }
 }
