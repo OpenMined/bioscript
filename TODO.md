@@ -172,9 +172,14 @@ This is not just a facade spike. The finish line is:
       `bcftools.sort_native/index_native` -> VNtyper post-processing/report.
       Verified by the opt-in all-native BAM gate for representative positive
       and negative fixtures.
-- [ ] FASTQ path:
+- [x] FASTQ path:
       input FASTQ pair -> `kestrel.run_native` ->
       `bcftools.sort_native/index_native` -> VNtyper post-processing/report.
+      Implemented in `run_fastq_kestrel(..., use_native_kestrel=True,
+      use_native_bcftools=True)` and covered by
+      `test_native_fastq_pipeline_gate.py`. The path executes and materializes
+      sorted/indexed VCF, TSV, and report JSON; the separate parity criterion
+      remains open because `kestrel-rs` output differs from Java Kestrel.
 - [x] Ensure the BAM path can run without Java Kestrel, external samtools, or
       external bcftools when native gates are enabled.
       `require_all_native_bam_pipeline_prerequisites()` no longer requires
