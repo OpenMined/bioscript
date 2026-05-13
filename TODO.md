@@ -171,8 +171,16 @@ This is not just a facade spike. The finish line is:
       `ports/vntyper/bioscript/vntyper.bs` and runs through the CLI. The native
       execution/post-processing pipeline still needs to move from the Python
       scaffold into runnable BioScript/runtime-supported calls.
+      Partial 2026-05-14: `ports/vntyper/bioscript/vntyper-fastq.bs` now runs
+      native `kestrel.run_native`, `bcftools.sort`, `bcftools.index`, and
+      `vcf.read_kestrel` on tiny FASTQ/reference fixtures through the BioScript
+      runtime and writes a TSV summary. Full VNtyper post-processing/report
+      logic and the BAM program are still scaffold-backed.
 - [ ] If Monty syntax is missing required features, add the smallest runtime or
       syntax support needed and cover it with runtime tests.
+      No new Monty syntax was required for the native FASTQ execution slice.
+      Keep this open until the full VNtyper post-processing/report port proves
+      whether loops, helpers, or richer data handling need runtime work.
 - [x] Keep VNtyper-specific constants in one config surface:
       MUC1 regions, reference FASTA path, Kestrel parameters, confidence
       thresholds, report fields, and optional adVNTR flags.

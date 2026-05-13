@@ -1,34 +1,39 @@
 from bioscript import bcftools
 from bioscript import kestrel
+from bioscript import vcf
 
 
 def main():
     sample = participant_id
-    work_dir = "ports/vntyper/output/" + sample
-    muc1_reference = (
-        "ports/vntyper/vntyper/reference/"
-        + "All_Pairwise_and_Self_Merged_MUC1_motifs_filtered.fa"
-    )
+    work_dir = output_dir + "/" + sample
     kestrel_vcf = work_dir + "/kestrel/output.vcf"
-    kestrel_sam = work_dir + "/kestrel/output.sam"
     sorted_vcf = work_dir + "/kestrel/output.sorted.vcf.gz"
+
+    native_vcf = kestrel.run_native(
+        reference_fasta,
+        [fastq_1, fastq_2],
+        kestrel_vcf,
+        4,
+        sample,
+        1,
+        4,
+        4,
+    )
+    bcftools.sort(kestrel_vcf, sorted_vcf)
+    bcftools.index(sorted_vcf)
+    rows = vcf.read_kestrel(kestrel_vcf)
 
     report = {
         "participant_id": sample,
+        "reference_fasta": reference_fasta,
         "fastq_1": fastq_1,
         "fastq_2": fastq_2,
-        "kestrel_command": kestrel.plan_command(
-            "ports/vntyper/kestrel/kestrel.jar",
-            muc1_reference,
-            kestrel_vcf,
-            kestrel_sam,
-            work_dir + "/kestrel/tmp",
-            sample,
-            fastq_1,
-            fastq_2,
-        ),
-        "bcftools_sort_command": bcftools.plan_sort(kestrel_vcf, sorted_vcf),
-        "bcftools_index_command": bcftools.plan_index(sorted_vcf),
+        "kestrel_vcf": native_vcf,
+        "sorted_vcf": sorted_vcf,
+        "first_variant_chrom": rows[0]["CHROM"],
+        "first_variant_pos": rows[0]["POS"],
+        "first_variant_ref": rows[0]["REF"],
+        "first_variant_alt": rows[0]["ALT"],
     }
     bioscript.write_tsv(output_file, [report])
 
