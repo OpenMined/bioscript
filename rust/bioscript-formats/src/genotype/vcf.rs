@@ -235,10 +235,10 @@ pub(crate) fn lookup_indexed_vcf_variants(
         )?;
         results[idx] = if backend.options.impute_vcf_missing_as_reference
             && observation.genotype.is_none()
-            && observation
-                .evidence
-                .iter()
-                .any(|line| line.contains("no VCF record at"))
+            && !observation.evidence.iter().any(|line| {
+                line.contains("tabix index has no contig")
+                    || line.contains("has no GRCh37/GRCh38 locus")
+            })
         {
             imputed_reference_observation(
                 backend.backend_name(),

@@ -262,13 +262,14 @@ fn observe_vcf_variant<R: std::io::Read + std::io::Seek>(
         assembly,
     )?;
     // Mirror the CLI report flow's `impute_vcf_missing_as_reference: true`
-    // default: when the VCF has no record at this locus, treat the genotype
-    // as homozygous reference.
+    // default. The full-file VCF scanner only marks a variant resolved when a
+    // row actually matches the query. Unrelated rows in the indexed window
+    // must not block reference imputation for absent variant-only calls.
     if observation.genotype.is_none()
-        && observation
-            .evidence
-            .iter()
-            .any(|line| line.contains("no VCF record at"))
+        && !observation.evidence.iter().any(|line| {
+            line.contains("tabix index has no contig")
+                || line.contains("has no GRCh37/GRCh38 locus")
+        })
     {
         if let Some(imputed) = bioscript_formats::imputed_reference_observation(
             "vcf",
