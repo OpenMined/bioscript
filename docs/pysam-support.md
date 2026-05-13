@@ -40,7 +40,7 @@ code. Unsupported APIs should fail with explicit compatibility errors.
 ## Test Sources
 
 Use upstream `pysam` source and tests as reference material under
-`vendor/upstream/python/pysam` once vendored. Port focused tests for:
+`vendor/python/pysam` once vendored. Port focused tests for:
 
 - `AlignmentFile.fetch` region behavior
 - coordinate conventions

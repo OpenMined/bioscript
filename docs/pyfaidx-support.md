@@ -30,7 +30,7 @@ FASTA/FAI access.
 ## Test Sources
 
 Use upstream `pyfaidx` source and tests as reference material under
-`vendor/upstream/python/pyfaidx` once vendored. Port focused tests for:
+`vendor/python/pyfaidx` once vendored. Port focused tests for:
 
 - contig lookup
 - slicing coordinate behavior

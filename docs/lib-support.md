@@ -37,7 +37,7 @@ bioscript-libs module registry
 pysam-compatible shim
         |
         v
-Rust backends: noodles, bioscript-formats, custom native code
+Rust backends: bioscript-formats, noodles, vendored Rust engine crates
 ```
 
 The runtime should only own language binding and object adaptation. The
@@ -110,14 +110,13 @@ python/
     test_runtime_parity.py
 
 vendor/
-  upstream/
-    python/
-      pysam/
-      pyfaidx/
-    cli/
-      samtools/
-      bcftools/
-      htslib/
+  python/
+    pysam/
+    pyfaidx/
+  rust/
+    kestrel-rs/
+    bcftools-rs/
+    htslib-rs/
   testdata/
     pysam/
     samtools/
@@ -218,14 +217,15 @@ if the API needs to diverge later.
 
 ## Upstream Source And Tests
 
-Vendored upstream repositories should be kept under `vendor/upstream/` as git
+Vendored upstream repositories should be kept under `vendor/` as git
 submodules when practical:
 
 ```text
-vendor/upstream/python/pysam
-vendor/upstream/python/pyfaidx
-vendor/upstream/cli/samtools
-vendor/upstream/cli/htslib
+vendor/python/pysam
+vendor/python/pyfaidx
+vendor/rust/kestrel-rs
+vendor/rust/bcftools-rs
+vendor/rust/htslib-rs
 ```
 
 Reasons to clone upstream code:

@@ -7,8 +7,8 @@ focused tests for the compatibility subset it claims to support.
 
 | Project | Path | Use |
 | --- | --- | --- |
-| `pysam` | `vendor/upstream/python/pysam` | Alignment, CRAM/BAM, VCF API reference and targeted test ports. |
-| `pyfaidx` | `vendor/upstream/python/pyfaidx` | FASTA lookup and slicing API reference and targeted test ports. |
+| `pysam` | `vendor/python/pysam` | Alignment, CRAM/BAM, VCF API reference and targeted test ports. |
+| `pyfaidx` | `vendor/python/pyfaidx` | FASTA lookup and slicing API reference and targeted test ports. |
 
 ## CLI Reference Sources
 
@@ -24,7 +24,7 @@ of these becomes true:
 
 ## `pysam` First Test Candidates
 
-Use `vendor/upstream/python/pysam/tests/AlignmentFile_test.py` as the initial
+Use `vendor/python/pysam/tests/AlignmentFile_test.py` as the initial
 source for parity cases.
 
 Smallest useful targets:
@@ -43,7 +43,7 @@ depending on the full upstream test harness.
 
 ## `pyfaidx` First Test Candidates
 
-Use `vendor/upstream/python/pyfaidx/tests/test_feature_bounds_check.py` as the
+Use `vendor/python/pyfaidx/tests/test_feature_bounds_check.py` as the
 initial source for parity cases.
 
 Smallest useful targets:

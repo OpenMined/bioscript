@@ -76,6 +76,15 @@ fn samtools_fastq_native(
     ]))
 }
 
+#[pyfunction]
+fn bcftools_view_header_native(input_vcf: &str, output_vcf: &str) -> PyResult<()> {
+    bioscript_libs::bcftools::view_header_native(
+        PathBuf::from(input_vcf).as_path(),
+        PathBuf::from(output_vcf).as_path(),
+    )
+    .map_err(to_py_value_error)
+}
+
 #[allow(clippy::too_many_arguments)]
 #[pyfunction]
 fn kestrel_call_sequences_native(
@@ -103,43 +112,35 @@ fn kestrel_call_sequences_native(
     max_saved_states: Option<usize>,
     locus_depth: Option<u32>,
 ) -> PyResult<String> {
-    let region = bioscript_libs::kestrel::native::ReferenceRegion {
-        reference_name: reference_name.to_owned(),
-        sequence: reference_sequence.to_owned(),
-    };
-    let detector_config = bioscript_libs::kestrel::native::ActiveRegionDetectorConfig {
-        minimum_difference: minimum_difference.unwrap_or(5),
-        difference_quantile: difference_quantile.unwrap_or(0.90),
-        count_reverse_kmers: true,
-        anchor_both_ends: anchor_both_ends.unwrap_or(true),
-        decay_min: decay_min.unwrap_or(0.55),
-        decay_alpha: decay_alpha.unwrap_or(0.80),
-        peak_scan_length: peak_scan_length.unwrap_or(7),
-        scan_limit_factor: scan_limit_factor.unwrap_or(7.0),
-        max_gap_size: max_gap_size.unwrap_or_else(|| default_alignment_max_gap_size(kmer_size)),
-        recover_right_anchor: recover_right_anchor.unwrap_or(true),
-        call_ambiguous_regions: call_ambiguous_regions.unwrap_or(true),
-    };
-    let assembly_config = bioscript_libs::kestrel::native::HaplotypeAssemblyConfig {
-        min_kmer_count: min_kmer_count.unwrap_or(1),
-        max_haplotypes: max_haplotypes.unwrap_or(40),
-        max_bases: max_bases.unwrap_or(500),
-        max_repeat_count: max_repeat_count.unwrap_or(0),
-        max_saved_states: max_saved_states.unwrap_or(40),
-        locus_depth: locus_depth.unwrap_or(1),
-    };
-    let call_config = bioscript_libs::kestrel::native::NativeKestrelCallConfig::new(
-        source_version.unwrap_or("native"),
+    let _ = (
+        source_version,
+        reference_md5,
+        max_gap_size,
+        recover_right_anchor,
+        max_bases,
+        locus_depth,
+    );
+    let options = kestrel_options(
         sample_name,
-        reference_md5.unwrap_or("."),
+        minimum_difference,
+        difference_quantile,
+        anchor_both_ends,
+        decay_min,
+        decay_alpha,
+        peak_scan_length,
+        scan_limit_factor,
+        call_ambiguous_regions,
+        min_kmer_count,
+        max_haplotypes,
+        max_repeat_count,
+        max_saved_states,
     );
     bioscript_libs::kestrel::native::call_sequences_to_vcf(
-        &region,
+        reference_name,
+        reference_sequence,
         read_sequences.iter().map(String::as_str),
         kmer_size,
-        &detector_config,
-        &assembly_config,
-        &call_config,
+        &options,
     )
     .map_err(to_py_value_error)
 }
@@ -171,44 +172,36 @@ fn kestrel_call_fastq_native(
     max_saved_states: Option<usize>,
     locus_depth: Option<u32>,
 ) -> PyResult<String> {
-    let region = bioscript_libs::kestrel::native::ReferenceRegion {
-        reference_name: reference_name.to_owned(),
-        sequence: reference_sequence.to_owned(),
-    };
-    let detector_config = bioscript_libs::kestrel::native::ActiveRegionDetectorConfig {
-        minimum_difference: minimum_difference.unwrap_or(5),
-        difference_quantile: difference_quantile.unwrap_or(0.90),
-        count_reverse_kmers: true,
-        anchor_both_ends: anchor_both_ends.unwrap_or(true),
-        decay_min: decay_min.unwrap_or(0.55),
-        decay_alpha: decay_alpha.unwrap_or(0.80),
-        peak_scan_length: peak_scan_length.unwrap_or(7),
-        scan_limit_factor: scan_limit_factor.unwrap_or(7.0),
-        max_gap_size: max_gap_size.unwrap_or_else(|| default_alignment_max_gap_size(kmer_size)),
-        recover_right_anchor: recover_right_anchor.unwrap_or(true),
-        call_ambiguous_regions: call_ambiguous_regions.unwrap_or(true),
-    };
-    let assembly_config = bioscript_libs::kestrel::native::HaplotypeAssemblyConfig {
-        min_kmer_count: min_kmer_count.unwrap_or(1),
-        max_haplotypes: max_haplotypes.unwrap_or(40),
-        max_bases: max_bases.unwrap_or(500),
-        max_repeat_count: max_repeat_count.unwrap_or(0),
-        max_saved_states: max_saved_states.unwrap_or(40),
-        locus_depth: locus_depth.unwrap_or(1),
-    };
-    let call_config = bioscript_libs::kestrel::native::NativeKestrelCallConfig::new(
-        source_version.unwrap_or("native"),
+    let _ = (
+        source_version,
+        reference_md5,
+        max_gap_size,
+        recover_right_anchor,
+        max_bases,
+        locus_depth,
+    );
+    let options = kestrel_options(
         sample_name,
-        reference_md5.unwrap_or("."),
+        minimum_difference,
+        difference_quantile,
+        anchor_both_ends,
+        decay_min,
+        decay_alpha,
+        peak_scan_length,
+        scan_limit_factor,
+        call_ambiguous_regions,
+        min_kmer_count,
+        max_haplotypes,
+        max_repeat_count,
+        max_saved_states,
     );
     let paths: Vec<PathBuf> = fastq_paths.into_iter().map(PathBuf::from).collect();
     bioscript_libs::kestrel::native::call_fastq_paths_to_vcf(
-        &region,
+        reference_name,
+        reference_sequence,
         paths.iter().map(PathBuf::as_path),
         kmer_size,
-        &detector_config,
-        &assembly_config,
-        &call_config,
+        &options,
     )
     .map_err(to_py_value_error)
 }
@@ -244,40 +237,34 @@ fn kestrel_call_fastq_references_native(
             bioscript_libs::kestrel::native::NativeReferenceRegion::new(name, sequence, md5)
         })
         .collect();
-    let detector_config = bioscript_libs::kestrel::native::ActiveRegionDetectorConfig {
-        minimum_difference: minimum_difference.unwrap_or(5),
-        difference_quantile: difference_quantile.unwrap_or(0.90),
-        count_reverse_kmers: true,
-        anchor_both_ends: anchor_both_ends.unwrap_or(true),
-        decay_min: decay_min.unwrap_or(0.55),
-        decay_alpha: decay_alpha.unwrap_or(0.80),
-        peak_scan_length: peak_scan_length.unwrap_or(7),
-        scan_limit_factor: scan_limit_factor.unwrap_or(7.0),
-        max_gap_size: max_gap_size.unwrap_or_else(|| default_alignment_max_gap_size(kmer_size)),
-        recover_right_anchor: recover_right_anchor.unwrap_or(true),
-        call_ambiguous_regions: call_ambiguous_regions.unwrap_or(true),
-    };
-    let assembly_config = bioscript_libs::kestrel::native::HaplotypeAssemblyConfig {
-        min_kmer_count: min_kmer_count.unwrap_or(1),
-        max_haplotypes: max_haplotypes.unwrap_or(40),
-        max_bases: max_bases.unwrap_or(500),
-        max_repeat_count: max_repeat_count.unwrap_or(0),
-        max_saved_states: max_saved_states.unwrap_or(40),
-        locus_depth: locus_depth.unwrap_or(1),
-    };
-    let call_config = bioscript_libs::kestrel::native::NativeKestrelCallConfig::new(
-        source_version.unwrap_or("native"),
+    let _ = (
+        source_version,
+        max_gap_size,
+        recover_right_anchor,
+        max_bases,
+        locus_depth,
+    );
+    let options = kestrel_options(
         sample_name,
-        ".",
+        minimum_difference,
+        difference_quantile,
+        anchor_both_ends,
+        decay_min,
+        decay_alpha,
+        peak_scan_length,
+        scan_limit_factor,
+        call_ambiguous_regions,
+        min_kmer_count,
+        max_haplotypes,
+        max_repeat_count,
+        max_saved_states,
     );
     let paths: Vec<PathBuf> = fastq_paths.into_iter().map(PathBuf::from).collect();
     bioscript_libs::kestrel::native::call_fastq_paths_to_vcf_references(
         &references,
         paths.iter().map(PathBuf::as_path),
         kmer_size,
-        &detector_config,
-        &assembly_config,
-        &call_config,
+        &options,
     )
     .map_err(to_py_value_error)
 }
@@ -288,6 +275,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(samtools_view_region_native, module)?)?;
     module.add_function(wrap_pyfunction!(samtools_depth_native, module)?)?;
     module.add_function(wrap_pyfunction!(samtools_fastq_native, module)?)?;
+    module.add_function(wrap_pyfunction!(bcftools_view_header_native, module)?)?;
     module.add_function(wrap_pyfunction!(kestrel_call_sequences_native, module)?)?;
     module.add_function(wrap_pyfunction!(kestrel_call_fastq_native, module)?)?;
     module.add_function(wrap_pyfunction!(
@@ -301,8 +289,35 @@ fn to_py_value_error(err: bioscript_libs::LibError) -> PyErr {
     PyValueError::new_err(err.to_string())
 }
 
-fn default_alignment_max_gap_size(kmer_size: usize) -> usize {
-    bioscript_libs::kestrel::native::AlignmentWeight::default()
-        .max_exclusive_gap_size(kmer_size)
-        .unwrap_or(0)
+#[allow(clippy::too_many_arguments)]
+fn kestrel_options(
+    sample_name: &str,
+    minimum_difference: Option<u32>,
+    difference_quantile: Option<f32>,
+    anchor_both_ends: Option<bool>,
+    decay_min: Option<f32>,
+    decay_alpha: Option<f32>,
+    peak_scan_length: Option<usize>,
+    scan_limit_factor: Option<f32>,
+    call_ambiguous_regions: Option<bool>,
+    min_kmer_count: Option<u32>,
+    max_haplotypes: Option<usize>,
+    max_repeat_count: Option<usize>,
+    max_saved_states: Option<usize>,
+) -> bioscript_libs::kestrel::native::NativeKestrelRunOptions {
+    let mut options = bioscript_libs::kestrel::native::NativeKestrelRunOptions::new(sample_name);
+    options.minimum_difference = minimum_difference.unwrap_or(options.minimum_difference);
+    options.difference_quantile = difference_quantile.unwrap_or(options.difference_quantile);
+    options.anchor_both_ends = anchor_both_ends.unwrap_or(options.anchor_both_ends);
+    options.decay_min = decay_min.unwrap_or(options.decay_min);
+    options.decay_alpha = decay_alpha.unwrap_or(options.decay_alpha);
+    options.peak_scan_length = peak_scan_length.unwrap_or(options.peak_scan_length);
+    options.scan_limit_factor = scan_limit_factor.unwrap_or(options.scan_limit_factor);
+    options.call_ambiguous_regions =
+        call_ambiguous_regions.unwrap_or(options.call_ambiguous_regions);
+    options.min_kmer_count = min_kmer_count.unwrap_or(options.min_kmer_count);
+    options.max_haplotypes = max_haplotypes.unwrap_or(options.max_haplotypes);
+    options.max_repeat_count = max_repeat_count.unwrap_or(options.max_repeat_count);
+    options.max_saved_states = max_saved_states.unwrap_or(options.max_saved_states);
+    options
 }
