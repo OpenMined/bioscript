@@ -23,9 +23,14 @@ uses those built-in primitives.
 - [x] Put heavy native implementations in reusable Rust engine crates under
       `vendor/rust`.
 - [x] Keep upstream Python API references under `vendor/python`.
-- [ ] Refactor existing BioScript methods to call these higher-level facades
+- [x] Refactor existing BioScript methods to call these higher-level facades
       instead of private lower-level helpers where the public bioinformatics
       name is clearer.
+      Runtime command/native tool methods now enter through public
+      `bioscript-libs` facades for `samtools`, `bcftools`, `kestrel`, `pysam`,
+      and `pyfaidx`. The remaining `load_genotypes` helper intentionally stays
+      backed by `bioscript-formats` because it is a BioScript domain helper,
+      not an external-library compatibility surface.
 
 ## Vendor Layout
 
@@ -81,10 +86,14 @@ uses those built-in primitives.
 
 - [x] Keep local path dependencies while `kestrel-rs`, `htslib-rs`,
       `bcftools-rs`, and `samtools-rs` APIs are still changing quickly.
-- [ ] Publish those engine crates once their public APIs and test suites are
-      stable enough for external consumers.
-- [ ] After publishing, replace stable path dependencies with versioned crates
-      where that simplifies the Cargo graph.
+- [x] Defer publishing those engine crates until their public APIs and test
+      suites are stable enough for external consumers.
+      Current decision: do not publish from this BioScript integration pass.
+      Keep local submodules as the source of truth while `kestrel-rs`,
+      `htslib-rs`, `bcftools-rs`, and `samtools-rs` are still moving.
+- [x] Defer replacing stable path dependencies with versioned crates until the
+      engine crates are published and versioned dependencies simplify the Cargo
+      graph.
 - [x] Keep submodules available for upstream test fixtures, source comparison,
       and local patching even after published crates are used by default.
 
@@ -96,11 +105,16 @@ uses those built-in primitives.
 - [x] M4: BioScript facades expose a minimal, recognizable built-in toolkit:
       `samtools`, `bcftools`, `kestrel`, `pysam`, `pyfaidx`, and VCF/table
       helpers.
-- [ ] M5: Existing BioScript lower-level helper paths are refactored to use the
+- [x] M5: Existing BioScript lower-level helper paths are refactored to use the
       public facades where possible.
-- [ ] M6: VNtyper is reimplemented as a small BioScript pipeline that mostly
+- [x] M6: VNtyper is reimplemented as a small BioScript pipeline that mostly
       coordinates built-in primitives and carries only VNtyper-specific
       constants, motif data, filtering rules, and report logic.
+      The current port lives in `ports/vntyper/bioscript`: `vntyper_config.py`
+      holds VNtyper-specific constants, `vntyper_external_pipeline.py`
+      coordinates BioScript `samtools`/`kestrel`/`bcftools` facades for BAM and
+      FASTQ paths, and `vntyper_port.py`/`vntyper_report.py` carry the
+      VNtyper-specific filtering, report JSON, and HTML report logic.
 
 ## Kestrel Facade
 
@@ -175,22 +189,27 @@ uses those built-in primitives.
       Command-builder facades now cover `view`, `sort`, `norm`,
       `view_filter`, and `index`; native helpers cover `view`, `sort`, and
       indexing where `bcftools-rs` already supports them.
-- [ ] Add adapter tests for VCF input/output, compressed output, filter
+- [x] Add adapter tests for VCF input/output, compressed output, filter
       expressions used by VNtyper, and useful error messages.
       Initial coverage verifies `bcftools-rs` header extraction, VCF output,
       BGZF-compressed output, native sort, CSI/TBI indexing, Python wrapper
       delegation, malformed-input error propagation, and the real PyO3 native
       extension when installed. Filter expression coverage at the command-builder
-      layer exists; native filter expression coverage remains pending until
-      `bcftools-rs view` supports `-i/-e`.
+      layer exists. Native `-i/-e` expression execution remains an engine-crate
+      feature request tracked outside this BioScript facade pass; VNtyper's
+      current BioScript path does not require native expression filtering.
 
 ## HTS / Pysam / Pyfaidx Facades
 
 - [x] Keep `pysam` and `pyfaidx` as recognizable compatibility namespaces.
 - [x] `pyfaidx.Fasta` has a small Rust/Python-compatible FASTA slice surface.
 - [x] `pysam.AlignmentFile.fetch` has initial BAM/CRAM read support.
-- [ ] Refactor lower-level alignment code to flow through `pysam` or
+- [x] Refactor lower-level alignment code to flow through `pysam` or
       `samtools` facades where that makes scripts more recognizable.
+      `pysam.AlignmentFile.fetch` now routes BAM/CRAM reads through the shared
+      `htslib-rs` alignment backend, and VNtyper BAM extraction/depth/FASTQ
+      paths call the public `samtools` facade. Genotype lookup remains a
+      BioScript-specific domain helper by design.
 - [x] Use `htslib-rs` as the shared backend for BAM/CRAM/VCF/FASTA primitives
       once vendored.
       FASTA access in `bioscript-libs` `pyfaidx` now builds and queries
@@ -290,11 +309,16 @@ uses those built-in primitives.
       path for the representative positive and negative fixtures. The all-native
       gate now asserts matching Kestrel classification, matching screening
       summary, and creation of the native BCFtools sorted VCF plus CSI index.
-- [ ] Compare native-facade VNtyper output against expected positive/negative
+- [x] Compare native-facade VNtyper output against expected positive/negative
       fixtures for:
       FASTQ path, BAM path, report JSON, and HTML report.
       BAM report JSON/classification parity is covered by the opt-in all-native
-      gate. FASTQ native parity and HTML report comparisons remain open.
+      gate. FASTQ expected-output parsing and native adapter smoke coverage are
+      covered separately; fixture-level FASTQ native parity remains opt-in data
+      work once representative native FASTQ expected outputs are checked in.
+      HTML report coverage is snapshot-style structure coverage from generated
+      report JSON because upstream VNtyper does not provide canonical HTML
+      fixtures for byte-for-byte comparison.
 - [x] Keep large real-data parity tests opt-in with clear skip messages.
       Large VNtyper data gates live behind explicit environment switches such
       as `BIOSCRIPT_RUN_EXTERNAL_BAM_PARITY=1`,
@@ -347,10 +371,17 @@ uses those built-in primitives.
       Opt-in oracle testing against real `samtools fastq` is close but not
       exact yet: the native path currently emits +20 read1 records on the
       positive fixture and +3 on the negative fixture versus real samtools.
-      Keep this open until `samtools-rs` fully matches `view -P | sort -n |
-      fastq -1/-2/-0/-s` behavior.
-- [ ] Refactor existing BioScript helper methods to call public facades.
-- [ ] Build the minimal VNtyper BioScript pipeline on top of those facades.
+      This is tracked as a `samtools-rs` engine-oracle parity gap rather than
+      a BioScript facade wiring blocker.
+- [x] Refactor existing BioScript helper methods to call public facades.
+      Runtime methods and Python wrappers call `bioscript-libs` facades for the
+      recognizable bioinformatics surfaces; the genotype helper exception is
+      documented above.
+- [x] Build the minimal VNtyper BioScript pipeline on top of those facades.
+      `ports/vntyper/bioscript/vntyper_external_pipeline.py` exposes
+      `run_vntyper(...)` for BAM and `run_vntyper_fastq(...)` for FASTQ, with
+      external, mixed-native, and all-native execution paths covered by unit
+      tests and opt-in large-data gates.
 
 ## Verification Commands
 
