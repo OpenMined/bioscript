@@ -253,9 +253,13 @@ fn pysam_fetch_validates_region_before_backend_exists() {
     let err = file.fetch("", Some(1), Some(2)).unwrap_err();
     assert!(err.to_string().contains("requires a contig"));
 
+    // Focused port of pysam AlignmentFile fetch coordinate behavior:
+    // reversed coordinates are rejected before backend I/O.
     let err = file.fetch("22", Some(10), Some(9)).unwrap_err();
     assert!(err.to_string().contains("stop must be >= start"));
 
+    // Focused port of pysam AlignmentFile fetch mode behavior:
+    // CRAM fetches need an explicit reference source.
     let err = file.fetch("22", Some(9), Some(10)).unwrap_err();
     assert!(err.to_string().contains("requires reference_filename"));
 }
@@ -275,6 +279,16 @@ fn pysam_fetch_streams_tiny_cram_fixture() {
             && record.reference_start.is_some()
             && record.reference_end.is_some()
     }));
+
+    // Focused port of pysam's invalid-contig fetch behavior: unknown
+    // references surface as errors rather than empty successful iterators.
+    let err = file
+        .fetch("missing_chr", Some(999), Some(1001))
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("invalid reference sequence"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -334,6 +348,8 @@ fn pyfaidx_fasta_loads_fixture_and_fetches_contig_sequence() {
     // seq[0:0] should return a blank string.
     assert_eq!(record.slice(0, 0).unwrap(), "");
     assert_eq!(record.slice(0, 6).unwrap(), "TGTACC");
+    // Ported from pyfaidx test_Fasta_integer_index.py's invalid-key behavior:
+    // a missing contig should fail explicitly.
     assert!(fasta.get("missing").is_err());
 }
 

@@ -198,8 +198,12 @@ uses those built-in primitives.
       their vendored engine crates. The pysam-style BAM/CRAM fetch path now
       routes through `htslib_rs::alignment_compat` indexed query helpers and
       converts HTS records into the BioScript `AlignedSegment` surface.
-- [ ] Add parity tests from focused upstream `pysam` and `pyfaidx` cases, not
+- [x] Add parity tests from focused upstream `pysam` and `pyfaidx` cases, not
       the full upstream test suites.
+      `rust/bioscript-libs/tests/api.rs` ports focused pyfaidx zero-length
+      slice and missing-key behavior from `vendor/python/pyfaidx/tests`, plus
+      pysam reversed-coordinate, missing-reference, and invalid-contig fetch
+      behavior from `vendor/python/pysam/tests/AlignmentFileFetchTestUtils.py`.
 
 ## Python Package
 
