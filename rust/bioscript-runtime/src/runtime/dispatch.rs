@@ -49,11 +49,13 @@ impl BioscriptRuntime {
             ("KestrelModule", "plan_command") => self.method_kestrel_build_command(args, kwargs),
             ("SamtoolsModule", "view") => self.method_samtools_view_region_native(args, kwargs),
             ("SamtoolsModule", "plan_view") => self.method_samtools_view(args, kwargs),
-            ("SamtoolsModule", "view_region") => self.method_samtools_view_region(args, kwargs),
+            ("SamtoolsModule", "view_region") => {
+                self.method_samtools_view_region_default_native(args, kwargs)
+            }
             ("SamtoolsModule", "plan_view_region") => {
                 self.method_samtools_view_region(args, kwargs)
             }
-            ("SamtoolsModule", "fastq") => self.method_samtools_fastq(args, kwargs),
+            ("SamtoolsModule", "fastq") => self.method_samtools_fastq_all_native(args, kwargs),
             ("SamtoolsModule", "plan_fastq") => self.method_samtools_fastq(args, kwargs),
             ("SamtoolsModule", "sort") => self.method_samtools_sort_native(args, kwargs),
             ("SamtoolsModule", "plan_sort") => self.method_samtools_sort(args, kwargs),
