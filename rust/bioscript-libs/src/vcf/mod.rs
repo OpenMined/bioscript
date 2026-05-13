@@ -65,6 +65,13 @@ pub fn parse_kestrel_vcf(contents: &str) -> LibResult<Vec<VcfRecord>> {
         {
             record.insert("Sample".to_owned(), sample);
         }
+        if !record.contains_key("Sample")
+            && header.len() > 9
+            && let Some(sample_name) = header.last()
+            && let Some(sample) = record.get(sample_name).cloned()
+        {
+            record.insert("Sample".to_owned(), sample);
+        }
         records.push(record);
     }
     Ok(records)
