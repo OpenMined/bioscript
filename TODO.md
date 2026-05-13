@@ -161,7 +161,7 @@ uses those built-in primitives.
 - [x] Expose native functions through `rust/bioscript-python`.
 - [ ] Add Python tests that call the real native extension for each engine
       facade with tiny fixtures.
-- [ ] Keep mocked-extension tests for argument normalization and missing-native
+- [x] Keep mocked-extension tests for argument normalization and missing-native
       behavior.
 - [x] Make Python-only fallback behavior explicit per module:
       real Python library, pure Python fallback, or native-required.

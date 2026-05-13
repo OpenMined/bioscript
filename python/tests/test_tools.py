@@ -204,6 +204,10 @@ class ToolCommandTests(unittest.TestCase):
         with patch.dict("sys.modules", {"bioscript._native": None}):
             with self.assertRaises(NotImplementedError):
                 kestrel.call_sequences_native("MUC1", "ACGT", ["ACGT"], 3)
+            with self.assertRaises(NotImplementedError):
+                kestrel.call_fastq_native("MUC1", "ACGT", ["reads.fastq"], 4)
+            with self.assertRaises(NotImplementedError):
+                kestrel.call_fastq_references_native([("MUC1", "ACGT", "md5")], ["reads.fastq"], 4)
 
     def test_samtools_fastq_and_view_region(self) -> None:
         self.assertEqual(
@@ -262,6 +266,10 @@ class ToolCommandTests(unittest.TestCase):
 
     def test_samtools_native_wrappers_report_missing_extension(self) -> None:
         with patch.dict("sys.modules", {"bioscript._native": None}):
+            with self.assertRaises(NotImplementedError):
+                samtools.view_region_native("slice.bam", "chr1:1-10", "out.bam")
+            with self.assertRaises(NotImplementedError):
+                samtools.depth_native("slice.bam", "chr1:1-10")
             with self.assertRaises(NotImplementedError):
                 samtools.fastq_native(
                     "slice.bam",
@@ -322,6 +330,10 @@ class ToolCommandTests(unittest.TestCase):
         with patch.dict("sys.modules", {"bioscript._native": None}):
             with self.assertRaises(NotImplementedError):
                 bcftools.view_header_native("calls.vcf", "header.vcf")
+            with self.assertRaises(NotImplementedError):
+                bcftools.view_native("calls.vcf", "calls.vcf.gz", output_type="z")
+            with self.assertRaises(NotImplementedError):
+                bcftools.index_native("calls.vcf.gz", "calls.vcf.gz.tbi")
 
     def test_bcftools_native_view_header_real_extension_extracts_header(self) -> None:
         try:
