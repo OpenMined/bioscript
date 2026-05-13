@@ -135,8 +135,16 @@ This is not just a facade spike. The finish line is:
       test proves the refactor is equivalent.
       No APOL1/load-genotypes refactor was made in this pass; existing APOL1
       tests pass under the Rust workspace gate.
-- [ ] Add regression tests before replacing any old helper with a facade-backed
+- [x] Add regression tests before replacing any old helper with a facade-backed
       implementation.
+      Runtime facade/default-name replacements are covered by
+      `rust/bioscript-runtime/tests/security.rs`:
+      `bioscript_bcftools_native_methods_materialize_outputs`,
+      `bioscript_samtools_native_methods_materialize_outputs`, and
+      `bioscript_kestrel_native_method_materializes_vcf`. Command-planning
+      compatibility remains covered by
+      `bioscript_vntyper_tool_modules_build_structured_commands` and the
+      `vntyper_program` runtime tests.
 - [x] Check first-party production Rust source files under
       `rust/bioscript-*/src/**/*.rs` stay at or below 500 lines after edits.
       Verified by `bioscript-core/tests/source_size.rs` in the Rust workspace
