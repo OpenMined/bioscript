@@ -243,7 +243,11 @@ impl PackageWorkspace {
         let gene = yaml_string(&value, "gene").unwrap_or_default();
         let ref_allele = manifest.spec.reference.clone().unwrap_or_default();
         let alt_allele = manifest.spec.alternate.clone().unwrap_or_default();
-        let genotype_display = row.get("genotype").cloned().unwrap_or_default();
+        let depth = parse_optional_u32(row.get("depth"));
+        let alt_count = parse_optional_u32(row.get("alt_count"));
+        let genotype_display = deletion_copy_number_display(row, &manifest, depth, alt_count)
+            .or_else(|| row.get("genotype").cloned())
+            .unwrap_or_default();
         let assembly = row
             .get("assembly")
             .filter(|value| !value.is_empty())
@@ -264,6 +268,7 @@ impl PackageWorkspace {
             &genotype_display,
             &ref_allele,
             &alt_allele,
+            manifest.spec.kind,
             &chrom,
             inferred_sex,
         );
@@ -298,8 +303,8 @@ impl PackageWorkspace {
             "genotype_display": genotype_display,
             "zygosity": zygosity,
             "ref_count": parse_optional_u32(row.get("ref_count")),
-            "alt_count": parse_optional_u32(row.get("alt_count")),
-            "depth": parse_optional_u32(row.get("depth")),
+            "alt_count": alt_count,
+            "depth": depth,
             "genotype_quality": serde_json::Value::Null,
             "allele_balance": serde_json::Value::Null,
             "outcome": outcome,

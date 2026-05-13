@@ -379,11 +379,21 @@ pub(super) fn normalize_app_genotype(
     display: &str,
     ref_allele: &str,
     alt_allele: &str,
+    kind: Option<VariantKind>,
     chrom: &str,
     inferred_sex: Option<&SexInference>,
 ) -> (String, String) {
     if display.is_empty() {
         return ("./.".to_owned(), "unknown".to_owned());
+    }
+    if matches!(kind, Some(VariantKind::Deletion))
+        && ref_allele.len() != 1
+        && display
+            .chars()
+            .filter(char::is_ascii_alphabetic)
+            .all(|allele| matches!(allele.to_ascii_uppercase(), 'I' | 'D'))
+    {
+        return normalize_app_genotype(display, "I", "D", None, chrom, inferred_sex);
     }
     let alleles: Vec<char> = display.chars().filter(char::is_ascii_alphabetic).collect();
     if ref_allele.len() != 1 || alt_allele.len() != 1 {
@@ -413,6 +423,35 @@ pub(super) fn normalize_app_genotype(
         (1, 1) => ("0/1".to_owned(), "het".to_owned()),
         (0, 2) => ("1/1".to_owned(), "hom_alt".to_owned()),
         _ => (display.to_owned(), "unknown".to_owned()),
+    }
+}
+
+pub(super) fn deletion_copy_number_display(
+    row: &BTreeMap<String, String>,
+    manifest: &VariantManifest,
+    depth: Option<u32>,
+    alt_count: Option<u32>,
+) -> Option<String> {
+    if !matches!(manifest.spec.kind, Some(VariantKind::Deletion)) {
+        return None;
+    }
+    if row.get("backend").map(String::as_str) != Some("cram") {
+        return None;
+    }
+    if manifest.spec.reference.as_deref().unwrap_or_default().len() <= 1 {
+        return None;
+    }
+    let depth = depth?;
+    if depth == 0 {
+        return None;
+    }
+    let alt_fraction = f64::from(alt_count.unwrap_or(0)) / f64::from(depth);
+    if alt_fraction >= 0.8 {
+        Some("DD".to_owned())
+    } else if alt_fraction <= 0.2 {
+        Some("II".to_owned())
+    } else {
+        Some("DI".to_owned())
     }
 }
 
