@@ -196,8 +196,11 @@ This is not just a facade spike. The finish line is:
       Added `rust/bioscript-libs/tests/vntyper_facades.rs` for the native
       Samtools/Kestrel/BCFtools facade path on tiny generated fixtures. Existing
       `api.rs` tests cover VCF parsing and facade error mapping.
-- [ ] Add BioScript runtime tests that execute the VNtyper BioScript program on
+- [x] Add BioScript runtime tests that execute the VNtyper BioScript program on
       tiny deterministic fixtures.
+      Added `rust/bioscript-runtime/tests/vntyper_program.rs`, which executes
+      `ports/vntyper/bioscript/vntyper.bs` through `BioscriptRuntime` and
+      verifies the generated command plan.
 - [ ] Add large-data opt-in parity tests for positive and negative BAM fixtures.
 - [x] Add large-data opt-in parity tests for positive and negative FASTQ
       fixtures.
@@ -244,7 +247,7 @@ This is not just a facade spike. The finish line is:
 - [ ] `rust/bioscript-libs/tests/vntyper_vcf.rs`
       for VNtyper-relevant VCF parsing and call-table conversion if moved to
       Rust.
-- [ ] `rust/bioscript-runtime/tests/vntyper_program.rs`
+- [x] `rust/bioscript-runtime/tests/vntyper_program.rs`
       for executing the BioScript VNtyper test program through the runtime.
 - [ ] Keep large real-data tests opt-in and out of normal `cargo test` unless
       they use tiny checked-in fixtures.
