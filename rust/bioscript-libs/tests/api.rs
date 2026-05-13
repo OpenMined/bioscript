@@ -408,6 +408,25 @@ fn kestrel_native_adapter_accepts_gzipped_fastq_for_kestrel_rs() {
 
 #[test]
 fn samtools_vntyper_subset_builds_allowed_commands() {
+    let view = samtools::view(
+        PathBuf::from("sample.bam").as_path(),
+        "chr1:1-10",
+        PathBuf::from("slice.bam").as_path(),
+    )
+    .unwrap();
+    assert_eq!(
+        view.argv(),
+        vec![
+            "samtools",
+            "view",
+            "-b",
+            "sample.bam",
+            "chr1:1-10",
+            "-o",
+            "slice.bam"
+        ]
+    );
+
     let view = samtools::view_region(
         PathBuf::from("sample.bam").as_path(),
         "chr1:1-10",
@@ -436,6 +455,27 @@ fn samtools_vntyper_subset_builds_allowed_commands() {
     .unwrap();
     assert_eq!(fastq.program(), "samtools");
     assert_eq!(fastq.args()[0], "fastq");
+
+    let sorted = samtools::sort(
+        PathBuf::from("slice.bam").as_path(),
+        PathBuf::from("slice.name.bam").as_path(),
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        sorted.argv(),
+        vec![
+            "samtools",
+            "sort",
+            "-n",
+            "-o",
+            "slice.name.bam",
+            "slice.bam"
+        ]
+    );
+
+    let faidx = samtools::faidx(PathBuf::from("ref.fa").as_path()).unwrap();
+    assert_eq!(faidx.argv(), vec!["samtools", "faidx", "ref.fa"]);
 }
 
 #[test]

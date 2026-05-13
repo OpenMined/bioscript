@@ -195,6 +195,15 @@ def main():
     fcmd = samtools.fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz")
     if fcmd[0] != "samtools":
         raise Exception("bad samtools command")
+    vcmd = samtools.view("sample.bam", "chr1:1-10", "slice.bam")
+    if vcmd[1] != "view":
+        raise Exception("bad samtools view command")
+    scmd = samtools.sort("slice.bam", "slice.name.bam", True)
+    if scmd[1] != "sort":
+        raise Exception("bad samtools sort command")
+    facmd = samtools.faidx("ref.fa")
+    if facmd[1] != "faidx":
+        raise Exception("bad samtools faidx command")
     bcmd = bcftools.sort("calls.vcf", "calls.vcf.gz")
     if bcmd[0] != "bcftools":
         raise Exception("bad bcftools command")
@@ -212,6 +221,15 @@ if __name__ == "__main__":
     }));
     assert!(timings.iter().any(|timing| {
         timing.stage == "tool_command_plan" && timing.detail.contains("method=samtools.fastq")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=samtools.view")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=samtools.sort")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=samtools.faidx")
     }));
     assert!(timings.iter().any(|timing| {
         timing.stage == "tool_command_plan" && timing.detail.contains("method=bcftools.sort")
