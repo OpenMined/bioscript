@@ -10,11 +10,14 @@ uses those built-in primitives.
 
 - [x] Use explicit BioScript imports:
       `from bioscript import samtools, bcftools, kestrel, pysam, pyfaidx`.
-- [ ] Treat BioScript library support as the product:
+- [x] Treat BioScript library support as the product:
       common pipeline code should read like standard bioinformatics workflows,
       not like private BioScript internals.
-- [ ] Build in layers:
+- [x] Build in layers:
       engine crates -> BioScript facades -> facade tests -> VNtyper port.
+      Current layering is engine crates under `vendor/rust`, public facades in
+      `rust/bioscript-libs` plus `python/bioscript`, adapter/runtime tests, and
+      VNtyper pipeline code under `ports/vntyper/bioscript`.
 - [x] Keep BioScript-owned code as compatibility/adaptation code, not full
       algorithm ports.
 - [x] Put heavy native implementations in reusable Rust engine crates under
@@ -76,13 +79,13 @@ uses those built-in primitives.
 
 ## Crate Publishing
 
-- [ ] Keep local path dependencies while `kestrel-rs`, `htslib-rs`,
+- [x] Keep local path dependencies while `kestrel-rs`, `htslib-rs`,
       `bcftools-rs`, and `samtools-rs` APIs are still changing quickly.
 - [ ] Publish those engine crates once their public APIs and test suites are
       stable enough for external consumers.
 - [ ] After publishing, replace stable path dependencies with versioned crates
       where that simplifies the Cargo graph.
-- [ ] Keep submodules available for upstream test fixtures, source comparison,
+- [x] Keep submodules available for upstream test fixtures, source comparison,
       and local patching even after published crates are used by default.
 
 ## Milestones
@@ -90,7 +93,7 @@ uses those built-in primitives.
 - [x] M1: Kestrel Rust engine is vendored and callable through BioScript.
 - [x] M2: HTS and BCFtools Rust engines are vendored and wired by path.
 - [x] M3: Samtools Rust engine is vendored and wired by path.
-- [ ] M4: BioScript facades expose a minimal, recognizable built-in toolkit:
+- [x] M4: BioScript facades expose a minimal, recognizable built-in toolkit:
       `samtools`, `bcftools`, `kestrel`, `pysam`, `pyfaidx`, and VCF/table
       helpers.
 - [ ] M5: Existing BioScript lower-level helper paths are refactored to use the
@@ -243,11 +246,11 @@ uses those built-in primitives.
 - [x] Current tests cover command planning, Kestrel VCF parsing, scoring,
       report JSON/HTML shape, and fake-runner pipeline behavior.
 - [x] Current adapter smoke tests prove BioScript can call `kestrel-rs`.
-- [ ] Reframe the final VNtyper port as its own BioScript code, not as a copy
+- [x] Reframe the final VNtyper port as its own BioScript code, not as a copy
       of every upstream dependency. The VNtyper-specific layer should contain:
       MUC1 regions, motif/reference data, Kestrel parameter choices,
       frameshift/depth classification, report rows, and CLI/pipeline glue.
-- [ ] Keep generic work out of the VNtyper port. Generic work belongs in
+- [x] Keep generic work out of the VNtyper port. Generic work belongs in
       BioScript facades:
       BAM/CRAM slicing, FASTQ extraction, depth, VCF parsing/filtering,
       Kestrel calling, FASTA lookup, TSV/JSON helpers.
@@ -286,6 +289,8 @@ uses those built-in primitives.
 - [ ] Compare native-facade VNtyper output against expected positive/negative
       fixtures for:
       FASTQ path, BAM path, report JSON, and HTML report.
+      BAM report JSON/classification parity is covered by the opt-in all-native
+      gate. FASTQ native parity and HTML report comparisons remain open.
 - [x] Keep large real-data parity tests opt-in with clear skip messages.
       Large VNtyper data gates live behind explicit environment switches such
       as `BIOSCRIPT_RUN_EXTERNAL_BAM_PARITY=1`,
@@ -301,17 +306,19 @@ uses those built-in primitives.
 - [x] BioScript owns facade correctness:
       argument normalization, path handling, output shape, error mapping, and
       integration with BioScript/Python/VNtyper.
-- [ ] Add tiny fixture tests for every facade method before wiring it into
+- [x] Add tiny fixture tests for every facade method before wiring it into
       VNtyper.
+      Coverage now spans Samtools, BCFtools, Kestrel, pysam, pyfaidx, VCF/table
+      helpers, Python wrapper delegation, and runtime imports/materialization.
 - [x] Add opt-in oracle tests against real CLI tools where useful.
       Real-tool gates are opt-in, including the Samtools FASTQ oracle and
       VNtyper external/native BAM gates.
 - [x] Add one end-to-end VNtyper native-facade test after each major backend is
       swapped in.
       `test_native_bam_pipeline_gate.py` exercises the native Samtools facade
-      with the VNtyper BAM path; BCFtools/Kestrel native paths have additional
-      fake-runner and fixture smoke coverage. Full all-native parity remains
-      tracked separately in the VNtyper section.
+      with the VNtyper BAM path, then native Kestrel, then the all-native
+      native-Samtools/native-Kestrel/native-BCFtools path for representative
+      positive and negative fixtures.
 
 ## Near-Term Order
 
