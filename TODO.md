@@ -180,11 +180,14 @@ This is not just a facade spike. The finish line is:
       JSON are in `rust/bioscript-libs/src/vcf/vntyper.rs`, with fixture tests
       in `rust/bioscript-libs/tests/vntyper_vcf.rs`. The Python scaffold remains
       as test/oracle support for upstream parity work, not as the runtime path.
-- [ ] If Monty syntax is missing required features, add the smallest runtime or
+- [x] If Monty syntax is missing required features, add the smallest runtime or
       syntax support needed and cover it with runtime tests.
-      No new Monty syntax was required for the native FASTQ execution slice.
-      Keep this open until the full VNtyper post-processing/report port proves
-      whether loops, helpers, or richer data handling need runtime work.
+      No new Monty syntax was required for the native BAM or FASTQ runtime
+      slices. The needed behavior is exposed as host/runtime facades:
+      `samtools.*_native`, `kestrel.run_native`, `bcftools.sort/index`,
+      `vcf.read_vntyper_kestrel`, `vcf.build_vntyper_report_json`, and
+      `bioscript.write_text/write_tsv`. Covered by
+      `rust/bioscript-runtime/tests/vntyper_program.rs`.
 - [x] Keep VNtyper-specific constants in one config surface:
       MUC1 regions, reference FASTA path, Kestrel parameters, confidence
       thresholds, report fields, and optional adVNTR flags.
@@ -442,7 +445,11 @@ This is not just a facade spike. The finish line is:
       Covered by `ports/vntyper/tests/test_vntyper_report.py`, which passes in
       the small VNtyper suite and checks the rendered report summary, coverage
       QC, variant table controls, flags, pipeline log, and IGV attributes.
-- [ ] Upstream VNtyper test map is complete and every relevant upstream behavior
+- [x] Upstream VNtyper test map is complete and every relevant upstream behavior
       has a ported test, Rust facade test, runtime test, or documented exclusion.
+      `ports/vntyper/tests/upstream-test-map.md` inventories every upstream
+      pytest file under `ports/vntyper/vntyper/tests`, plus benchmark/docker
+      exclusions and known engine-owned gaps. Remaining parity failures are
+      explicitly owned by `kestrel-rs` or the normalized TSV/JSON parity gates.
 - [ ] `TODO.md` contains no ambiguous "done enough" items; each completed item
       points to a file, test, command, or documented decision.
