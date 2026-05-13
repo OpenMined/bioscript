@@ -201,9 +201,10 @@ vendor/
 - dispatching method calls on shim objects into `bioscript-libs`
 - enforcing runtime path, resource, and sandbox rules
 
-`bioscript-python` and `python/bioscript` expose the same API in CPython:
+`bioscript-python` and `python/bioscript` expose the same import names in
+CPython:
 
-- default to the Rust native implementation when available
+- expose native helpers through `bioscript._native` when available
 - optionally compare against real Python libraries during tests
 - let authors run the same scripts in normal Python before running them in
   BioScript
@@ -211,9 +212,18 @@ vendor/
 Each Python shim exposes `BACKEND_POLICY`, a `ModuleBackendPolicy` with `auto`,
 `python`, and `rust` descriptions. This makes fallback behavior explicit:
 
-- `kestrel`, `bcftools`, and `samtools`: `plan_*` methods are command-planning
-  surfaces for dry runs and audit logs; the older command-builder names remain
-  compatibility aliases, and native helpers require `bioscript._native`
+- `bcftools` in BioScript runtime: `sort`, `index`, and `view` default to
+  native Rust execution; `plan_sort`, `plan_index`, and `plan_view` are the
+  command-planning surfaces for dry runs and audit logs.
+- `samtools` in BioScript runtime: `view`, `depth`, `sort`, and `index`
+  default to native Rust execution where the native signature matches the
+  public method. `plan_*` remains the command-planning surface. `fastq` and
+  `view_region` stay as planners until the public native signatures are settled.
+- `kestrel`: `plan_command` is the command-planning surface. Native execution
+  currently uses explicit low-level helpers such as `run_native` /
+  `call_fastq_references_native`.
+- Python shim modules keep command-builder compatibility names for now; native
+  helpers still require `bioscript._native`.
 - `pyfaidx`: auto mode uses real `pyfaidx` when installed, otherwise a small
   pure Python FASTA fallback; rust mode is pending
 - `pysam`: auto/python mode delegates to real `pysam` when installed; rust mode

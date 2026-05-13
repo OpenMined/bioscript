@@ -94,6 +94,14 @@ pub fn depth_native(bam: &Path, _index: Option<&Path>, region: &str) -> LibResul
     Ok(depth_summary(depths.iter().map(|entry| entry.depth)))
 }
 
+pub fn sort_native(bam: &Path, output_bam: &Path, by_name: bool) -> LibResult<()> {
+    samtools_native::sort_native(bam, output_bam, by_name, None).map_err(samtools_error)
+}
+
+pub fn index_native(bam: &Path, output_bai: Option<&Path>) -> LibResult<std::path::PathBuf> {
+    samtools_native::index_native(bam, output_bai, None).map_err(samtools_error)
+}
+
 pub fn fastq_native(
     bam: &Path,
     _index: Option<&Path>,

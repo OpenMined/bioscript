@@ -83,12 +83,24 @@ This is not just a facade spike. The finish line is:
       See `docs/lib-support.md` "Current Dependency Graph".
 - [ ] Make native facades the default path for BioScript runtime calls where a
       native implementation exists.
+      Partial 2026-05-14: BioScript runtime dispatch now routes
+      `bcftools.sort`, `bcftools.index`, `bcftools.view`, `samtools.view`,
+      `samtools.depth`, `samtools.sort`, and `samtools.index` to native Rust
+      facades by default. `plan_*` methods keep command planning behavior, and
+      `vntyper.bs` / `vntyper-fastq.bs` were updated to use `plan_*` because
+      they are still command-plan sketches. Keep this open until
+      `samtools.fastq` / `samtools.view_region` native/default signatures and
+      Kestrel runtime execution naming are resolved. Verified with focused
+      `bioscript-runtime` security tests, `vntyper_program`, Python wrapper
+      tests, and the small VNtyper suite.
 - [x] Keep command-builder fallbacks for dry-run/planning, but mark them as
       planning surfaces rather than the primary implementation.
       Added explicit `plan_*` runtime and Python wrapper aliases for samtools,
-      bcftools, and Kestrel command planning. The older command-builder names
-      remain compatibility aliases and continue to record `tool_command_plan`
-      timing events; native execution remains on the `*_native` surfaces.
+      bcftools, and Kestrel command planning. Runtime default names now use
+      native execution where equivalent native signatures exist, while
+      `plan_*` names continue to record `tool_command_plan` timing events.
+      Python wrappers still keep older command-builder names as compatibility
+      aliases until the Python-side default/native policy is finalized.
 - [x] Audit Python wrappers and runtime methods so supported names match:
       `from bioscript import samtools, bcftools, kestrel, pysam, pyfaidx`.
       Confirmed by `python/bioscript/__init__.py`, module wrapper tests, and

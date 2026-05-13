@@ -192,9 +192,9 @@ impl BioscriptRuntime {
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
         reject_kwargs(kwargs, "bcftools.sort_native")?;
-        if args.len() != 5 {
+        if args.len() != 3 && args.len() != 5 {
             return Err(RuntimeError::InvalidArguments(
-                "bcftools.sort_native expects input_vcf, output_vcf, output_type, and write_index"
+                "bcftools.sort_native expects input_vcf, output_vcf, optional output_type, and optional write_index"
                     .to_owned(),
             ));
         }
@@ -203,8 +203,16 @@ impl BioscriptRuntime {
             self.resolve_existing_user_path(&expect_string_arg(args, 1, "bcftools.sort_native")?)?;
         let output =
             self.resolve_user_write_path(&expect_string_arg(args, 2, "bcftools.sort_native")?)?;
-        let output_type = expect_string_arg(args, 3, "bcftools.sort_native")?;
-        let write_index = expect_bool_arg(args, 4, "bcftools.sort_native")?;
+        let output_type = if args.len() == 5 {
+            expect_string_arg(args, 3, "bcftools.sort_native")?
+        } else {
+            "z".to_owned()
+        };
+        let write_index = if args.len() == 5 {
+            expect_bool_arg(args, 4, "bcftools.sort_native")?
+        } else {
+            true
+        };
         bcftools::sort_native(&input, &output, &output_type, write_index)
             .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
         native_tool_none(self, "bcftools.sort_native", started)
@@ -216,19 +224,34 @@ impl BioscriptRuntime {
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
         reject_kwargs(kwargs, "bcftools.index_native")?;
-        if args.len() != 5 {
+        if args.len() != 2 && args.len() != 5 {
             return Err(RuntimeError::InvalidArguments(
-                "bcftools.index_native expects input_vcf, output_index, tbi, and force".to_owned(),
+                "bcftools.index_native expects input_vcf, optional output_index, optional tbi, and optional force".to_owned(),
             ));
         }
         let started = RuntimeInstant::now();
         let input =
             self.resolve_existing_user_path(&expect_string_arg(args, 1, "bcftools.index_native")?)?;
-        let output =
-            self.resolve_user_write_path(&expect_string_arg(args, 2, "bcftools.index_native")?)?;
-        let tbi = expect_bool_arg(args, 3, "bcftools.index_native")?;
-        let force = expect_bool_arg(args, 4, "bcftools.index_native")?;
-        bcftools::index_native(&input, Some(&output), tbi, force)
+        let output = if args.len() == 5 {
+            Some(self.resolve_user_write_path(&expect_string_arg(
+                args,
+                2,
+                "bcftools.index_native",
+            )?)?)
+        } else {
+            None
+        };
+        let tbi = if args.len() == 5 {
+            expect_bool_arg(args, 3, "bcftools.index_native")?
+        } else {
+            true
+        };
+        let force = if args.len() == 5 {
+            expect_bool_arg(args, 4, "bcftools.index_native")?
+        } else {
+            true
+        };
+        bcftools::index_native(&input, output.as_deref(), tbi, force)
             .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
         native_tool_none(self, "bcftools.index_native", started)
     }
