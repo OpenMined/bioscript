@@ -4,37 +4,15 @@ from __future__ import annotations
 
 import re
 
+try:
+    from . import vntyper_config
+except ImportError:
+    import vntyper_config
 
-COORDINATE_SYSTEMS = {
-    "GRCh37": {
-        "chromosome": 1,
-        "bam_region_coords": "155158000-155163000",
-        "vntr_region_coords": "155160500-155162000",
-    },
-    "GRCh38": {
-        "chromosome": 1,
-        "bam_region_coords": "155184000-155194000",
-        "vntr_region_coords": "155188000-155192500",
-    },
-}
-
-ASSEMBLY_METADATA = {
-    "hg19": {"coordinate_system": "GRCh37", "reference_source": "ucsc"},
-    "hg38": {"coordinate_system": "GRCh38", "reference_source": "ucsc"},
-    "GRCh37": {"coordinate_system": "GRCh37", "reference_source": "ncbi"},
-    "GRCh38": {"coordinate_system": "GRCh38", "reference_source": "ncbi"},
-    "hg19_ncbi": {"coordinate_system": "GRCh37", "reference_source": "ncbi"},
-    "hg38_ncbi": {"coordinate_system": "GRCh38", "reference_source": "ncbi"},
-    "hg19_ensembl": {"coordinate_system": "GRCh37", "reference_source": "ensembl"},
-    "hg38_ensembl": {"coordinate_system": "GRCh38", "reference_source": "ensembl"},
-}
-
-ASSEMBLY_ALIASES = {name: name for name in ASSEMBLY_METADATA}
-
-KNOWN_NCBI_ACCESSIONS = {
-    "GRCh37": "NC_000001.10",
-    "GRCh38": "NC_000001.11",
-}
+COORDINATE_SYSTEMS = vntyper_config.COORDINATE_SYSTEMS
+ASSEMBLY_METADATA = vntyper_config.ASSEMBLY_METADATA
+ASSEMBLY_ALIASES = vntyper_config.ASSEMBLY_ALIASES
+KNOWN_NCBI_ACCESSIONS = vntyper_config.KNOWN_NCBI_ACCESSIONS
 
 
 def normalize_assembly_name(user_input: str) -> str:
