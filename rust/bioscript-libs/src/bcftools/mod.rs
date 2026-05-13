@@ -47,6 +47,41 @@ pub fn view_filter(
     )
 }
 
+pub fn view_native(input_vcf: &Path, output_vcf: &Path, output_type: &str) -> LibResult<()> {
+    let argv = [
+        OsString::from("view"),
+        OsString::from("--no-version"),
+        OsString::from("-O"),
+        OsString::from(output_type),
+        OsString::from("-o"),
+        output_vcf.as_os_str().to_owned(),
+        input_vcf.as_os_str().to_owned(),
+    ];
+    run_bcftools("view", bcftools_rs::commands::view::main(&argv))
+}
+
+pub fn index_native(
+    input_vcf: &Path,
+    output_index: Option<&Path>,
+    tbi: bool,
+    force: bool,
+) -> LibResult<()> {
+    let mut argv = vec![OsString::from("index")];
+    if tbi {
+        argv.push(OsString::from("-t"));
+    }
+    if force {
+        argv.push(OsString::from("-f"));
+    }
+    if let Some(path) = output_index {
+        argv.push(OsString::from("-o"));
+        argv.push(path.as_os_str().to_owned());
+    }
+    argv.push(input_vcf.as_os_str().to_owned());
+
+    run_bcftools("index", bcftools_rs::commands::index::main(&argv))
+}
+
 pub fn norm(
     input_vcf: &Path,
     reference_fasta: &Path,
@@ -75,10 +110,17 @@ pub fn view_header_native(input_vcf: &Path, output_vcf: &Path) -> LibResult<()> 
         output_vcf.as_os_str().to_owned(),
         input_vcf.as_os_str().to_owned(),
     ];
-    match bcftools_rs::commands::view::main(&argv) {
+    run_bcftools(
+        "view header extraction",
+        bcftools_rs::commands::view::main(&argv),
+    )
+}
+
+fn run_bcftools(operation: &str, status: ExitCode) -> LibResult<()> {
+    match status {
         ExitCode::SUCCESS => Ok(()),
         status => Err(LibError::InvalidArguments(format!(
-            "bcftools.view header extraction failed with status {status:?}"
+            "bcftools.{operation} failed with status {status:?}"
         ))),
     }
 }
