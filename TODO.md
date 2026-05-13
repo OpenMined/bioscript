@@ -83,8 +83,12 @@ This is not just a facade spike. The finish line is:
       See `docs/lib-support.md` "Current Dependency Graph".
 - [ ] Make native facades the default path for BioScript runtime calls where a
       native implementation exists.
-- [ ] Keep command-builder fallbacks for dry-run/planning, but mark them as
+- [x] Keep command-builder fallbacks for dry-run/planning, but mark them as
       planning surfaces rather than the primary implementation.
+      Added explicit `plan_*` runtime and Python wrapper aliases for samtools,
+      bcftools, and Kestrel command planning. The older command-builder names
+      remain compatibility aliases and continue to record `tool_command_plan`
+      timing events; native execution remains on the `*_native` surfaces.
 - [x] Audit Python wrappers and runtime methods so supported names match:
       `from bioscript import samtools, bcftools, kestrel, pysam, pyfaidx`.
       Confirmed by `python/bioscript/__init__.py`, module wrapper tests, and

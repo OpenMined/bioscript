@@ -1,4 +1,4 @@
-"""BioScript-supported bcftools command-builder subset."""
+"""BioScript-supported bcftools command-planning subset."""
 
 from __future__ import annotations
 
@@ -18,8 +18,16 @@ def sort(input_vcf: str, output_vcf_gz: str) -> list[str]:
     return ["bcftools", "sort", "-Oz", "-o", _path_arg(output_vcf_gz), _path_arg(input_vcf)]
 
 
+def plan_sort(input_vcf: str, output_vcf_gz: str) -> list[str]:
+    return sort(input_vcf, output_vcf_gz)
+
+
 def index(vcf_gz: str) -> list[str]:
     return ["bcftools", "index", "-t", _path_arg(vcf_gz)]
+
+
+def plan_index(vcf_gz: str) -> list[str]:
+    return index(vcf_gz)
 
 
 def view(input_vcf: str, output_vcf: str, output_type: str = "z") -> list[str]:
@@ -32,6 +40,10 @@ def view(input_vcf: str, output_vcf: str, output_type: str = "z") -> list[str]:
         _path_arg(output_vcf),
         _path_arg(input_vcf),
     ]
+
+
+def plan_view(input_vcf: str, output_vcf: str, output_type: str = "z") -> list[str]:
+    return view(input_vcf, output_vcf, output_type)
 
 
 def view_filter(input_vcf: str, output_vcf_gz: str, include_expr: str) -> list[str]:
@@ -47,6 +59,10 @@ def view_filter(input_vcf: str, output_vcf_gz: str, include_expr: str) -> list[s
     ]
 
 
+def plan_view_filter(input_vcf: str, output_vcf_gz: str, include_expr: str) -> list[str]:
+    return view_filter(input_vcf, output_vcf_gz, include_expr)
+
+
 def norm(input_vcf: str, reference_fasta: str, output_vcf_gz: str) -> list[str]:
     return [
         "bcftools",
@@ -58,6 +74,10 @@ def norm(input_vcf: str, reference_fasta: str, output_vcf_gz: str) -> list[str]:
         _path_arg(output_vcf_gz),
         _path_arg(input_vcf),
     ]
+
+
+def plan_norm(input_vcf: str, reference_fasta: str, output_vcf_gz: str) -> list[str]:
+    return norm(input_vcf, reference_fasta, output_vcf_gz)
 
 
 def view_header_native(input_vcf: str, output_vcf: str) -> None:

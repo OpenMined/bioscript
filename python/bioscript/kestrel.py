@@ -69,6 +69,10 @@ def build_command(
     return args
 
 
+def plan_command(*args: object, **kwargs: object) -> list[str]:
+    return build_command(*args, **kwargs)
+
+
 def run(*args: object, **kwargs: object) -> dict[str, object]:
     """Return the planned command for now; tool execution is runtime-owned."""
 

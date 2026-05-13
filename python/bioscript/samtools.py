@@ -1,4 +1,4 @@
-"""BioScript-supported samtools command-builder subset."""
+"""BioScript-supported samtools command-planning subset."""
 
 from __future__ import annotations
 
@@ -21,12 +21,29 @@ def view_region(bam: str, region: str, output_bam: str, include_unmapped: bool =
     return args
 
 
+def plan_view_region(
+    bam: str,
+    region: str,
+    output_bam: str,
+    include_unmapped: bool = False,
+) -> list[str]:
+    return view_region(bam, region, output_bam, include_unmapped)
+
+
 def view(bam: str, region: str, output_bam: str) -> list[str]:
     return view_region(bam, region, output_bam)
 
 
+def plan_view(bam: str, region: str, output_bam: str) -> list[str]:
+    return view(bam, region, output_bam)
+
+
 def fastq(bam: str, fastq_1: str, fastq_2: str) -> list[str]:
     return ["samtools", "fastq", "-1", _path_arg(fastq_1), "-2", _path_arg(fastq_2), _path_arg(bam)]
+
+
+def plan_fastq(bam: str, fastq_1: str, fastq_2: str) -> list[str]:
+    return fastq(bam, fastq_1, fastq_2)
 
 
 def sort(bam: str, output_bam: str, by_name: bool = False) -> list[str]:
@@ -37,6 +54,10 @@ def sort(bam: str, output_bam: str, by_name: bool = False) -> list[str]:
     return args
 
 
+def plan_sort(bam: str, output_bam: str, by_name: bool = False) -> list[str]:
+    return sort(bam, output_bam, by_name)
+
+
 def depth(bam: str, region: str, include_zero: bool = False) -> list[str]:
     args = ["samtools", "depth"]
     if include_zero:
@@ -45,12 +66,24 @@ def depth(bam: str, region: str, include_zero: bool = False) -> list[str]:
     return args
 
 
+def plan_depth(bam: str, region: str, include_zero: bool = False) -> list[str]:
+    return depth(bam, region, include_zero)
+
+
 def index(bam: str) -> list[str]:
     return ["samtools", "index", _path_arg(bam)]
 
 
+def plan_index(bam: str) -> list[str]:
+    return index(bam)
+
+
 def faidx(fasta: str) -> list[str]:
     return ["samtools", "faidx", _path_arg(fasta)]
+
+
+def plan_faidx(fasta: str) -> list[str]:
+    return faidx(fasta)
 
 
 def view_region_native(bam: str, region: str, output_bam: str, index: str | None = None) -> int:
