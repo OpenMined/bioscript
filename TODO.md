@@ -376,8 +376,14 @@ This is not just a facade spike. The finish line is:
 - [x] Remove generated `__pycache__` files from the repo if any are tracked.
       Verified with `git ls-files 'ports/vntyper/**/__pycache__/*'
       'python/**/__pycache__/*'`: no tracked generated cache files.
-- [ ] Keep Python scaffold tests until equivalent Rust/BioScript runtime tests
+- [x] Keep Python scaffold tests until equivalent Rust/BioScript runtime tests
       cover the behavior.
+      The scaffold tests remain in `ports/vntyper/tests` and still cover
+      `vntyper_port.py`, `vntyper_external_pipeline.py`, `vntyper_report.py`,
+      and `vntyper_commands.py` while runtime coverage is partial. Verified
+      2026-05-14 with
+      `PYTHONPATH=python:ports/vntyper/bioscript python -m unittest discover -s ports/vntyper/tests -p 'test_*.py'`
+      passing 74 tests with 8 opt-in skips.
 
 ## Documentation
 
