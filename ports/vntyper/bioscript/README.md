@@ -11,6 +11,7 @@ The user-facing BioScript program paths are:
 
 ```text
 ports/vntyper/bioscript/vntyper.bs
+ports/vntyper/bioscript/vntyper-bam-native.bs
 ports/vntyper/bioscript/vntyper-fastq.bs
 ```
 
@@ -68,6 +69,11 @@ tiny deterministic fixtures. Core Kestrel call-table conversion is now in
 report payload through the VCF facade and writes `kestrel_result.tsv` from the
 same rows. Full HTML report generation and BAM runtime parity still live in the
 Python scaffold.
+
+`vntyper-bam-native.bs` exercises the BAM native runtime path on caller-provided
+regions and reference paths. It runs Samtools, Kestrel, BCFtools, and VCF
+facades through the BioScript runtime and materializes BAM-slice, FASTQ, VCF,
+TSV, and report JSON artifacts.
 
 ## Local Test Gates
 
