@@ -200,6 +200,8 @@ uses those built-in primitives.
 - [ ] Refactor VNtyper pipeline code to prefer:
       `samtools.*`, `bcftools.*`, `kestrel.*`, `pysam.*`, and `pyfaidx.*`
       over private helper names.
+      Native Kestrel execution now goes through `kestrel.run_native(...)`
+      instead of VNtyper manually loading references and writing VCF text.
 - [ ] Define the minimal VNtyper BioScript interface, for example:
       `run_vntyper(bam=..., reference_build="hg19", output_dir=...)` and
       `run_vntyper_fastq(r1=..., r2=..., reference_build="hg19", output_dir=...)`.
