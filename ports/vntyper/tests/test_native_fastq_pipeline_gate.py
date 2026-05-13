@@ -42,6 +42,12 @@ class VntyperNativeFastqPipelineGateTests(unittest.TestCase):
                 expected_root = data_manifest.EXPECTED_OUTPUT_ROOT / label
                 with (expected_root / "report.json").open("r", encoding="utf-8") as handle:
                     expected_report = json.load(handle)
+                with (expected_root / "kestrel" / "kestrel_result.tsv").open(
+                    "r",
+                    encoding="utf-8",
+                    newline="",
+                ) as handle:
+                    expected_rows = list(csv.DictReader(handle, delimiter="\t"))
 
                 with tempfile.TemporaryDirectory() as tmp:
                     result = vntyper_external_pipeline.run_fastq_kestrel(
@@ -67,9 +73,43 @@ class VntyperNativeFastqPipelineGateTests(unittest.TestCase):
                     self.assertTrue(sorted_vcf_index.exists())
 
                 self.assertGreater(len(rows), 0)
+                passing_rows = [
+                    row
+                    for row in rows
+                    if row.get("passes_vntyper_filters") in ("True", True)
+                ]
+                top_passing = sorted(
+                    passing_rows,
+                    key=lambda row: float(row.get("Depth_Score") or 0),
+                    reverse=True,
+                )[:5]
+                parity_context = {
+                    "actual_row_count": len(rows),
+                    "expected_row_count": len(expected_rows),
+                    "actual_passing_count": len(passing_rows),
+                    "expected_passing_count": len(
+                        [
+                            row
+                            for row in expected_rows
+                            if row.get("passes_vntyper_filters") in ("True", True)
+                        ]
+                    ),
+                    "top_passing": [
+                        {
+                            "CHROM": row.get("CHROM"),
+                            "POS": row.get("POS"),
+                            "REF": row.get("REF"),
+                            "ALT": row.get("ALT"),
+                            "Depth_Score": row.get("Depth_Score"),
+                            "Confidence": row.get("Confidence"),
+                        }
+                        for row in top_passing
+                    ],
+                }
                 self.assertEqual(
                     actual_report["algorithm_results"]["kestrel"],
                     expected_report["algorithm_results"]["kestrel"],
+                    parity_context,
                 )
                 self.assertEqual(set(actual_report), set(expected_report))
                 self.assertEqual(len(actual_report["kestrel_variants"]), len(rows))
