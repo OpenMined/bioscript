@@ -1,4 +1,7 @@
-use std::{io::Write, path::PathBuf};
+use std::{
+    io::{Read, Write},
+    path::PathBuf,
+};
 
 use bioscript_libs::{
     LibError, ModuleName, bcftools,
@@ -85,6 +88,40 @@ fn bcftools_native_view_header_uses_vendored_bcftools_rs() {
     assert!(header.contains("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"));
     assert!(!header.contains("chr1\t5\t.\tC\tT"));
     assert!(!header.contains("##bcftools_viewVersion="));
+}
+
+#[test]
+fn bcftools_native_view_writes_bgzf_vcf_and_index_writes_tbi() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("input.vcf");
+    let compressed = temp.path().join("output.vcf.gz");
+    let index = temp.path().join("output.vcf.gz.tbi");
+    std::fs::write(
+        &input,
+        concat!(
+            "##fileformat=VCFv4.2\n",
+            "##FILTER=<ID=PASS,Description=\"All filters passed\">\n",
+            "##contig=<ID=chr1,length=1000>\n",
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+            "chr1\t5\t.\tC\tT\t.\tPASS\t.\n",
+            "chr1\t8\t.\tG\tA\t.\tPASS\t.\n",
+        ),
+    )
+    .unwrap();
+
+    bcftools::view_native(&input, &compressed, "z").unwrap();
+    let mut decoder = flate2::read::MultiGzDecoder::new(std::fs::File::open(&compressed).unwrap());
+    let mut vcf = String::new();
+    decoder.read_to_string(&mut vcf).unwrap();
+    assert!(vcf.contains("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"));
+    assert!(vcf.contains("chr1\t5\t.\tC\tT"));
+    assert!(!vcf.contains("##bcftools_viewVersion="));
+
+    bcftools::index_native(&compressed, Some(&index), true, true).unwrap();
+    let mut decoder = flate2::read::MultiGzDecoder::new(std::fs::File::open(index).unwrap());
+    let mut magic = [0u8; 4];
+    decoder.read_exact(&mut magic).unwrap();
+    assert_eq!(&magic, b"TBI\x01");
 }
 
 #[test]

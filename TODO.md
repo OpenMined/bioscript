@@ -131,16 +131,16 @@ uses those built-in primitives.
       surface for VNtyper.
 - [x] Replace command-only behavior with native calls where the Rust crate
       supports them.
-      Initial native method: `view_header_native`, backed by
-      `bcftools_rs::commands::view`.
+      Initial native methods: `view_header_native`, `view_native`, and
+      `index_native`, backed by `bcftools_rs::commands::{view,index}`.
 - [ ] Initial target operations:
       `view`, `sort`, `norm`, compression/index helpers if needed.
 - [ ] Add adapter tests for VCF input/output, compressed output, filter
       expressions used by VNtyper, and useful error messages.
-      Initial coverage verifies `bcftools-rs` header extraction through
-      `bioscript-libs`, Python wrapper delegation, and the real PyO3 native
-      extension when installed. Broader filter/compressed output coverage
-      remains to add.
+      Initial coverage verifies `bcftools-rs` header extraction, VCF output,
+      BGZF-compressed output, TBI indexing, Python wrapper delegation, and the
+      real PyO3 native extension when installed. Filter expression coverage
+      remains pending until `bcftools-rs view` supports `-i/-e`.
 
 ## HTS / Pysam / Pyfaidx Facades
 

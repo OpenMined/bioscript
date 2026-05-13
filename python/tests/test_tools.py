@@ -286,11 +286,37 @@ class ToolCommandTests(unittest.TestCase):
         def view_header(input_vcf, output_vcf):
             calls.append((input_vcf, output_vcf))
 
-        fake_native = SimpleNamespace(bcftools_view_header_native=view_header)
+        def view(input_vcf, output_vcf, output_type):
+            calls.append((input_vcf, output_vcf, output_type))
+
+        def index(input_vcf, output_index, tbi, force):
+            calls.append((input_vcf, output_index, tbi, force))
+
+        fake_native = SimpleNamespace(
+            bcftools_view_header_native=view_header,
+            bcftools_view_native=view,
+            bcftools_index_native=index,
+        )
         with patch.dict("sys.modules", {"bioscript._native": fake_native}):
             self.assertIsNone(bcftools.view_header_native("calls.vcf", "header.vcf"))
+            self.assertIsNone(bcftools.view_native("calls.vcf", "calls.vcf.gz", output_type="z"))
+            self.assertIsNone(
+                bcftools.index_native(
+                    "calls.vcf.gz",
+                    output_index="calls.vcf.gz.tbi",
+                    tbi=True,
+                    force=False,
+                )
+            )
 
-        self.assertEqual(calls, [("calls.vcf", "header.vcf")])
+        self.assertEqual(
+            calls,
+            [
+                ("calls.vcf", "header.vcf"),
+                ("calls.vcf", "calls.vcf.gz", "z"),
+                ("calls.vcf.gz", "calls.vcf.gz.tbi", True, False),
+            ],
+        )
 
     def test_bcftools_native_view_header_reports_missing_extension(self) -> None:
         with patch.dict("sys.modules", {"bioscript._native": None}):
@@ -328,6 +354,43 @@ class ToolCommandTests(unittest.TestCase):
         self.assertIn("##fileformat=VCFv4.2\n", header)
         self.assertIn("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n", header)
         self.assertNotIn("chr1\t5\t.\tC\tT", header)
+
+    def test_bcftools_native_view_and_index_real_extension(self) -> None:
+        try:
+            import bioscript as bioscript_package
+
+            native = importlib.import_module("bioscript._native")
+        except ImportError as exc:
+            self.skipTest(f"BioScript native extension is not installed: {exc}")
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                input_vcf = Path(tmp) / "input.vcf"
+                output_vcf = Path(tmp) / "output.vcf"
+                output_gz = Path(tmp) / "output.vcf.gz"
+                output_tbi = Path(tmp) / "output.vcf.gz.tbi"
+                input_vcf.write_text(
+                    "##fileformat=VCFv4.2\n"
+                    "##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+                    "##contig=<ID=chr1,length=1000>\n"
+                    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+                    "chr1\t5\t.\tC\tT\t.\tPASS\t.\n",
+                    encoding="utf-8",
+                )
+
+                bcftools.view_native(str(input_vcf), str(output_vcf))
+                bcftools.view_native(str(input_vcf), str(output_gz), output_type="z")
+                bcftools.index_native(str(output_gz), str(output_tbi))
+
+                text = output_vcf.read_text(encoding="utf-8")
+                index_size = output_tbi.stat().st_size
+        finally:
+            if getattr(bioscript_package, "_native", None) is native:
+                delattr(bioscript_package, "_native")
+            sys.modules.pop("bioscript._native", None)
+
+        self.assertIn("chr1\t5\t.\tC\tT", text)
+        self.assertGreater(index_size, 0)
 
 
 if __name__ == "__main__":
