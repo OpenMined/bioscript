@@ -192,27 +192,60 @@ def main():
     )
     if kcmd[0] != "java":
         raise Exception("bad kestrel command")
+    pkcmd = kestrel.plan_command(
+        "kestrel.jar",
+        "muc1.fa",
+        "out.vcf",
+        "out.sam",
+        "tmp",
+        "sample1",
+        "r1.fastq.gz",
+        "r2.fastq.gz",
+    )
+    if pkcmd[0] != kcmd[0]:
+        raise Exception("bad planned kestrel command")
     fcmd = samtools.fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz")
     if fcmd[0] != "samtools":
         raise Exception("bad samtools command")
+    pfcmd = samtools.plan_fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz")
+    if pfcmd[1] != fcmd[1]:
+        raise Exception("bad planned samtools command")
     vcmd = samtools.view("sample.bam", "chr1:1-10", "slice.bam")
     if vcmd[1] != "view":
         raise Exception("bad samtools view command")
+    pvcmd = samtools.plan_view("sample.bam", "chr1:1-10", "slice.bam")
+    if pvcmd[1] != vcmd[1]:
+        raise Exception("bad planned samtools view command")
     scmd = samtools.sort("slice.bam", "slice.name.bam", True)
     if scmd[1] != "sort":
         raise Exception("bad samtools sort command")
+    pscmd = samtools.plan_sort("slice.bam", "slice.name.bam", True)
+    if pscmd[1] != scmd[1]:
+        raise Exception("bad planned samtools sort command")
     facmd = samtools.faidx("ref.fa")
     if facmd[1] != "faidx":
         raise Exception("bad samtools faidx command")
+    pfacmd = samtools.plan_faidx("ref.fa")
+    if pfacmd[1] != facmd[1]:
+        raise Exception("bad planned samtools faidx command")
     bcmd = bcftools.sort("calls.vcf", "calls.vcf.gz")
     if bcmd[0] != "bcftools":
         raise Exception("bad bcftools command")
+    pbcmd = bcftools.plan_sort("calls.vcf", "calls.vcf.gz")
+    if pbcmd[1] != bcmd[1]:
+        raise Exception("bad planned bcftools command")
     bvcmd = bcftools.view("calls.vcf", "calls.bcf", "b")
     if bvcmd[1] != "view":
         raise Exception("bad bcftools view command")
+    pbvcmd = bcftools.plan_view("calls.vcf", "calls.bcf", "b")
+    if pbvcmd[1] != bvcmd[1]:
+        raise Exception("bad planned bcftools view command")
     bncmd = bcftools.norm("calls.vcf", "ref.fa", "norm.vcf.gz")
     if bncmd[1] != "norm":
         raise Exception("bad bcftools norm command")
+    pbncmd = bcftools.plan_norm("calls.vcf", "ref.fa", "norm.vcf.gz")
+    if pbncmd[1] != bncmd[1]:
+        raise Exception("bad planned bcftools norm command")
 
 if __name__ == "__main__":
     main()

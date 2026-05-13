@@ -14,47 +14,47 @@ from bioscript import bcftools, kestrel, samtools
 
 class ToolCommandTests(unittest.TestCase):
     def test_kestrel_build_command_matches_vntyper_defaults(self) -> None:
-        self.assertEqual(
-            kestrel.build_command(
-                "kestrel.jar",
-                "muc1.fa",
-                "out.vcf",
-                "out.sam",
-                "tmp",
-                "sample1",
-                "r1.fastq.gz",
-                "r2.fastq.gz",
-            ),
-            [
-                "java",
-                "-Xmx12g",
-                "-jar",
-                "kestrel.jar",
-                "-k",
-                "20",
-                "--maxalignstates",
-                "40",
-                "--maxhapstates",
-                "40",
-                "-r",
-                "muc1.fa",
-                "-o",
-                "out.vcf",
-                "-ssample1",
-                "r1.fastq.gz",
-                "r2.fastq.gz",
-                "--hapfmt",
-                "sam",
-                "-p",
-                "out.sam",
-                "--logstderr",
-                "--logstdout",
-                "--loglevel",
-                "INFO",
-                "--temploc",
-                "tmp",
-            ],
+        expected = [
+            "java",
+            "-Xmx12g",
+            "-jar",
+            "kestrel.jar",
+            "-k",
+            "20",
+            "--maxalignstates",
+            "40",
+            "--maxhapstates",
+            "40",
+            "-r",
+            "muc1.fa",
+            "-o",
+            "out.vcf",
+            "-ssample1",
+            "r1.fastq.gz",
+            "r2.fastq.gz",
+            "--hapfmt",
+            "sam",
+            "-p",
+            "out.sam",
+            "--logstderr",
+            "--logstdout",
+            "--loglevel",
+            "INFO",
+            "--temploc",
+            "tmp",
+        ]
+        args = (
+            "kestrel.jar",
+            "muc1.fa",
+            "out.vcf",
+            "out.sam",
+            "tmp",
+            "sample1",
+            "r1.fastq.gz",
+            "r2.fastq.gz",
         )
+        self.assertEqual(kestrel.build_command(*args), expected)
+        self.assertEqual(kestrel.plan_command(*args), expected)
 
     def test_kestrel_rejects_shell_program(self) -> None:
         with self.assertRaises(ValueError):
@@ -267,22 +267,44 @@ class ToolCommandTests(unittest.TestCase):
             ["samtools", "view", "-b", "sample.bam", "chr1:1-10", "-o", "slice.bam"],
         )
         self.assertEqual(
+            samtools.plan_view("sample.bam", "chr1:1-10", "slice.bam"),
+            samtools.view("sample.bam", "chr1:1-10", "slice.bam"),
+        )
+        self.assertEqual(
             samtools.fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz"),
             ["samtools", "fastq", "-1", "r1.fastq.gz", "-2", "r2.fastq.gz", "slice.bam"],
+        )
+        self.assertEqual(
+            samtools.plan_fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz"),
+            samtools.fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz"),
         )
         self.assertEqual(
             samtools.view_region("sample.bam", "chr1:1-10", "slice.bam"),
             ["samtools", "view", "-b", "sample.bam", "chr1:1-10", "-o", "slice.bam"],
         )
         self.assertEqual(
+            samtools.plan_view_region("sample.bam", "chr1:1-10", "slice.bam"),
+            samtools.view_region("sample.bam", "chr1:1-10", "slice.bam"),
+        )
+        self.assertEqual(
             samtools.depth("slice.bam", "chr1:1-10", include_zero=True),
             ["samtools", "depth", "-a", "-r", "chr1:1-10", "slice.bam"],
+        )
+        self.assertEqual(
+            samtools.plan_depth("slice.bam", "chr1:1-10", include_zero=True),
+            samtools.depth("slice.bam", "chr1:1-10", include_zero=True),
         )
         self.assertEqual(
             samtools.sort("slice.bam", "slice.name.bam", by_name=True),
             ["samtools", "sort", "-n", "-o", "slice.name.bam", "slice.bam"],
         )
+        self.assertEqual(
+            samtools.plan_sort("slice.bam", "slice.name.bam", by_name=True),
+            samtools.sort("slice.bam", "slice.name.bam", by_name=True),
+        )
         self.assertEqual(samtools.faidx("ref.fa"), ["samtools", "faidx", "ref.fa"])
+        self.assertEqual(samtools.plan_index("slice.bam"), samtools.index("slice.bam"))
+        self.assertEqual(samtools.plan_faidx("ref.fa"), samtools.faidx("ref.fa"))
 
     def test_samtools_native_wrappers_delegate_to_extension(self) -> None:
         calls = []
@@ -393,17 +415,34 @@ class ToolCommandTests(unittest.TestCase):
             ["bcftools", "sort", "-Oz", "-o", "calls.vcf.gz", "calls.vcf"],
         )
         self.assertEqual(
+            bcftools.plan_sort("calls.vcf", "calls.vcf.gz"),
+            bcftools.sort("calls.vcf", "calls.vcf.gz"),
+        )
+        self.assertEqual(
             bcftools.view("calls.vcf", "calls.bcf", output_type="b"),
             ["bcftools", "view", "-O", "b", "-o", "calls.bcf", "calls.vcf"],
+        )
+        self.assertEqual(
+            bcftools.plan_view("calls.vcf", "calls.bcf", output_type="b"),
+            bcftools.view("calls.vcf", "calls.bcf", output_type="b"),
         )
         self.assertEqual(
             bcftools.view_filter("calls.vcf", "pass.vcf.gz", 'FILTER="PASS"'),
             ["bcftools", "view", "-i", 'FILTER="PASS"', "-Oz", "-o", "pass.vcf.gz", "calls.vcf"],
         )
         self.assertEqual(
+            bcftools.plan_view_filter("calls.vcf", "pass.vcf.gz", 'FILTER="PASS"'),
+            bcftools.view_filter("calls.vcf", "pass.vcf.gz", 'FILTER="PASS"'),
+        )
+        self.assertEqual(
             bcftools.norm("calls.vcf", "ref.fa", "norm.vcf.gz"),
             ["bcftools", "norm", "-f", "ref.fa", "-Oz", "-o", "norm.vcf.gz", "calls.vcf"],
         )
+        self.assertEqual(
+            bcftools.plan_norm("calls.vcf", "ref.fa", "norm.vcf.gz"),
+            bcftools.norm("calls.vcf", "ref.fa", "norm.vcf.gz"),
+        )
+        self.assertEqual(bcftools.plan_index("calls.vcf.gz"), bcftools.index("calls.vcf.gz"))
 
     def test_bcftools_native_view_header_wrapper_delegates_to_extension(self) -> None:
         calls = []
