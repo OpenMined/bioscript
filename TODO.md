@@ -189,10 +189,13 @@ This is not just a facade spike. The finish line is:
       Existing tests cover this in `test_vntyper_port.py`,
       `test_ported_upstream_units.py`, `test_upstream_scoring_parity.py`, and
       `test_vntyper_report.py`.
-- [ ] Add Rust tests where the behavior belongs in `bioscript-libs` rather than
+- [x] Add Rust tests where the behavior belongs in `bioscript-libs` rather than
       Python scaffolding.
       Candidate areas: VCF parsing, report-neutral call table generation,
       facade error mapping, and native command result shapes.
+      Added `rust/bioscript-libs/tests/vntyper_facades.rs` for the native
+      Samtools/Kestrel/BCFtools facade path on tiny generated fixtures. Existing
+      `api.rs` tests cover VCF parsing and facade error mapping.
 - [ ] Add BioScript runtime tests that execute the VNtyper BioScript program on
       tiny deterministic fixtures.
 - [ ] Add large-data opt-in parity tests for positive and negative BAM fixtures.
@@ -223,8 +226,12 @@ This is not just a facade spike. The finish line is:
       VCF records against Java Kestrel expected outputs.
 - [ ] `kestrel-rs`: any Java parity gaps should be reduced into
       `vendor/rust/kestrel-rs` tests, not hidden in BioScript tests.
-- [ ] `bcftools-rs`: confirm the VNtyper-required sort/compress/index path is
+- [x] `bcftools-rs`: confirm the VNtyper-required sort/compress/index path is
       complete for all generated VCFs.
+      Confirmed for tiny Kestrel-generated VCFs in
+      `rust/bioscript-libs/tests/vntyper_facades.rs` and existing BCFtools
+      adapter tests. Large-data generated VCF coverage remains part of the
+      opt-in VNtyper parity gates.
 - [ ] `bcftools-rs`: only implement native `view -i/-e` filtering if the
       BioScript VNtyper port actually needs it.
 - [ ] `htslib-rs`: confirm shared BAM/CRAM/FASTA/VCF primitives are used through
@@ -232,7 +239,7 @@ This is not just a facade spike. The finish line is:
 
 ## Rust Test Targets To Add
 
-- [ ] `rust/bioscript-libs/tests/vntyper_facades.rs`
+- [x] `rust/bioscript-libs/tests/vntyper_facades.rs`
       for native Samtools/Kestrel/BCFtools orchestration on tiny fixtures.
 - [ ] `rust/bioscript-libs/tests/vntyper_vcf.rs`
       for VNtyper-relevant VCF parsing and call-table conversion if moved to
