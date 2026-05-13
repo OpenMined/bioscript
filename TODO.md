@@ -147,24 +147,35 @@ This is not just a facade spike. The finish line is:
       scaffold into runnable BioScript/runtime-supported calls.
 - [ ] If Monty syntax is missing required features, add the smallest runtime or
       syntax support needed and cover it with runtime tests.
-- [ ] Keep VNtyper-specific constants in one config surface:
+- [x] Keep VNtyper-specific constants in one config surface:
       MUC1 regions, reference FASTA path, Kestrel parameters, confidence
       thresholds, report fields, and optional adVNTR flags.
-- [ ] Keep the BioScript VNtyper program small: it should coordinate facades and
+      `ports/vntyper/bioscript/vntyper_config.py` centralizes the current
+      VNtyper-specific regions, reference paths, Kestrel parameters,
+      thresholds, report keys, and optional-module toggles.
+- [x] Keep the BioScript VNtyper program small: it should coordinate facades and
       call VNtyper-specific functions, not reimplement samtools/bcftools/kestrel
       internals.
+      `vntyper.bs` and `vntyper-fastq.bs` are command-plan coordinator scripts;
+      reusable tool behavior remains in `bioscript-libs` facades and vendored
+      Rust engines.
 
 ## VNtyper Native Execution Path
 
-- [ ] BAM path:
+- [x] BAM path:
       `samtools.view_region_native` -> `samtools.fastq_native` ->
       `samtools.depth_native` -> `kestrel.run_native` ->
       `bcftools.sort_native/index_native` -> VNtyper post-processing/report.
+      Verified by the opt-in all-native BAM gate for representative positive
+      and negative fixtures.
 - [ ] FASTQ path:
       input FASTQ pair -> `kestrel.run_native` ->
       `bcftools.sort_native/index_native` -> VNtyper post-processing/report.
-- [ ] Ensure the BAM path can run without Java Kestrel, external samtools, or
+- [x] Ensure the BAM path can run without Java Kestrel, external samtools, or
       external bcftools when native gates are enabled.
+      `require_all_native_bam_pipeline_prerequisites()` no longer requires
+      Java or a Kestrel jar, and the all-native BAM parity test passed on
+      2026-05-14 with `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1`.
 - [ ] Ensure the FASTQ path can run without Java Kestrel or external bcftools
       when native gates are enabled.
 - [x] Add one CLI/runtime command that runs the BioScript VNtyper program against
@@ -203,7 +214,9 @@ This is not just a facade spike. The finish line is:
       Added `rust/bioscript-runtime/tests/vntyper_program.rs`, which executes
       `ports/vntyper/bioscript/vntyper.bs` through `BioscriptRuntime` and
       verifies the generated command plan.
-- [ ] Add large-data opt-in parity tests for positive and negative BAM fixtures.
+- [x] Add large-data opt-in parity tests for positive and negative BAM fixtures.
+      Covered by `test_native_bam_pipeline_gate.py` and the existing external
+      BAM gate.
 - [x] Add large-data opt-in parity tests for positive and negative FASTQ
       fixtures.
       Added `test_native_fastq_pipeline_gate.py`, gated by
@@ -301,7 +314,10 @@ This is not just a facade spike. The finish line is:
 - [x] VNtyper small fixture tests pass without external Java/samtools/bcftools.
       Verified 2026-05-14 with
       `PYTHONPATH=python:ports/vntyper/bioscript python -m unittest discover -s ports/vntyper/tests -p 'test_*.py'`.
-- [ ] VNtyper BAM positive/negative native parity gate passes.
+- [x] VNtyper BAM positive/negative native parity gate passes.
+      Verified 2026-05-14:
+      `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate.VntyperNativeBamPipelineGateTests.test_native_bam_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification`
+      passed in 91.426s.
 - [ ] VNtyper FASTQ positive/negative native parity gate passes.
 - [ ] VNtyper report JSON and TSV outputs match expected fixtures with explicit
       normalized fields.

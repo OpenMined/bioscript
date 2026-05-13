@@ -30,14 +30,15 @@ pipeline_spec.loader.exec_module(vntyper_external_pipeline)
 
 
 class VntyperNativeBamPipelineGateTests(unittest.TestCase):
-    def setUp(self):
+    def native_bam_prereqs(self):
         try:
-            self.prereqs = data_manifest.require_native_bam_pipeline_prerequisites()
+            return data_manifest.require_native_bam_pipeline_prerequisites()
         except unittest.SkipTest as skip:
             self.skipTest(str(skip))
 
     def test_native_bam_pipeline_matches_expected_sample_classification(self):
-        for label, bam in self.prereqs["bam_cases"].items():
+        prereqs = self.native_bam_prereqs()
+        for label, bam in prereqs["bam_cases"].items():
             with self.subTest(label=label):
                 expected_root = data_manifest.EXPECTED_OUTPUT_ROOT / label
                 with (expected_root / "report.json").open("r", encoding="utf-8") as handle:
@@ -48,8 +49,8 @@ class VntyperNativeBamPipelineGateTests(unittest.TestCase):
                         bam,
                         label,
                         str(Path(tmp) / label),
-                        kestrel_jar=self.prereqs["kestrel_jar"],
-                        muc1_reference=self.prereqs["muc1_reference"],
+                        kestrel_jar=prereqs["kestrel_jar"],
+                        muc1_reference=prereqs["muc1_reference"],
                         use_native_samtools=True,
                     )
 
@@ -89,7 +90,8 @@ class VntyperNativeBamPipelineGateTests(unittest.TestCase):
                 self.assertEqual(actual_report["metadata"]["detected_assembly"], "hg19")
 
     def test_native_bam_pipeline_with_native_kestrel_matches_expected_classification(self):
-        for label, bam in self.prereqs["bam_cases"].items():
+        prereqs = self.native_bam_prereqs()
+        for label, bam in prereqs["bam_cases"].items():
             with self.subTest(label=label):
                 expected_root = data_manifest.EXPECTED_OUTPUT_ROOT / label
                 with (expected_root / "report.json").open("r", encoding="utf-8") as handle:
@@ -100,8 +102,8 @@ class VntyperNativeBamPipelineGateTests(unittest.TestCase):
                         bam,
                         label,
                         str(Path(tmp) / label),
-                        kestrel_jar=self.prereqs["kestrel_jar"],
-                        muc1_reference=self.prereqs["muc1_reference"],
+                        kestrel_jar=prereqs["kestrel_jar"],
+                        muc1_reference=prereqs["muc1_reference"],
                         use_native_samtools=True,
                         use_native_kestrel=True,
                     )
@@ -126,7 +128,12 @@ class VntyperNativeBamPipelineGateTests(unittest.TestCase):
                 self.assertEqual(actual_report["metadata"]["detected_assembly"], "hg19")
 
     def test_native_bam_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification(self):
-        for label, bam in self.prereqs["bam_cases"].items():
+        try:
+            prereqs = data_manifest.require_all_native_bam_pipeline_prerequisites()
+        except unittest.SkipTest as skip:
+            self.skipTest(str(skip))
+
+        for label, bam in prereqs["bam_cases"].items():
             with self.subTest(label=label):
                 expected_root = data_manifest.EXPECTED_OUTPUT_ROOT / label
                 with (expected_root / "report.json").open("r", encoding="utf-8") as handle:
@@ -137,8 +144,7 @@ class VntyperNativeBamPipelineGateTests(unittest.TestCase):
                         bam,
                         label,
                         str(Path(tmp) / label),
-                        kestrel_jar=self.prereqs["kestrel_jar"],
-                        muc1_reference=self.prereqs["muc1_reference"],
+                        muc1_reference=prereqs["muc1_reference"],
                         use_native_samtools=True,
                         use_native_kestrel=True,
                         use_native_bcftools=True,
