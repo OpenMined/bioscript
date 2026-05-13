@@ -272,6 +272,9 @@ This is not just a facade spike. The finish line is:
       `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_fastq_pipeline_gate`.
       The gate failed on the negative fixture: native Kestrel classification was
       `High_Precision`, expected VNtyper classification was `negative`.
+      Reconfirmed after the samtools FASTQ singleton fix and native extension
+      rebuild: the same negative FASTQ classification mismatch remains, so this
+      is still a `kestrel-rs`/Kestrel-output parity issue.
 - [ ] `kestrel-rs`: any Java parity gaps should be reduced into
       `vendor/rust/kestrel-rs` tests, not hidden in BioScript tests.
 - [x] `bcftools-rs`: confirm the VNtyper-required sort/compress/index path is
