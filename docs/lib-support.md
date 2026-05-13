@@ -72,6 +72,10 @@ BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 \
   PYTHONPATH=python:ports/vntyper/bioscript \
   python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate
 
+BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 \
+  PYTHONPATH=python:ports/vntyper/bioscript \
+  python -m unittest ports.vntyper.tests.test_native_fastq_pipeline_gate
+
 BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1 \
   PYTHONPATH=python:ports/vntyper/bioscript \
   python -m unittest ports.vntyper.tests.test_samtools_fastq_oracle

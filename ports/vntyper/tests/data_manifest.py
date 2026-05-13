@@ -43,6 +43,16 @@ REPRESENTATIVE_BAM_CASES = {
     "positive": DATA_ROOT / "example_6449_hg19_subset.bam",
     "negative": DATA_ROOT / "example_66bf_hg19_subset.bam",
 }
+REPRESENTATIVE_FASTQ_CASES = {
+    "positive": (
+        DATA_ROOT / "example_6449_hg19_subset_R1.fastq.gz",
+        DATA_ROOT / "example_6449_hg19_subset_R2.fastq.gz",
+    ),
+    "negative": (
+        DATA_ROOT / "example_66bf_hg19_subset_R1.fastq.gz",
+        DATA_ROOT / "example_66bf_hg19_subset_R2.fastq.gz",
+    ),
+}
 
 def resolve_kestrel_jar():
     env_path = os.environ.get("BIOSCRIPT_KESTREL_JAR")
@@ -210,6 +220,46 @@ def require_native_bam_pipeline_prerequisites():
         "muc1_reference": str(MUC1_REFERENCE),
         "expected_outputs": [str(path) for path in EXPECTED_OUTPUTS],
         "bam_cases": {label: str(path) for label, path in REPRESENTATIVE_BAM_CASES.items()},
+    }
+
+
+def require_native_fastq_pipeline_prerequisites():
+    """Skip unless the native-Kestrel FASTQ path can run against copied data."""
+    manifest = require_test_data(check_md5=False)
+    missing = []
+    if os.environ.get("BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY") != "1":
+        missing.append("BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1")
+    if not MUC1_REFERENCE.exists():
+        missing.append(str(MUC1_REFERENCE))
+    missing_cases = [
+        str(path)
+        for pair in REPRESENTATIVE_FASTQ_CASES.values()
+        for path in pair
+        if not path.exists()
+    ]
+    missing.extend(missing_cases)
+    missing_outputs = [str(path) for path in EXPECTED_OUTPUTS if not path.exists()]
+    if missing_outputs:
+        preview = ", ".join(missing_outputs[:3])
+        remaining = len(missing_outputs) - min(len(missing_outputs), 3)
+        suffix = f", plus {remaining} more" if remaining else ""
+        missing.append(f"native FASTQ expected outputs: {preview}{suffix}")
+    try:
+        import_native_module()
+    except Exception as exc:
+        missing.append(f"bioscript._native importable ({exc})")
+    if missing:
+        raise unittest.SkipTest(
+            "VNtyper native FASTQ pipeline prerequisites are missing: " + "; ".join(missing)
+        )
+    return {
+        "manifest": manifest,
+        "muc1_reference": str(MUC1_REFERENCE),
+        "expected_outputs": [str(path) for path in EXPECTED_OUTPUTS],
+        "fastq_cases": {
+            label: (str(pair[0]), str(pair[1]))
+            for label, pair in REPRESENTATIVE_FASTQ_CASES.items()
+        },
     }
 
 
