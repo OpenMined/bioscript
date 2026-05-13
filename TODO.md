@@ -173,9 +173,11 @@ This is not just a facade spike. The finish line is:
       scaffold into runnable BioScript/runtime-supported calls.
       Partial 2026-05-14: `ports/vntyper/bioscript/vntyper-fastq.bs` now runs
       native `kestrel.run_native`, `bcftools.sort`, `bcftools.index`, and
-      `vcf.read_kestrel` on tiny FASTQ/reference fixtures through the BioScript
-      runtime and writes a TSV summary. Full VNtyper post-processing/report
-      logic and the BAM program are still scaffold-backed.
+      `vcf.read_vntyper_kestrel` on tiny FASTQ/reference fixtures through the
+      BioScript runtime and writes a TSV summary. Core Kestrel call-table
+      conversion now lives in `rust/bioscript-libs/src/vcf/vntyper.rs` and is
+      covered by `rust/bioscript-libs/tests/vntyper_vcf.rs`. Full VNtyper
+      report logic and the BAM program are still scaffold-backed.
 - [ ] If Monty syntax is missing required features, add the smallest runtime or
       syntax support needed and cover it with runtime tests.
       No new Monty syntax was required for the native FASTQ execution slice.

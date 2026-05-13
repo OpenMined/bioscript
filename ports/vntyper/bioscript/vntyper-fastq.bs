@@ -21,7 +21,7 @@ def main():
     )
     bcftools.sort(kestrel_vcf, sorted_vcf)
     bcftools.index(sorted_vcf)
-    rows = vcf.read_kestrel(kestrel_vcf)
+    rows = vcf.read_vntyper_kestrel(kestrel_vcf)
 
     report = {
         "participant_id": sample,
@@ -34,6 +34,8 @@ def main():
         "first_variant_pos": rows[0]["POS"],
         "first_variant_ref": rows[0]["REF"],
         "first_variant_alt": rows[0]["ALT"],
+        "first_variant_confidence": rows[0]["Confidence"],
+        "first_variant_passes_vntyper_filters": rows[0]["passes_vntyper_filters"],
     }
     bioscript.write_tsv(output_file, [report])
 

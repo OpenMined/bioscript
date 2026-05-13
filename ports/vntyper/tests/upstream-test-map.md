@@ -34,7 +34,7 @@ facade, Rust engine crate, or VNtyper-port logic.
 | `unit/test_region_utils.py` | Port to `test_vntyper_regions.py` and config tests. | Covered for assembly aliases, coordinate strings, contig naming conventions, and invalid coordinates by `test_vntyper_regions.py`; upstream pytest subset gate includes the upstream file when dependencies are installed. |
 | `unit/test_scoring.py` | Port directly to VNtyper post-processing tests and upstream scoring parity tests. | Covered for frame scoring, frameshift extraction, confidence assignment, depth score, and upstream subset parity by `test_ported_upstream_units.py`, `test_vntyper_port.py`, and `test_upstream_scoring_parity.py`; upstream pytest subset gate includes the upstream file when dependencies are installed. |
 | `unit/test_utils.py` | Split by behavior: path/config behavior to VNtyper tests, command behavior to facade tests, unrelated CLI helpers out of scope. | Partial: sample-name/path validation and manifest skip behavior are covered by `test_vntyper_commands.py` and `test_data_manifest.py`; remaining unrelated CLI helper behavior should stay out of BioScript core unless the final runtime CLI needs it. |
-| `unit/test_variant_parsing.py` | Port directly to VNtyper VCF parsing/post-processing tests; Rust VCF parsing tests should be added if logic moves to `bioscript-libs`. | Covered for VNtyper-required VCF parsing, ALT filtering, named sample columns, expected TSV rows, and expected report summary by `test_vntyper_port.py`, `test_ported_upstream_units.py`, and `test_upstream_scoring_parity.py`; upstream pytest subset gate includes the upstream file when dependencies are installed. |
+| `unit/test_variant_parsing.py` | Port directly to VNtyper VCF parsing/post-processing tests; Rust VCF parsing tests should be added if logic moves to `bioscript-libs`. | Covered for VNtyper-required VCF parsing, ALT filtering, named sample columns, expected TSV rows, and expected report summary by `test_vntyper_port.py`, `test_ported_upstream_units.py`, and `test_upstream_scoring_parity.py`. Core Rust call-table conversion is covered by `rust/bioscript-libs/tests/vntyper_vcf.rs`; upstream pytest subset gate includes the upstream file when dependencies are installed. |
 
 ## Benchmark Tests
 
@@ -47,8 +47,9 @@ facade, Rust engine crate, or VNtyper-port logic.
 - Runtime tests executing BioScript VNtyper programs: covered by
   `rust/bioscript-runtime/tests/vntyper_program.rs`. `vntyper.bs` is still a
   BAM command-plan execution test. `vntyper-fastq.bs` now runs native
-  Kestrel/BCFtools/VCF parsing on tiny generated FASTQ/reference fixtures and
-  writes a TSV summary. Full TSV/JSON/HTML post-processing remains open.
+  Kestrel/BCFtools/VNtyper Kestrel call-table parsing on tiny generated
+  FASTQ/reference fixtures and writes a TSV summary. Full TSV/JSON/HTML
+  post-processing remains open.
 - Rust `bioscript-libs` test for native Samtools/Kestrel/BCFtools orchestration
   on tiny fixtures: covered by `rust/bioscript-libs/tests/vntyper_facades.rs`.
 - Opt-in BAM large-data parity for positive and negative fixtures: covered by
