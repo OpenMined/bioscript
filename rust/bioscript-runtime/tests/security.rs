@@ -272,6 +272,57 @@ if __name__ == "__main__":
 }
 
 #[test]
+fn bioscript_samtools_native_methods_materialize_outputs() {
+    let dir = temp_dir("samtools-native-methods");
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../vendor/rust/samtools-rs/samtools/test/stat");
+    fs::copy(fixtures.join("11_target.bam"), dir.join("11_target.bam")).unwrap();
+    fs::copy(
+        fixtures.join("11_target.bam.bai"),
+        dir.join("11_target.bam.bai"),
+    )
+    .unwrap();
+
+    let runtime = run_script_with_inputs(
+        &dir,
+        r#"
+from bioscript import samtools
+
+def main():
+    records = samtools.view_region_native("11_target.bam", "ref1:1-10", "slice.bam", "11_target.bam.bai")
+    if records != 0:
+        raise Exception("unexpected records return")
+    depth = samtools.depth_native("11_target.bam", "ref1:1-10", "11_target.bam.bai")
+    if depth["region_length"] != 10 or depth["uncovered_bases"] != 0:
+        raise Exception("bad depth summary")
+    fastq = samtools.fastq_native("11_target.bam", "ref1:1-10", "r1.fastq.gz", "r2.fastq.gz", "11_target.bam.bai")
+    if fastq["read1_records"] != 5 or fastq["read2_records"] != 5:
+        raise Exception("bad FASTQ summary")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+
+    assert!(fs::metadata(dir.join("slice.bam")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("r1.fastq.gz")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("r2.fastq.gz")).unwrap().len() > 0);
+    let timings = runtime.timing_snapshot();
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call"
+            && timing.detail.contains("method=samtools.view_region_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=samtools.fastq_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=samtools.depth_native")
+    }));
+}
+
+#[test]
 fn bioscript_vcf_read_kestrel_returns_records() {
     let dir = temp_dir("vcf-read-kestrel");
     fs::write(

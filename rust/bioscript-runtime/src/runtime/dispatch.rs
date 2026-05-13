@@ -42,6 +42,11 @@ impl BioscriptRuntime {
             ("SamtoolsModule", "fastq") => self.method_samtools_fastq(args, kwargs),
             ("SamtoolsModule", "depth") => self.method_samtools_depth(args, kwargs),
             ("SamtoolsModule", "index") => self.method_samtools_index(args, kwargs),
+            ("SamtoolsModule", "view_region_native") => {
+                self.method_samtools_view_region_native(args, kwargs)
+            }
+            ("SamtoolsModule", "fastq_native") => self.method_samtools_fastq_native(args, kwargs),
+            ("SamtoolsModule", "depth_native") => self.method_samtools_depth_native(args, kwargs),
             ("GenotypeFile", "get") => self.method_genotype_get(args, kwargs),
             ("GenotypeFile", "lookup_variant") => self.method_genotype_lookup_variant(args, kwargs),
             ("GenotypeFile", "lookup_variant_details") => {
