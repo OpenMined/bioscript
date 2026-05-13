@@ -1,0 +1,61 @@
+use bioscript_core::RuntimeError;
+use monty::MontyObject;
+
+use super::BioscriptRuntime;
+
+impl BioscriptRuntime {
+    pub(super) fn dispatch_method_call(
+        &self,
+        method_name: &str,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        let class_name = match args.first() {
+            Some(MontyObject::Dataclass { name, .. }) => name.as_str(),
+            _ => "<unknown>",
+        };
+
+        match (class_name, method_name) {
+            ("Bioscript", "load_genotypes") => self.method_load_genotypes(args, kwargs),
+            ("Bioscript", "variant") => self.method_variant(args, kwargs),
+            ("Bioscript", "query_plan") => self.method_query_plan(args, kwargs),
+            ("Bioscript", "write_tsv") => self.method_write_tsv(args, kwargs),
+            ("Bioscript", "read_text") => self.method_read_text(args, kwargs),
+            ("Bioscript", "write_text") => self.method_write_text(args, kwargs),
+            ("Bioscript", "exists") => self.method_exists(args, kwargs),
+            ("PysamModule", "AlignmentFile") => self.method_pysam_alignment_file(args, kwargs),
+            ("PysamAlignmentFile", "fetch") => self.method_pysam_alignment_file_fetch(args, kwargs),
+            ("PyfaidxModule", "Fasta") => self.method_pyfaidx_fasta(args, kwargs),
+            ("BcftoolsModule", "sort") => self.method_bcftools_sort(args, kwargs),
+            ("BcftoolsModule", "index") => self.method_bcftools_index(args, kwargs),
+            ("BcftoolsModule", "view_filter") => self.method_bcftools_view_filter(args, kwargs),
+            ("BcftoolsModule", "norm") => self.method_bcftools_norm(args, kwargs),
+            ("BcftoolsModule", "view_header_native") => {
+                self.method_bcftools_view_header_native(args, kwargs)
+            }
+            ("BcftoolsModule", "view_native") => self.method_bcftools_view_native(args, kwargs),
+            ("BcftoolsModule", "index_native") => self.method_bcftools_index_native(args, kwargs),
+            ("VcfModule", "VariantFile") => self.method_vcf_variant_file(args, kwargs),
+            ("VcfModule", "read_kestrel") => self.method_vcf_read_kestrel(args, kwargs),
+            ("KestrelModule", "build_command") => self.method_kestrel_build_command(args, kwargs),
+            ("SamtoolsModule", "view_region") => self.method_samtools_view_region(args, kwargs),
+            ("SamtoolsModule", "fastq") => self.method_samtools_fastq(args, kwargs),
+            ("SamtoolsModule", "depth") => self.method_samtools_depth(args, kwargs),
+            ("SamtoolsModule", "index") => self.method_samtools_index(args, kwargs),
+            ("GenotypeFile", "get") => self.method_genotype_get(args, kwargs),
+            ("GenotypeFile", "lookup_variant") => self.method_genotype_lookup_variant(args, kwargs),
+            ("GenotypeFile", "lookup_variant_details") => {
+                self.method_genotype_lookup_variant_details(args, kwargs)
+            }
+            ("GenotypeFile", "lookup_variants") => {
+                self.method_genotype_lookup_variants(args, kwargs)
+            }
+            ("GenotypeFile", "lookup_variants_details") => {
+                self.method_genotype_lookup_variants_details(args, kwargs)
+            }
+            _ => Err(RuntimeError::Unsupported(format!(
+                "'{class_name}' object has no attribute '{method_name}'"
+            ))),
+        }
+    }
+}

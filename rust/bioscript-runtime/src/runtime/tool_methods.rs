@@ -111,6 +111,78 @@ impl BioscriptRuntime {
         )
     }
 
+    pub(super) fn method_bcftools_view_header_native(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bcftools.view_header_native")?;
+        if args.len() != 3 {
+            return Err(RuntimeError::InvalidArguments(
+                "bcftools.view_header_native expects input_vcf and output_vcf".to_owned(),
+            ));
+        }
+        let started = RuntimeInstant::now();
+        let input = self.resolve_existing_user_path(&expect_string_arg(
+            args,
+            1,
+            "bcftools.view_header_native",
+        )?)?;
+        let output = self.resolve_user_write_path(&expect_string_arg(
+            args,
+            2,
+            "bcftools.view_header_native",
+        )?)?;
+        bcftools::view_header_native(&input, &output)
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        native_tool_none(self, "bcftools.view_header_native", started)
+    }
+
+    pub(super) fn method_bcftools_view_native(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bcftools.view_native")?;
+        if args.len() != 4 {
+            return Err(RuntimeError::InvalidArguments(
+                "bcftools.view_native expects input_vcf, output_vcf, and output_type".to_owned(),
+            ));
+        }
+        let started = RuntimeInstant::now();
+        let input =
+            self.resolve_existing_user_path(&expect_string_arg(args, 1, "bcftools.view_native")?)?;
+        let output =
+            self.resolve_user_write_path(&expect_string_arg(args, 2, "bcftools.view_native")?)?;
+        let output_type = expect_string_arg(args, 3, "bcftools.view_native")?;
+        bcftools::view_native(&input, &output, &output_type)
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        native_tool_none(self, "bcftools.view_native", started)
+    }
+
+    pub(super) fn method_bcftools_index_native(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bcftools.index_native")?;
+        if args.len() != 5 {
+            return Err(RuntimeError::InvalidArguments(
+                "bcftools.index_native expects input_vcf, output_index, tbi, and force".to_owned(),
+            ));
+        }
+        let started = RuntimeInstant::now();
+        let input =
+            self.resolve_existing_user_path(&expect_string_arg(args, 1, "bcftools.index_native")?)?;
+        let output =
+            self.resolve_user_write_path(&expect_string_arg(args, 2, "bcftools.index_native")?)?;
+        let tbi = expect_bool_arg(args, 3, "bcftools.index_native")?;
+        let force = expect_bool_arg(args, 4, "bcftools.index_native")?;
+        bcftools::index_native(&input, Some(&output), tbi, force)
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        native_tool_none(self, "bcftools.index_native", started)
+    }
+
     pub(super) fn method_kestrel_build_command(
         &self,
         args: &[MontyObject],
@@ -308,6 +380,19 @@ fn command_argv_object(
     Ok(MontyObject::List(
         argv.into_iter().map(MontyObject::String).collect(),
     ))
+}
+
+fn native_tool_none(
+    runtime: &BioscriptRuntime,
+    method: &str,
+    started: RuntimeInstant,
+) -> Result<MontyObject, RuntimeError> {
+    runtime.record_timing(
+        "native_tool_call",
+        started.elapsed(),
+        format!("method={method}"),
+    );
+    Ok(MontyObject::None)
 }
 
 fn expect_bool_arg(
