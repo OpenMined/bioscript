@@ -10,6 +10,7 @@ bcftools-rs = { path = "../../vendor/rust/bcftools-rs/crates/bcftools-rs" }
 flate2 = "1.1.9"
 kanalyze = { path = "../../vendor/rust/kestrel-rs/crates/kanalyze" }
 kestrel = { path = "../../vendor/rust/kestrel-rs/crates/kestrel" }
+samtools-rs = { path = "../../vendor/rust/samtools-rs/crates/samtools-rs" }
 tempfile = "3"
 
 [lints.clippy]

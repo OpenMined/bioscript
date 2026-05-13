@@ -35,8 +35,11 @@ uses those built-in primitives.
       `vendor/rust/htslib-rs`
 - [x] Add BCFtools Rust engine:
       `vendor/rust/bcftools-rs`
-- [ ] Add Samtools Rust engine once ready:
-      `vendor/rust/samtools-rs`
+- [x] Add Samtools Rust engine:
+      `vendor/rust/samtools-rs` from
+      `git@github.com:madhavajay/samtools-rs.git`.
+      The repo contains the VNtyper-needed `view`, `fastq`, `depth`, `index`,
+      and related API surface.
 - [ ] Keep vendored engine crate tests inside their own repos/workspaces.
 - [ ] Keep BioScript tests focused on adapter behavior and pipeline integration.
 
@@ -44,12 +47,18 @@ uses those built-in primitives.
 
 - [x] Wire `rust/bioscript-libs` to local `kestrel-rs` path dependencies:
       `kestrel` and `kanalyze`.
-- [ ] Wire `rust/bioscript-libs` to local `htslib-rs`.
-      Top-level `vendor/rust/htslib-rs` is present, but direct Cargo wiring is
-      deferred until the duplicated nested `htslib-rs` dependency inside
-      `bcftools-rs` is unified.
+- [x] Wire `rust/bioscript-libs` to local `htslib-rs`.
+      The top-level submodule and the nested BCFtools HTS backend are advanced
+      to `2f63d19` on `bioscript-samtools-template-fastq`, which includes the
+      Samtools-native support and template-expanded BAM region writer needed by
+      `samtools-rs`.
 - [x] Wire `rust/bioscript-libs` to local `bcftools-rs`.
-- [ ] Wire `rust/bioscript-libs` to local `samtools-rs` when available.
+- [x] Wire `rust/bioscript-libs` to local `samtools-rs`.
+      `bioscript-libs` depends on
+      `vendor/rust/samtools-rs/crates/samtools-rs`, and the vendored
+      `samtools-rs` workspace is patched on
+      `bioscript-use-shared-htslib` to share the BCFtools HTS backend path so
+      Cargo has one unambiguous `htslib-rs` package.
 - [ ] Add `[patch]` entries only where nested crate dependencies would
       otherwise pull remote git/crates.io versions instead of local submodules.
 - [x] Document the dependency graph:
@@ -69,10 +78,8 @@ uses those built-in primitives.
 ## Milestones
 
 - [x] M1: Kestrel Rust engine is vendored and callable through BioScript.
-- [ ] M2: HTS and BCFtools Rust engines are vendored and wired by path.
-      Both engines are vendored. BCFtools is wired into `bioscript-libs`;
-      top-level HTS direct wiring is still pending dependency unification.
-- [ ] M3: Samtools Rust engine is vendored and wired by path.
+- [x] M2: HTS and BCFtools Rust engines are vendored and wired by path.
+- [x] M3: Samtools Rust engine is vendored and wired by path.
 - [ ] M4: BioScript facades expose a minimal, recognizable built-in toolkit:
       `samtools`, `bcftools`, `kestrel`, `pysam`, `pyfaidx`, and VCF/table
       helpers.
@@ -111,9 +118,11 @@ uses those built-in primitives.
       `samtools.view_region`, `samtools.fastq`, `samtools.depth`.
 - [x] Existing native prototype supports BAM slicing, FASTQ extraction, and
       depth summary through BioScript-owned primitives.
-- [ ] Replace native prototype internals with calls into `samtools-rs` once the
-      crate is available.
-- [ ] Prioritize Samtools after vendoring HTS/BCFtools because VNtyper's BAM
+- [x] Replace native prototype internals with calls into `samtools-rs`.
+      `view_region_native`, `fastq_native`, and `depth_native` now call
+      `samtools_rs::native` and adapt the results back to BioScript's existing
+      return shapes.
+- [x] Prioritize Samtools now that `samtools-rs` is available because VNtyper's BAM
       path should become:
       `samtools.view` -> `samtools.index/sort` if needed ->
       `samtools.fastq` -> `samtools.depth`.
@@ -178,8 +187,8 @@ uses those built-in primitives.
 - [ ] Add runtime method bindings for native samtools/bcftools operations once
       facades are stable.
       BCFtools native bindings now cover `view_header_native`, `view_native`,
-      `sort_native`, and `index_native`; Samtools native bindings are still pending the
-      `samtools-rs` backend.
+      `sort_native`, and `index_native`; Samtools native bindings route through
+      the BioScript facade, which is now backed by `samtools-rs`.
 - [ ] Keep runtime responsible for language/object adaptation only.
 - [ ] Keep file/path/security policy centralized and reused across facades.
 
@@ -216,8 +225,12 @@ uses those built-in primitives.
 - [ ] Keep VNtyper data/config small and explicit:
       MUC1 coordinates, motif FASTA path, confidence thresholds, report schema,
       and optional validation toggles.
-- [ ] Once `samtools-rs` and `bcftools-rs` are wired, rerun the BAM path using
+- [ ] Now that `samtools-rs` and `bcftools-rs` are wired, rerun the BAM path using
       only BioScript native facades.
+      Verified the opt-in native-Samtools BAM gate with Java Kestrel for the
+      positive and negative fixtures. The all-native path with native Kestrel
+      still needs a bounded parity run; an ad hoc smoke attempt did not finish
+      within about a minute and was stopped.
 - [ ] Compare native-facade VNtyper output against expected positive/negative
       fixtures for:
       FASTQ path, BAM path, report JSON, and HTML report.
@@ -244,9 +257,21 @@ uses those built-in primitives.
 - [x] Inspect `bcftools-rs` and `htslib-rs` APIs.
 - [x] Implement the first `bcftools` native adapter method.
 - [x] Add adapter tests for that method.
-- [ ] Add `vendor/rust/samtools-rs` when ready.
-- [ ] Implement the Samtools native facade methods needed for VNtyper.
+- [x] Add `vendor/rust/samtools-rs` from
+      `git@github.com:madhavajay/samtools-rs.git`.
+      The stale local config/worktree state was reused with the SSH remote.
+- [x] Implement the Samtools native facade methods needed for VNtyper.
+      `view_region_native`, `fastq_native`, and `depth_native` are backed by
+      `samtools-rs`; native `index/sort` can be exposed later if VNtyper needs
+      them after BAM slicing.
 - [ ] Add Samtools adapter tests using tiny BAM/FASTQ/depth fixtures.
+      Existing BioScript native fixture coverage still runs through the facade,
+      and `samtools-rs` owns broader command/native-wrapper engine tests.
+      Opt-in oracle testing against real `samtools fastq` is close but not
+      exact yet: the native path currently emits +20 read1 records on the
+      positive fixture and +3 on the negative fixture versus real samtools.
+      Keep this open until `samtools-rs` fully matches `view -P | sort -n |
+      fastq -1/-2/-0/-s` behavior.
 - [ ] Refactor existing BioScript helper methods to call public facades.
 - [ ] Build the minimal VNtyper BioScript pipeline on top of those facades.
 
