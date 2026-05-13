@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from bioscript import kestrel, samtools
+from bioscript import bcftools, kestrel, samtools
 
 try:
     from . import vntyper_commands, vntyper_port
@@ -304,13 +304,16 @@ def run_fastq_kestrel(
     dry_run: bool = False,
     runner: Runner | None = None,
     use_native_kestrel: bool = False,
+    use_native_bcftools: bool = False,
     native_kestrel: object | None = None,
+    native_bcftools: object | None = None,
 ) -> ExternalPipelineResult:
     out_dir = Path(output_dir)
     sample = vntyper_commands._safe_sample_name(participant_id)
     kestrel_dir = out_dir / "kestrel"
     kestrel_vcf = str(kestrel_dir / "output.vcf")
     kestrel_sam = str(kestrel_dir / "output.sam")
+    sorted_vcf = str(kestrel_dir / "output.sorted.vcf.gz")
     if use_native_kestrel:
         command = native_kestrel_fastq_command(muc1_reference, fastq_1, fastq_2, kestrel_vcf)
     else:
@@ -327,7 +330,11 @@ def run_fastq_kestrel(
     result = ExternalPipelineResult(
         participant_id=sample,
         output_dir=str(out_dir),
-        commands=[command],
+        commands=(
+            [command, native_bcftools_sort_command(kestrel_vcf, sorted_vcf)]
+            if use_native_bcftools
+            else [command]
+        ),
         kestrel_vcf=kestrel_vcf,
         kestrel_tsv=str(kestrel_dir / "kestrel_result.tsv"),
         report_json=str(out_dir / "report.json"),
@@ -343,12 +350,26 @@ def run_fastq_kestrel(
     else:
         command_runner = runner or subprocess.run
         command_runner(command, check=True)
+    if use_native_bcftools:
+        (native_bcftools or bcftools).sort_native(
+            result.kestrel_vcf,
+            sorted_vcf,
+            output_type="z",
+            write_index=True,
+        )
     materialize_post_kestrel_outputs(
         result,
         f"{fastq_1},{fastq_2}",
         assembly,
         {},
-        input_files={"fastq_1": fastq_1, "fastq_2": fastq_2, "vcf": result.kestrel_vcf},
+        input_files={
+            "fastq_1": fastq_1,
+            "fastq_2": fastq_2,
+            "vcf": result.kestrel_vcf,
+            "sorted_vcf": sorted_vcf,
+        }
+        if use_native_bcftools
+        else {"fastq_1": fastq_1, "fastq_2": fastq_2, "vcf": result.kestrel_vcf},
         alignment_pipeline=(
             "native bioscript kestrel from FASTQ"
             if use_native_kestrel
@@ -379,6 +400,17 @@ def native_kestrel_fastq_command(
         fastq_2,
         "-o",
         output_vcf,
+    ]
+
+
+def native_bcftools_sort_command(input_vcf: str, output_vcf: str) -> list[str]:
+    return [
+        "bioscript.bcftools.sort_native",
+        input_vcf,
+        output_vcf,
+        "--output-type",
+        "z",
+        "--write-index",
     ]
 
 

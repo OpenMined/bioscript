@@ -96,6 +96,22 @@ fn bcftools_view_native(input_vcf: &str, output_vcf: &str, output_type: &str) ->
 }
 
 #[pyfunction]
+fn bcftools_sort_native(
+    input_vcf: &str,
+    output_vcf: &str,
+    output_type: &str,
+    write_index: bool,
+) -> PyResult<()> {
+    bioscript_libs::bcftools::sort_native(
+        PathBuf::from(input_vcf).as_path(),
+        PathBuf::from(output_vcf).as_path(),
+        output_type,
+        write_index,
+    )
+    .map_err(to_py_value_error)
+}
+
+#[pyfunction]
 fn bcftools_index_native(
     input_vcf: &str,
     output_index: Option<&str>,
@@ -300,6 +316,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(samtools_fastq_native, module)?)?;
     module.add_function(wrap_pyfunction!(bcftools_view_header_native, module)?)?;
     module.add_function(wrap_pyfunction!(bcftools_view_native, module)?)?;
+    module.add_function(wrap_pyfunction!(bcftools_sort_native, module)?)?;
     module.add_function(wrap_pyfunction!(bcftools_index_native, module)?)?;
     module.add_function(wrap_pyfunction!(kestrel_call_sequences_native, module)?)?;
     module.add_function(wrap_pyfunction!(kestrel_call_fastq_native, module)?)?;

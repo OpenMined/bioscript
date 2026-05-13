@@ -160,6 +160,30 @@ impl BioscriptRuntime {
         native_tool_none(self, "bcftools.view_native", started)
     }
 
+    pub(super) fn method_bcftools_sort_native(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bcftools.sort_native")?;
+        if args.len() != 5 {
+            return Err(RuntimeError::InvalidArguments(
+                "bcftools.sort_native expects input_vcf, output_vcf, output_type, and write_index"
+                    .to_owned(),
+            ));
+        }
+        let started = RuntimeInstant::now();
+        let input =
+            self.resolve_existing_user_path(&expect_string_arg(args, 1, "bcftools.sort_native")?)?;
+        let output =
+            self.resolve_user_write_path(&expect_string_arg(args, 2, "bcftools.sort_native")?)?;
+        let output_type = expect_string_arg(args, 3, "bcftools.sort_native")?;
+        let write_index = expect_bool_arg(args, 4, "bcftools.sort_native")?;
+        bcftools::sort_native(&input, &output, &output_type, write_index)
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        native_tool_none(self, "bcftools.sort_native", started)
+    }
+
     pub(super) fn method_bcftools_index_native(
         &self,
         args: &[MontyObject],

@@ -237,6 +237,7 @@ def main():
     )
     bcftools.view_header_native("calls.vcf", "header.vcf")
     bcftools.view_native("calls.vcf", "calls.vcf.gz", "z")
+    bcftools.sort_native("calls.vcf", "calls.sorted.vcf.gz", "z", True)
     bcftools.index_native("calls.vcf.gz", "calls.vcf.gz.tbi", True, True)
 
 if __name__ == "__main__":
@@ -250,10 +251,20 @@ if __name__ == "__main__":
     assert!(header.contains("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"));
     assert!(!header.contains("chr1\t5\t.\tC\tT"));
     assert!(fs::metadata(dir.join("calls.vcf.gz")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("calls.sorted.vcf.gz")).unwrap().len() > 0);
+    assert!(
+        fs::metadata(dir.join("calls.sorted.vcf.gz.csi"))
+            .unwrap()
+            .len()
+            > 0
+    );
     assert!(fs::metadata(dir.join("calls.vcf.gz.tbi")).unwrap().len() > 0);
     let timings = runtime.timing_snapshot();
     assert!(timings.iter().any(|timing| {
         timing.stage == "native_tool_call" && timing.detail.contains("method=bcftools.view_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=bcftools.sort_native")
     }));
     assert!(timings.iter().any(|timing| {
         timing.stage == "native_tool_call" && timing.detail.contains("method=bcftools.index_native")

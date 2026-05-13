@@ -125,6 +125,47 @@ fn bcftools_native_view_writes_bgzf_vcf_and_index_writes_tbi() {
 }
 
 #[test]
+fn bcftools_native_sort_writes_bgzf_vcf_and_csi() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("unsorted.vcf");
+    let output = temp.path().join("output_indel.vcf.gz");
+    let index = temp.path().join("output_indel.vcf.gz.csi");
+    std::fs::write(
+        &input,
+        concat!(
+            "##fileformat=VCFv4.2\n",
+            "##FILTER=<ID=PASS,Description=\"All filters passed\">\n",
+            "##contig=<ID=1,length=1000>\n",
+            "##contig=<ID=2,length=1000>\n",
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n",
+            "2\t25\t.\tA\tT\t100\tPASS\t.\n",
+            "1\t20\t.\tC\tT\t100\tPASS\t.\n",
+            "1\t10\t.\tA\tG\t100\tPASS\t.\n",
+        ),
+    )
+    .unwrap();
+
+    bcftools::sort_native(&input, &output, "z", true).unwrap();
+
+    let mut decoder = flate2::read::MultiGzDecoder::new(std::fs::File::open(&output).unwrap());
+    let mut vcf = String::new();
+    decoder.read_to_string(&mut vcf).unwrap();
+    let records = vcf
+        .lines()
+        .filter(|line| !line.starts_with('#') && !line.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        records,
+        vec![
+            "1\t10\t.\tA\tG\t100\tPASS\t.",
+            "1\t20\t.\tC\tT\t100\tPASS\t.",
+            "2\t25\t.\tA\tT\t100\tPASS\t.",
+        ]
+    );
+    assert!(std::fs::metadata(index).unwrap().len() > 0);
+}
+
+#[test]
 fn pysam_alignment_file_accepts_read_modes_and_rejects_write_modes() {
     let file = AlignmentFile::open(
         "sample.cram",
