@@ -135,14 +135,17 @@ uses those built-in primitives.
       supports them.
       Initial native methods: `view_header_native`, `view_native`, and
       `index_native`, backed by `bcftools_rs::commands::{view,index}`.
+      Native sort now calls `bcftools_rs::commands::sort` for the VNtyper
+      `sort -o output.vcf.gz -W -O z` path.
 - [ ] Initial target operations:
       `view`, `sort`, `norm`, compression/index helpers if needed.
 - [ ] Add adapter tests for VCF input/output, compressed output, filter
       expressions used by VNtyper, and useful error messages.
       Initial coverage verifies `bcftools-rs` header extraction, VCF output,
-      BGZF-compressed output, TBI indexing, Python wrapper delegation, and the
-      real PyO3 native extension when installed. Filter expression coverage
-      remains pending until `bcftools-rs view` supports `-i/-e`.
+      BGZF-compressed output, native sort, CSI/TBI indexing, Python wrapper
+      delegation, and the real PyO3 native extension when installed. Filter
+      expression coverage remains pending until `bcftools-rs view` supports
+      `-i/-e`.
 
 ## HTS / Pysam / Pyfaidx Facades
 
@@ -175,7 +178,7 @@ uses those built-in primitives.
 - [ ] Add runtime method bindings for native samtools/bcftools operations once
       facades are stable.
       BCFtools native bindings now cover `view_header_native`, `view_native`,
-      and `index_native`; Samtools native bindings are still pending the
+      `sort_native`, and `index_native`; Samtools native bindings are still pending the
       `samtools-rs` backend.
 - [ ] Keep runtime responsible for language/object adaptation only.
 - [ ] Keep file/path/security policy centralized and reused across facades.
@@ -202,6 +205,8 @@ uses those built-in primitives.
       over private helper names.
       Native Kestrel execution now goes through `kestrel.run_native(...)`
       instead of VNtyper manually loading references and writing VCF text.
+      The FASTQ-only path can now optionally run native Kestrel followed by
+      native BCFtools sort/index without Java or external bcftools.
 - [x] Define the minimal VNtyper BioScript interface, for example:
       `run_vntyper(bam=..., reference_build="hg19", output_dir=...)` and
       `run_vntyper_fastq(r1=..., r2=..., reference_build="hg19", output_dir=...)`.
@@ -246,8 +251,7 @@ uses those built-in primitives.
 
 ```sh
 cd rust
-cargo test -p bioscript-libs
-cargo test -p bioscript-python
+cargo test -p bioscript-libs -p bioscript-python -p bioscript-runtime
 cargo test --manifest-path ../vendor/rust/kestrel-rs/Cargo.toml
 ```
 

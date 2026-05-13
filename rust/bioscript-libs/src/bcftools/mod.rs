@@ -60,6 +60,26 @@ pub fn view_native(input_vcf: &Path, output_vcf: &Path, output_type: &str) -> Li
     run_bcftools("view", bcftools_rs::commands::view::main(&argv))
 }
 
+pub fn sort_native(
+    input_vcf: &Path,
+    output_vcf: &Path,
+    output_type: &str,
+    write_index: bool,
+) -> LibResult<()> {
+    let mut argv = vec![
+        OsString::from("sort"),
+        input_vcf.as_os_str().to_owned(),
+        OsString::from("-o"),
+        output_vcf.as_os_str().to_owned(),
+        OsString::from("-O"),
+        OsString::from(output_type),
+    ];
+    if write_index {
+        argv.push(OsString::from("-W"));
+    }
+    run_bcftools("sort", bcftools_rs::commands::sort::main(&argv))
+}
+
 pub fn index_native(
     input_vcf: &Path,
     output_index: Option<&Path>,

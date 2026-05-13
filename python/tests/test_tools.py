@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import importlib
 import sys
 import tempfile
@@ -319,17 +320,29 @@ class ToolCommandTests(unittest.TestCase):
         def view(input_vcf, output_vcf, output_type):
             calls.append((input_vcf, output_vcf, output_type))
 
+        def sort_native(input_vcf, output_vcf, output_type, write_index):
+            calls.append((input_vcf, output_vcf, output_type, write_index))
+
         def index(input_vcf, output_index, tbi, force):
             calls.append((input_vcf, output_index, tbi, force))
 
         fake_native = SimpleNamespace(
             bcftools_view_header_native=view_header,
             bcftools_view_native=view,
+            bcftools_sort_native=sort_native,
             bcftools_index_native=index,
         )
         with patch.dict("sys.modules", {"bioscript._native": fake_native}):
             self.assertIsNone(bcftools.view_header_native("calls.vcf", "header.vcf"))
             self.assertIsNone(bcftools.view_native("calls.vcf", "calls.vcf.gz", output_type="z"))
+            self.assertIsNone(
+                bcftools.sort_native(
+                    "calls.vcf",
+                    "calls.sorted.vcf.gz",
+                    output_type="z",
+                    write_index=True,
+                )
+            )
             self.assertIsNone(
                 bcftools.index_native(
                     "calls.vcf.gz",
@@ -344,6 +357,7 @@ class ToolCommandTests(unittest.TestCase):
             [
                 ("calls.vcf", "header.vcf"),
                 ("calls.vcf", "calls.vcf.gz", "z"),
+                ("calls.vcf", "calls.sorted.vcf.gz", "z", True),
                 ("calls.vcf.gz", "calls.vcf.gz.tbi", True, False),
             ],
         )
@@ -354,6 +368,8 @@ class ToolCommandTests(unittest.TestCase):
                 bcftools.view_header_native("calls.vcf", "header.vcf")
             with self.assertRaises(NotImplementedError):
                 bcftools.view_native("calls.vcf", "calls.vcf.gz", output_type="z")
+            with self.assertRaises(NotImplementedError):
+                bcftools.sort_native("calls.vcf", "calls.sorted.vcf.gz")
             with self.assertRaises(NotImplementedError):
                 bcftools.index_native("calls.vcf.gz", "calls.vcf.gz.tbi")
 
@@ -424,6 +440,55 @@ class ToolCommandTests(unittest.TestCase):
             sys.modules.pop("bioscript._native", None)
 
         self.assertIn("chr1\t5\t.\tC\tT", text)
+        self.assertGreater(index_size, 0)
+
+    def test_bcftools_native_sort_real_extension(self) -> None:
+        try:
+            import bioscript as bioscript_package
+
+            native = importlib.import_module("bioscript._native")
+        except ImportError as exc:
+            self.skipTest(f"BioScript native extension is not installed: {exc}")
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                input_vcf = Path(tmp) / "unsorted.vcf"
+                output_gz = Path(tmp) / "output_indel.vcf.gz"
+                output_csi = Path(tmp) / "output_indel.vcf.gz.csi"
+                input_vcf.write_text(
+                    "##fileformat=VCFv4.2\n"
+                    "##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+                    "##contig=<ID=1,length=1000>\n"
+                    "##contig=<ID=2,length=1000>\n"
+                    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+                    "2\t25\t.\tA\tT\t100\tPASS\t.\n"
+                    "1\t20\t.\tC\tT\t100\tPASS\t.\n"
+                    "1\t10\t.\tA\tG\t100\tPASS\t.\n",
+                    encoding="utf-8",
+                )
+
+                bcftools.sort_native(str(input_vcf), str(output_gz))
+
+                index_size = output_csi.stat().st_size
+                with gzip.open(output_gz, "rt", encoding="utf-8") as handle:
+                    records = [
+                        line.strip()
+                        for line in handle
+                        if line.strip() and not line.startswith("#")
+                    ]
+        finally:
+            if getattr(bioscript_package, "_native", None) is native:
+                delattr(bioscript_package, "_native")
+            sys.modules.pop("bioscript._native", None)
+
+        self.assertEqual(
+            records,
+            [
+                "1\t10\t.\tA\tG\t100\tPASS\t.",
+                "1\t20\t.\tC\tT\t100\tPASS\t.",
+                "2\t25\t.\tA\tT\t100\tPASS\t.",
+            ],
+        )
         self.assertGreater(index_size, 0)
 
 

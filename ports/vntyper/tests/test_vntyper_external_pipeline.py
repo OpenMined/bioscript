@@ -319,6 +319,43 @@ class VntyperExternalPipelineTests(unittest.TestCase):
                 report = json.load(handle)
             self.assertEqual(report["metadata"]["alignment_pipeline"], "native bioscript kestrel from FASTQ")
 
+    def test_fastq_native_kestrel_and_bcftools_runner_materializes_sorted_vcf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = []
+
+            class FakeNativeKestrel:
+                def run_native(self, reference_fasta, fastqs, output_vcf, **kwargs):
+                    calls.append(("kestrel", reference_fasta, fastqs, output_vcf, kwargs))
+                    shutil.copyfile(FIXTURE_VCF, output_vcf)
+                    return output_vcf
+
+            class FakeNativeBcftools:
+                def sort_native(self, input_vcf, output_vcf, *, output_type="z", write_index=True):
+                    calls.append(("bcftools", input_vcf, output_vcf, output_type, write_index))
+                    shutil.copyfile(input_vcf, output_vcf)
+                    Path(f"{output_vcf}.csi").write_bytes(b"index")
+
+            result = vntyper_external_pipeline.run_fastq_kestrel(
+                "sample_R1.fastq.gz",
+                "sample_R2.fastq.gz",
+                "sample1",
+                str(Path(tmp) / "sample1"),
+                use_native_kestrel=True,
+                use_native_bcftools=True,
+                native_kestrel=FakeNativeKestrel(),
+                native_bcftools=FakeNativeBcftools(),
+            )
+
+            self.assertEqual([call[0] for call in calls], ["kestrel", "bcftools"])
+            self.assertEqual(result.commands[-1][0], "bioscript.bcftools.sort_native")
+            sorted_vcf = Path(result.output_dir) / "kestrel" / "output.sorted.vcf.gz"
+            self.assertTrue(sorted_vcf.exists())
+            self.assertTrue(Path(f"{sorted_vcf}.csi").exists())
+            with open(result.report_json, "r", encoding="utf-8") as handle:
+                report = json.load(handle)
+            self.assertEqual(report["input_files"]["sorted_vcf"], str(sorted_vcf))
+            self.assertEqual(report["pipeline_log"][-1]["command"][0], "bioscript.bcftools.sort_native")
+
 
 if __name__ == "__main__":
     unittest.main()

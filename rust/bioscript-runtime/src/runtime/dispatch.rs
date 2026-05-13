@@ -33,6 +33,7 @@ impl BioscriptRuntime {
                 self.method_bcftools_view_header_native(args, kwargs)
             }
             ("BcftoolsModule", "view_native") => self.method_bcftools_view_native(args, kwargs),
+            ("BcftoolsModule", "sort_native") => self.method_bcftools_sort_native(args, kwargs),
             ("BcftoolsModule", "index_native") => self.method_bcftools_index_native(args, kwargs),
             ("VcfModule", "VariantFile") => self.method_vcf_variant_file(args, kwargs),
             ("VcfModule", "read_kestrel") => self.method_vcf_read_kestrel(args, kwargs),

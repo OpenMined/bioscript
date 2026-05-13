@@ -58,6 +58,22 @@ def view_native(input_vcf: str, output_vcf: str, output_type: str = "v") -> None
     native.bcftools_view_native(_path_arg(input_vcf), _path_arg(output_vcf), output_type)
 
 
+def sort_native(
+    input_vcf: str,
+    output_vcf: str,
+    *,
+    output_type: str = "z",
+    write_index: bool = True,
+) -> None:
+    native = _native()
+    native.bcftools_sort_native(
+        _path_arg(input_vcf),
+        _path_arg(output_vcf),
+        output_type,
+        write_index,
+    )
+
+
 def index_native(
     vcf_gz: str,
     output_index: str | None = None,
