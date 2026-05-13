@@ -48,8 +48,8 @@ facade, Rust engine crate, or VNtyper-port logic.
   `rust/bioscript-runtime/tests/vntyper_program.rs`. `vntyper.bs` is still a
   BAM command-plan execution test. `vntyper-fastq.bs` now runs native
   Kestrel/BCFtools/VNtyper Kestrel call-table parsing on tiny generated
-  FASTQ/reference fixtures and writes a TSV summary. Full TSV/JSON/HTML
-  post-processing remains open.
+  FASTQ/reference fixtures, writes a TSV summary, and materializes report JSON
+  through the VCF facade. Full TSV/JSON/HTML parity remains open.
 - Rust `bioscript-libs` test for native Samtools/Kestrel/BCFtools orchestration
   on tiny fixtures: covered by `rust/bioscript-libs/tests/vntyper_facades.rs`.
 - Opt-in BAM large-data parity for positive and negative fixtures: covered by

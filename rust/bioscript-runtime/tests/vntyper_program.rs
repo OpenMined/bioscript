@@ -141,6 +141,12 @@ fn vntyper_fastq_bioscript_program_runs_through_runtime() {
             .join("positive/kestrel/output.sorted.vcf.gz")
             .exists()
     );
+    let report_json = output_dir.join("positive/report.json");
+    assert!(report_json.exists());
+    let report = fs::read_to_string(&report_json).unwrap();
+    assert!(report.contains("\"algorithm_results\""));
+    assert!(report.contains("\"kestrel\""));
+    assert!(report.contains("\"Low_Precision\""));
     fs::remove_file(output_path).unwrap();
     fs::remove_dir_all(fixture_dir).unwrap();
 }

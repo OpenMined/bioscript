@@ -36,6 +36,14 @@ pub fn read_vntyper_kestrel_rows(path: &Path) -> LibResult<Vec<VcfRecord>> {
     Ok(vntyper::vntyper_kestrel_rows(&records))
 }
 
+pub fn vntyper_report_json(
+    sample_name: &str,
+    input_files: &VcfRecord,
+    rows: &[VcfRecord],
+) -> LibResult<String> {
+    vntyper::vntyper_report_json(sample_name, input_files, rows)
+}
+
 pub fn parse_kestrel_vcf(contents: &str) -> LibResult<Vec<VcfRecord>> {
     let mut header: Option<Vec<String>> = None;
     let mut records = Vec::new();

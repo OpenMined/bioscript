@@ -1,3 +1,5 @@
+use crate::{LibError, LibResult};
+
 use super::VcfRecord;
 
 const NEGATIVE_LABEL: &str = "Negative";
@@ -10,6 +12,67 @@ const VAR_ACTIVE_REGION_THRESHOLD: f64 = 200.0;
 
 pub fn vntyper_kestrel_rows(records: &[VcfRecord]) -> Vec<VcfRecord> {
     records.iter().map(vntyper_kestrel_row).collect()
+}
+
+pub fn vntyper_report_json(
+    sample_name: &str,
+    input_files: &VcfRecord,
+    rows: &[VcfRecord],
+) -> LibResult<String> {
+    let quality_pass = true;
+    let kestrel_result = compute_kestrel_result(rows);
+    let screening_summary = screening_summary(&kestrel_result, quality_pass);
+    let best_call = best_kestrel_call(rows).map(best_call_json);
+    let value = serde_json::json!({
+        "sample_name": sample_name,
+        "version": "bioscript-vntyper-port",
+        "report_date": "runtime-generated",
+        "metadata": {
+            "sample_name": sample_name,
+            "vntyper_version": "bioscript-vntyper-port",
+            "report_date": "runtime-generated",
+            "input_files": input_files,
+            "alignment_pipeline": "native bioscript kestrel from FASTQ",
+            "detected_assembly": "unknown",
+            "detected_contig": "unknown",
+            "bam_header_warnings": [],
+        },
+        "input_files": input_files,
+        "coverage": {
+            "mean": null,
+            "median": null,
+            "stdev": null,
+            "min": null,
+            "max": null,
+            "region_length": null,
+            "uncovered_bases": null,
+            "percent_uncovered": null,
+            "threshold": 100,
+            "quality_pass": quality_pass,
+            "status": "pass",
+        },
+        "fastp": {
+            "available": false,
+        },
+        "algorithm_results": {
+            "kestrel": kestrel_result,
+            "advntr": "none",
+            "quality_metrics_pass": quality_pass,
+        },
+        "screening_summary": screening_summary,
+        "kestrel_variants": rows,
+        "advntr_variants": [],
+        "cross_match_summary": {
+            "available": false,
+            "status": "not_performed",
+            "message": "adVNTR genotyping was not performed.",
+        },
+        "pipeline_log": [],
+        "best_call": best_call,
+        "kestrel_variant_count": rows.len(),
+    });
+    serde_json::to_string_pretty(&value)
+        .map_err(|err| LibError::InvalidArguments(format!("failed to build VNtyper report: {err}")))
 }
 
 fn vntyper_kestrel_row(record: &VcfRecord) -> VcfRecord {
@@ -144,6 +207,73 @@ fn flags(row: &VcfRecord, depth_score: Option<f64>) -> String {
     } else {
         flags.join(", ")
     }
+}
+
+fn compute_kestrel_result(rows: &[VcfRecord]) -> String {
+    for row in rows {
+        if row.get("passes_vntyper_filters").map(String::as_str) == Some("False") {
+            continue;
+        }
+        let confidence = row.get("Confidence").map(String::as_str);
+        let flagged = row.get("Flag").map(String::as_str) != Some("Not flagged");
+        match (confidence, flagged) {
+            (Some("High_Precision" | "High_Precision*"), false) => {
+                return "High_Precision".to_owned();
+            }
+            (Some("Low_Precision"), false) => return "Low_Precision".to_owned(),
+            (Some("High_Precision" | "High_Precision*"), true) => {
+                return "High_Precision_flagged".to_owned();
+            }
+            (Some("Low_Precision"), true) => return "Low_Precision_flagged".to_owned(),
+            _ => {}
+        }
+    }
+    "negative".to_owned()
+}
+
+fn screening_summary(kestrel_result: &str, quality_pass: bool) -> &'static str {
+    match (kestrel_result, quality_pass) {
+        ("High_Precision", true) => {
+            "Kestrel detected a high-precision pathogenic variant.<br>Note: adVNTR genotyping was not performed.<br>It is recommended to perform adVNTR and validate the result using orthogonal methods (e.g., SNaPshot, long-read sequencing)."
+        }
+        ("High_Precision", false) => {
+            "Kestrel detected a high-precision pathogenic variant with quality metrics below threshold, and adVNTR genotyping was not performed.<br>Further validation using alternative methods (e.g., SNaPshot, long-read sequencing) is strongly recommended."
+        }
+        ("High_Precision_flagged", true) => {
+            "Kestrel detected a high-precision pathogenic variant with a flagged result.<br>Note: adVNTR genotyping was not performed.<br>It is recommended to perform adVNTR and validate the finding using orthogonal methods (e.g., SNaPshot, long-read sequencing)."
+        }
+        ("Low_Precision", true) => {
+            "Kestrel detected a pathogenic variant with low precision.<br>Note: adVNTR genotyping was not performed.<br>It is recommended to perform adVNTR and validate the result using alternative methods (e.g., SNaPshot, long-read sequencing)."
+        }
+        ("negative", true) => "No variant detected.<br>Note: adVNTR genotyping was not performed.",
+        _ => "The screening was negative (no valid Kestrel or adVNTR data).",
+    }
+}
+
+fn best_kestrel_call(rows: &[VcfRecord]) -> Option<&VcfRecord> {
+    rows.iter().max_by(|left, right| {
+        parse_row_float(left, "Depth_Score").total_cmp(&parse_row_float(right, "Depth_Score"))
+    })
+}
+
+fn best_call_json(row: &VcfRecord) -> serde_json::Value {
+    serde_json::json!({
+        "CHROM": row.get("CHROM").cloned().unwrap_or_default(),
+        "POS": row.get("POS").cloned().unwrap_or_default(),
+        "REF": row.get("REF").cloned().unwrap_or_default(),
+        "ALT": row.get("ALT").cloned().unwrap_or_default(),
+        "Estimated_Depth_AlternateVariant": parse_row_float(row, "Estimated_Depth_AlternateVariant"),
+        "Estimated_Depth_Variant_ActiveRegion": parse_row_float(row, "Estimated_Depth_Variant_ActiveRegion"),
+        "Depth_Score": parse_row_float(row, "Depth_Score"),
+        "Confidence": row.get("Confidence").cloned().unwrap_or_default(),
+        "passes_vntyper_filters": row.get("passes_vntyper_filters").map(String::as_str) == Some("True"),
+    })
+}
+
+fn parse_row_float(row: &VcfRecord, key: &str) -> f64 {
+    row.get(key)
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(0.0)
 }
 
 fn title_bool(value: bool) -> String {
