@@ -1,5 +1,4 @@
 import csv
-import hashlib
 import importlib.util
 import json
 import sys
@@ -11,11 +10,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 PYTHON_ROOT = ROOT / "python"
 BIOSCRIPT_PORT = ROOT / "ports" / "vntyper" / "bioscript"
+TESTS_ROOT = ROOT / "ports" / "vntyper" / "tests"
 MANIFEST_PATH = ROOT / "ports" / "vntyper" / "tests" / "data_manifest.py"
 PIPELINE_PATH = BIOSCRIPT_PORT / "vntyper_external_pipeline.py"
 
 sys.path.insert(0, str(PYTHON_ROOT))
 sys.path.insert(0, str(BIOSCRIPT_PORT))
+sys.path.insert(0, str(TESTS_ROOT))
 
 manifest_spec = importlib.util.spec_from_file_location("data_manifest", MANIFEST_PATH)
 data_manifest = importlib.util.module_from_spec(manifest_spec)
@@ -28,6 +29,12 @@ pipeline_spec = importlib.util.spec_from_file_location(
 vntyper_external_pipeline = importlib.util.module_from_spec(pipeline_spec)
 sys.modules["vntyper_external_pipeline"] = vntyper_external_pipeline
 pipeline_spec.loader.exec_module(vntyper_external_pipeline)
+
+from parity_helpers import (
+    normalized_report_summary,
+    normalized_tsv_fingerprint,
+    parity_context,
+)
 
 
 class VntyperNativeFastqPipelineGateTests(unittest.TestCase):
@@ -74,57 +81,21 @@ class VntyperNativeFastqPipelineGateTests(unittest.TestCase):
                     self.assertTrue(sorted_vcf_index.exists())
 
                 self.assertGreater(len(rows), 0)
-                passing_rows = [
-                    row
-                    for row in rows
-                    if row.get("passes_vntyper_filters") in ("True", True)
-                ]
-                top_passing = sorted(
-                    passing_rows,
-                    key=lambda row: float(row.get("Depth_Score") or 0),
-                    reverse=True,
-                )[:5]
-                parity_context = {
-                    "actual_row_count": len(rows),
-                    "expected_row_count": len(expected_rows),
-                    "actual_passing_count": len(passing_rows),
-                    "expected_passing_count": len(
-                        [
-                            row
-                            for row in expected_rows
-                            if row.get("passes_vntyper_filters") in ("True", True)
-                        ]
-                    ),
-                    "top_passing": [
-                        {
-                            "CHROM": row.get("CHROM"),
-                            "POS": row.get("POS"),
-                            "REF": row.get("REF"),
-                            "ALT": row.get("ALT"),
-                            "Depth_Score": row.get("Depth_Score"),
-                            "Confidence": row.get("Confidence"),
-                        }
-                        for row in top_passing
-                    ],
-                    "actual_tsv_fingerprint": normalized_tsv_fingerprint(rows),
-                    "expected_tsv_fingerprint": normalized_tsv_fingerprint(expected_rows),
-                    "actual_report_summary": normalized_report_summary(actual_report),
-                    "expected_report_summary": normalized_report_summary(expected_report),
-                }
+                context = parity_context(rows, expected_rows, actual_report, expected_report)
                 self.assertEqual(
                     actual_report["algorithm_results"]["kestrel"],
                     expected_report["algorithm_results"]["kestrel"],
-                    parity_context,
+                    context,
                 )
                 self.assertEqual(
                     normalized_tsv_fingerprint(rows),
                     normalized_tsv_fingerprint(expected_rows),
-                    parity_context,
+                    context,
                 )
                 self.assertEqual(
                     normalized_report_summary(actual_report),
                     normalized_report_summary(expected_report),
-                    parity_context,
+                    context,
                 )
                 self.assertEqual(set(actual_report), set(expected_report))
                 self.assertEqual(len(actual_report["kestrel_variants"]), len(rows))
@@ -137,51 +108,6 @@ class VntyperNativeFastqPipelineGateTests(unittest.TestCase):
                     "native bioscript kestrel from FASTQ",
                 )
                 self.assertEqual(actual_report["metadata"]["detected_assembly"], "hg19")
-
-def normalized_tsv_fingerprint(rows):
-    stable_fields = [
-        "CHROM",
-        "POS",
-        "REF",
-        "ALT",
-        "Estimated_Depth_AlternateVariant",
-        "Estimated_Depth_Variant_ActiveRegion",
-        "Depth_Score",
-        "Confidence",
-        "Flag",
-        "is_valid_frameshift",
-        "alt_filter_pass",
-        "passes_vntyper_filters",
-    ]
-    digest = hashlib.sha256()
-    for row in rows:
-        digest.update(
-            "\t".join(str(row.get(field, "")) for field in stable_fields).encode("utf-8")
-        )
-        digest.update(b"\n")
-    return {
-        "row_count": len(rows),
-        "passing_count": len(
-            [row for row in rows if row.get("passes_vntyper_filters") in ("True", True)]
-        ),
-        "non_negative_confidence_count": len(
-            [row for row in rows if row.get("Confidence") != "Negative"]
-        ),
-        "sha256": digest.hexdigest(),
-    }
-
-
-def normalized_report_summary(report):
-    return {
-        "algorithm_results": report.get("algorithm_results"),
-        "screening_summary": report.get("screening_summary"),
-        "kestrel_variant_count": len(report.get("kestrel_variants", [])),
-        "coverage_status": report.get("coverage", {}).get("status"),
-        "quality_pass": report.get("coverage", {}).get("quality_pass"),
-        "alignment_pipeline": report.get("metadata", {}).get("alignment_pipeline"),
-        "detected_assembly": report.get("metadata", {}).get("detected_assembly"),
-    }
-
 
 if __name__ == "__main__":
     unittest.main()

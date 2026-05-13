@@ -72,6 +72,11 @@ BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 \
   PYTHONPATH=python:ports/vntyper/bioscript \
   python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate
 
+BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 \
+BIOSCRIPT_RUN_NATIVE_BAM_OUTPUT_PARITY=1 \
+  PYTHONPATH=python:ports/vntyper/bioscript \
+  python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate.VntyperNativeBamPipelineGateTests.test_native_bam_output_fingerprints_match_expected_outputs
+
 BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 \
   PYTHONPATH=python:ports/vntyper/bioscript \
   python -m unittest ports.vntyper.tests.test_native_fastq_pipeline_gate
@@ -80,6 +85,11 @@ BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1 \
   PYTHONPATH=python:ports/vntyper/bioscript \
   python -m unittest ports.vntyper.tests.test_samtools_fastq_oracle
 ```
+
+The native BAM gate checks classification/report-shape parity. The separate
+native BAM output gate compares normalized `kestrel_result.tsv` fingerprints
+and normalized report summaries, so it should remain opt-in until Kestrel
+record-level parity is fixed or a field-level allowance is explicitly accepted.
 
 ## Proposed Stack
 

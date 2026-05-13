@@ -111,6 +111,20 @@ BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 \
   python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate
 ```
 
+Opt-in large BAM output parity:
+
+```sh
+BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 \
+BIOSCRIPT_RUN_NATIVE_BAM_OUTPUT_PARITY=1 \
+  PYTHONPATH=python:ports/vntyper/bioscript \
+  python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate.VntyperNativeBamPipelineGateTests.test_native_bam_output_fingerprints_match_expected_outputs
+```
+
+The broader BAM gate verifies native execution and classification/report-shape
+parity. The output gate is stricter: it compares normalized
+`kestrel_result.tsv` fingerprints and normalized report summaries against the
+expected VNtyper fixture outputs.
+
 Opt-in large FASTQ parity:
 
 ```sh

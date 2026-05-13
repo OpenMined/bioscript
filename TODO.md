@@ -281,8 +281,8 @@ This is not just a facade spike. The finish line is:
       `kestrel_result.tsv` from `vcf.read_vntyper_kestrel(...)` rows, and
       `rust/bioscript-libs/tests/vntyper_vcf.rs` compares the tiny fixture row
       fields against `ports/vntyper/tests/fixtures/kestrel_minimal_expected.tsv`.
-      The opt-in native FASTQ parity gate now compares normalized TSV
-      fingerprints over stable columns. Current native FASTQ status:
+      The opt-in native FASTQ and BAM output parity gates now compare
+      normalized TSV fingerprints over stable columns. Current native FASTQ status:
       `positive` classification matches but TSV fingerprint differs
       (`2417` Rust rows vs `3737` Java expected rows);
       `negative` differs in both TSV fingerprint and classification
@@ -299,9 +299,12 @@ This is not just a facade spike. The finish line is:
       classification and `screening_summary` match expected reports, but
       `kestrel_result.tsv` row counts still differ from expected fixtures
       (`positive`: 2733 actual vs 3737 expected; `negative`: 2310 actual vs
-      4897 expected). Keep this open until Kestrel/report-output parity is
-      normalized or the differences are accepted with explicit field-level
-      allowances.
+      4897 expected). Added
+      `BIOSCRIPT_RUN_NATIVE_BAM_OUTPUT_PARITY=1` as a separate strict gate for
+      normalized TSV/report output fingerprints, while the broader native BAM
+      gate continues to verify classification/report-shape parity. Keep this
+      open until Kestrel/report-output parity is normalized or the differences
+      are accepted with explicit field-level allowances.
 - [x] Compare generated HTML report structure against expected report content:
       summary, coverage QC, variant table, flags, pipeline log, and optional IGV
       configuration.
@@ -471,8 +474,12 @@ This is not just a facade spike. The finish line is:
       normalized fields.
       `ports/vntyper/tests/test_native_fastq_pipeline_gate.py` now records
       normalized TSV fingerprints and report summaries in failure context.
-      It currently fails for both representative FASTQ samples because
-      `kestrel-rs` emits different rows than Java Kestrel.
+      `ports/vntyper/tests/test_native_bam_pipeline_gate.py` has a separate
+      `BIOSCRIPT_RUN_NATIVE_BAM_OUTPUT_PARITY=1` check for normalized BAM TSV
+      and report output fingerprints. FASTQ output parity currently fails for
+      both representative samples because `kestrel-rs` emits different rows
+      than Java Kestrel; BAM output parity is also still stricter than the
+      currently passing BAM classification gate.
 - [x] VNtyper HTML report structure test passes.
       Covered by `ports/vntyper/tests/test_vntyper_report.py`, which passes in
       the small VNtyper suite and checks the rendered report summary, coverage
