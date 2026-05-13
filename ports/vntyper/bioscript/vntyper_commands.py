@@ -9,13 +9,14 @@ from typing import Any
 from bioscript import bcftools, kestrel, samtools
 
 try:
-    from . import vntyper_regions
+    from . import vntyper_config, vntyper_regions
 except ImportError:
+    import vntyper_config
     import vntyper_regions
 
 
-DEFAULT_KESTREL_JAR = "ports/vntyper/kestrel/kestrel.jar"
-DEFAULT_MUC1_REFERENCE = "ports/vntyper/vntyper/reference/All_Pairwise_and_Self_Merged_MUC1_motifs_filtered.fa"
+DEFAULT_KESTREL_JAR = vntyper_config.DEFAULT_KESTREL_JAR
+DEFAULT_MUC1_REFERENCE = vntyper_config.DEFAULT_MUC1_REFERENCE
 
 
 @dataclass(frozen=True)

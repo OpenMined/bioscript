@@ -267,9 +267,14 @@ uses those built-in primitives.
 - [x] Define the minimal VNtyper BioScript interface, for example:
       `run_vntyper(bam=..., reference_build="hg19", output_dir=...)` and
       `run_vntyper_fastq(r1=..., r2=..., reference_build="hg19", output_dir=...)`.
-- [ ] Keep VNtyper data/config small and explicit:
+- [x] Keep VNtyper data/config small and explicit:
       MUC1 coordinates, motif FASTA path, confidence thresholds, report schema,
       and optional validation toggles.
+      `ports/vntyper/bioscript/vntyper_config.py` centralizes the MUC1
+      GRCh37/GRCh38 regions, motif FASTA path, Kestrel thresholds, report
+      schema keys, native Kestrel bounds, and disabled-by-default adVNTR toggle.
+      `ports/vntyper/tests/test_vntyper_config.py` guards that the explicit
+      config matches the generated report surface.
 - [x] Now that `samtools-rs` and `bcftools-rs` are wired, rerun the BAM path using
       only BioScript native facades.
       Verified the opt-in native-Samtools BAM gate with Java Kestrel, native

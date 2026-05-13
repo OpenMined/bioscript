@@ -18,9 +18,10 @@ from typing import Callable
 from bioscript import bcftools, kestrel, samtools
 
 try:
-    from . import vntyper_commands, vntyper_port
+    from . import vntyper_commands, vntyper_config, vntyper_port
 except ImportError:
     import vntyper_commands
+    import vntyper_config
     import vntyper_port
 
 
@@ -41,9 +42,9 @@ KESTREL_TSV_COLUMNS = [
     "passes_vntyper_filters",
 ]
 
-NATIVE_KESTREL_MAX_HAPLOTYPES = 2
-NATIVE_KESTREL_MAX_SAVED_STATES = 2
-NATIVE_KESTREL_MAX_BASES = 120
+NATIVE_KESTREL_MAX_HAPLOTYPES = vntyper_config.NATIVE_KESTREL_MAX_HAPLOTYPES
+NATIVE_KESTREL_MAX_SAVED_STATES = vntyper_config.NATIVE_KESTREL_MAX_SAVED_STATES
+NATIVE_KESTREL_MAX_BASES = vntyper_config.NATIVE_KESTREL_MAX_BASES
 
 
 @dataclass(frozen=True)
