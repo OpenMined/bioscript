@@ -15,8 +15,8 @@ ports/vntyper/bioscript/vntyper-bam-native.bs
 ports/vntyper/bioscript/vntyper-fastq.bs
 ```
 
-`vntyper.bs.py` remains an executable sketch until the runtime can execute the
-same flow as real BioScript syntax.
+`vntyper.bs.py` remains an executable sketch and Python oracle support module;
+the runtime-facing BAM flow now lives in `vntyper.bs`.
 
 The port should expose two entry points.
 
@@ -65,15 +65,14 @@ FASTQ pair -> bioscript.kestrel.run_native
 
 `vntyper-fastq.bs` currently exercises this native BioScript runtime path on
 tiny deterministic fixtures. Core Kestrel call-table conversion is now in
-`bioscript-libs`; the FASTQ runtime slice now also builds the VNtyper JSON
-report payload through the VCF facade and writes `kestrel_result.tsv` from the
-same rows. Full HTML report generation and BAM runtime parity still live in the
-Python scaffold.
+`bioscript-libs`; the FASTQ runtime slice also builds the VNtyper JSON report
+payload through the VCF facade and writes `kestrel_result.tsv` from the same
+rows. Full HTML report generation still lives in the Python scaffold.
 
-`vntyper-bam-native.bs` exercises the BAM native runtime path on caller-provided
-regions and reference paths. It runs Samtools, Kestrel, BCFtools, and VCF
-facades through the BioScript runtime and materializes BAM-slice, FASTQ, VCF,
-TSV, and report JSON artifacts.
+`vntyper.bs` and `vntyper-bam-native.bs` exercise the BAM native runtime path
+on caller-provided regions and reference paths. They run Samtools, Kestrel,
+BCFtools, and VCF facades through the BioScript runtime and materialize
+BAM-slice, FASTQ, VCF, TSV, and report JSON artifacts.
 
 ## Local Test Gates
 

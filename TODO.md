@@ -165,24 +165,21 @@ This is not just a facade spike. The finish line is:
       optional report flags.
       Documented BAM and FASTQ entry points in
       `ports/vntyper/bioscript/README.md`.
-- [ ] Port the current Python scaffold into actual BioScript syntax supported by
+- [x] Port the current Python scaffold into actual BioScript syntax supported by
       the runtime.
-      Initial command-planning program exists at
-      `ports/vntyper/bioscript/vntyper.bs` and runs through the CLI. The native
-      execution/post-processing pipeline still needs to move from the Python
-      scaffold into runnable BioScript/runtime-supported calls.
-      Partial 2026-05-14: `ports/vntyper/bioscript/vntyper-fastq.bs` now runs
+      `ports/vntyper/bioscript/vntyper.bs` now runs the BAM native runtime
+      slice with caller-provided BAM/BAI, regions, reference FASTA, output dir,
+      output file, and participant ID. `ports/vntyper/bioscript/vntyper-fastq.bs`
+      runs the FASTQ native runtime slice. Both are covered by
+      `rust/bioscript-runtime/tests/vntyper_program.rs`.
+      Completed scaffold replacement 2026-05-14: the BioScript runtime paths run
       native `kestrel.run_native`, `bcftools.sort`, `bcftools.index`, and
-      `vcf.read_vntyper_kestrel` on tiny FASTQ/reference fixtures through the
-      BioScript runtime and writes a TSV summary. Core Kestrel call-table
-      conversion now lives in `rust/bioscript-libs/src/vcf/vntyper.rs` and is
-      covered by `rust/bioscript-libs/tests/vntyper_vcf.rs`. The FASTQ runtime
-      slice also writes `report.json` through
-      `vcf.build_vntyper_report_json(...)` and materializes
-      `kestrel_result.tsv` from facade rows. Full VNtyper HTML report logic and
-      the final `vntyper.bs` BAM entry point are still scaffold-backed.
-      `ports/vntyper/bioscript/vntyper-bam-native.bs` now exercises the native
-      BAM runtime slice on runtime-provided regions/reference paths.
+      `vcf.read_vntyper_kestrel`; the BAM path also runs
+      `samtools.view_region_native`, `samtools.fastq_native`, and
+      `samtools.depth_native`. Core Kestrel call-table conversion and report
+      JSON are in `rust/bioscript-libs/src/vcf/vntyper.rs`, with fixture tests
+      in `rust/bioscript-libs/tests/vntyper_vcf.rs`. The Python scaffold remains
+      as test/oracle support for upstream parity work, not as the runtime path.
 - [ ] If Monty syntax is missing required features, add the smallest runtime or
       syntax support needed and cover it with runtime tests.
       No new Monty syntax was required for the native FASTQ execution slice.
@@ -197,9 +194,9 @@ This is not just a facade spike. The finish line is:
 - [x] Keep the BioScript VNtyper program small: it should coordinate facades and
       call VNtyper-specific functions, not reimplement samtools/bcftools/kestrel
       internals.
-      `vntyper.bs` and `vntyper-fastq.bs` are command-plan coordinator scripts;
-      reusable tool behavior remains in `bioscript-libs` facades and vendored
-      Rust engines.
+      `vntyper.bs`, `vntyper-bam-native.bs`, and `vntyper-fastq.bs` are
+      coordinator scripts; reusable tool behavior remains in `bioscript-libs`
+      facades and vendored Rust engines.
 
 ## VNtyper Native Execution Path
 
@@ -230,9 +227,9 @@ This is not just a facade spike. The finish line is:
       instead of expected `negative`.
 - [x] Add one CLI/runtime command that runs the BioScript VNtyper program against
       a BAM fixture.
-      `vntyper_bioscript_program_runs_via_cli_and_writes_command_plan` runs
-      `ports/vntyper/bioscript/vntyper.bs` with the representative positive BAM
-      fixture and verifies the generated command plan.
+      `vntyper_bioscript_program_runs_through_runtime` runs
+      `ports/vntyper/bioscript/vntyper.bs` with a tiny indexed BAM fixture and
+      verifies generated native BAM/FASTQ/VCF/TSV/report artifacts.
 - [x] Add one CLI/runtime command that runs the BioScript VNtyper program against
       a FASTQ fixture pair.
       Added `ports/vntyper/bioscript/vntyper-fastq.bs` and runtime coverage in
@@ -265,8 +262,7 @@ This is not just a facade spike. The finish line is:
       `ports/vntyper/bioscript/vntyper.bs`,
       `ports/vntyper/bioscript/vntyper-fastq.bs`, and
       `ports/vntyper/bioscript/vntyper-bam-native.bs` through
-      `BioscriptRuntime` and verifies generated native artifacts or the command
-      plan.
+      `BioscriptRuntime` and verifies generated native artifacts.
 - [x] Add large-data opt-in parity tests for positive and negative BAM fixtures.
       Covered by `test_native_bam_pipeline_gate.py` and the existing external
       BAM gate.

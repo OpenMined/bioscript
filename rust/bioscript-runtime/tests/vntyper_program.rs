@@ -31,7 +31,34 @@ fn unique_output_path(root: &std::path::Path) -> PathBuf {
 fn vntyper_bioscript_program_runs_through_runtime() {
     let root = repo_root();
     let output_path = unique_output_path(&root);
+    let fixture_dir = root.join(format!(
+        "target/vntyper-runtime-main-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&fixture_dir).unwrap();
+    let bam_source = root.join("vendor/rust/samtools-rs/samtools/test/stat/11_target.bam");
+    let bai_source = root.join("vendor/rust/samtools-rs/samtools/test/stat/11_target.bam.bai");
+    let bam_path = fixture_dir.join("input.bam");
+    let bai_path = fixture_dir.join("input.bam.bai");
+    let reference_path = fixture_dir.join("ref.fa");
+    let output_dir = fixture_dir.join("out");
+    fs::create_dir_all(&output_dir).unwrap();
+    fs::copy(bam_source, &bam_path).unwrap();
+    fs::copy(bai_source, &bai_path).unwrap();
+    fs::write(&reference_path, ">ref1\nAAAACCCCGGGGTTTT\n").unwrap();
     let output_arg = output_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let bam_arg = bam_path.strip_prefix(&root).unwrap().display().to_string();
+    let bai_arg = bai_path.strip_prefix(&root).unwrap().display().to_string();
+    let reference_arg = reference_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let output_dir_arg = output_dir
         .strip_prefix(&root)
         .unwrap()
         .display()
@@ -43,23 +70,26 @@ fn vntyper_bioscript_program_runs_through_runtime() {
             root.join("ports/vntyper/bioscript/vntyper.bs"),
             None,
             vec![
-                (
-                    "input_file",
-                    MontyObject::String(
-                        "ports/vntyper/test-data/example_6449_hg19_subset.bam".to_owned(),
-                    ),
-                ),
+                ("input_file", MontyObject::String(bam_arg)),
+                ("input_bai", MontyObject::String(bai_arg)),
+                ("bam_region", MontyObject::String("ref1:1-10".to_owned())),
+                ("vntr_region", MontyObject::String("ref1:1-10".to_owned())),
+                ("reference_fasta", MontyObject::String(reference_arg)),
+                ("output_dir", MontyObject::String(output_dir_arg)),
                 ("output_file", MontyObject::String(output_arg)),
-                ("participant_id", MontyObject::String("positive".to_owned())),
+                ("participant_id", MontyObject::String("main-bam".to_owned())),
             ],
         )
         .unwrap();
 
-    let plan = fs::read_to_string(&output_path).unwrap();
-    assert!(plan.contains("samtools_view_command"));
-    assert!(plan.contains("kestrel_command"));
-    assert!(plan.contains("bcftools_sort_command"));
+    let summary = fs::read_to_string(&output_path).unwrap();
+    assert!(summary.contains("sliced_bam"));
+    assert!(summary.contains("fastq_read1_records"));
+    assert!(summary.contains("report_json"));
+    assert!(output_dir.join("main-bam_kestrel_result.tsv").exists());
+    assert!(output_dir.join("main-bam_report.json").exists());
     fs::remove_file(output_path).unwrap();
+    fs::remove_dir_all(fixture_dir).unwrap();
 }
 
 #[test]
