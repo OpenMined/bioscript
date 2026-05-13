@@ -65,8 +65,9 @@ FASTQ pair -> bioscript.kestrel.run_native
 `vntyper-fastq.bs` currently exercises this native BioScript runtime path on
 tiny deterministic fixtures. Core Kestrel call-table conversion is now in
 `bioscript-libs`; the FASTQ runtime slice now also builds the VNtyper JSON
-report payload through the VCF facade. Full HTML report generation and BAM
-runtime parity still live in the Python scaffold.
+report payload through the VCF facade and writes `kestrel_result.tsv` from the
+same rows. Full HTML report generation and BAM runtime parity still live in the
+Python scaffold.
 
 ## Local Test Gates
 

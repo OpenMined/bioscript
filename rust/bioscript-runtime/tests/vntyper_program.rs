@@ -141,6 +141,11 @@ fn vntyper_fastq_bioscript_program_runs_through_runtime() {
             .join("positive/kestrel/output.sorted.vcf.gz")
             .exists()
     );
+    let kestrel_tsv = output_dir.join("positive/kestrel_result.tsv");
+    assert!(kestrel_tsv.exists());
+    let tsv = fs::read_to_string(&kestrel_tsv).unwrap();
+    assert!(tsv.contains("Confidence"));
+    assert!(tsv.contains("passes_vntyper_filters"));
     let report_json = output_dir.join("positive/report.json");
     assert!(report_json.exists());
     let report = fs::read_to_string(&report_json).unwrap();
