@@ -37,66 +37,105 @@ This is not just a facade spike. The finish line is:
 
 ## Non-Negotiable Gates
 
-- [ ] Establish one command that runs the old BioScript test suite.
+- [x] Establish one command that runs the old BioScript test suite.
       Suggested gate:
       `cd rust && CC=cc AR=ar cargo test --workspace`
       plus Python tests:
       `PYTHONPATH=python python -m unittest discover -s python/tests -p 'test_*.py'`.
-- [ ] Establish one command that runs all BioScript facade tests against the
+      Verified 2026-05-14:
+      `CC=cc AR=ar cargo test --workspace` from `rust/` passes after restoring
+      wasm compatibility with the current `VariantSpec` shape and report
+      analysis visibility. The gate includes APOL1 real-file tests and the
+      first-party Rust source-size guard.
+      `PYTHONPATH=python python -m unittest discover -s python/tests -p 'test_*.py'`
+      passes: 31 tests, 2 skipped.
+- [x] Establish one command that runs all BioScript facade tests against the
       vendored native engines.
       Suggested gate:
       `cd rust && CC=cc AR=ar cargo test -p bioscript-libs -p bioscript-python -p bioscript-runtime`.
-- [ ] Establish one command that runs the VNtyper port tests that do not require
+      Verified 2026-05-14: passes. Coverage includes `bioscript-libs`,
+      `bioscript-python`, and `bioscript-runtime` facade/runtime tests.
+- [x] Establish one command that runs the VNtyper port tests that do not require
       large data or external tools.
       Suggested gate:
       `PYTHONPATH=python:ports/vntyper/bioscript python -m unittest discover -s ports/vntyper/tests -p 'test_*.py'`.
+      Verified 2026-05-14: 70 tests, 7 skipped. Skips are opt-in large-data or
+      external-tool gates.
 - [ ] Establish opt-in commands for large-data parity gates:
       `BIOSCRIPT_RUN_EXTERNAL_BAM_PARITY=1`,
       `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1`, and any new FASTQ/native parity gate.
-- [ ] Add a short `docs/lib-support.md` or equivalent section documenting these
+- [x] Add a short `docs/lib-support.md` or equivalent section documenting these
       gates so future work cannot silently regress the old BioScript behavior.
+      See `docs/lib-support.md` "Verification Gates".
 
 ## Native Library Integration
 
-- [ ] Confirm `bioscript-libs` depends on vendored `kestrel-rs`, `htslib-rs`,
+- [x] Confirm `bioscript-libs` depends on vendored `kestrel-rs`, `htslib-rs`,
       `bcftools-rs`, and `samtools-rs` by local path or submodule revision.
-- [ ] Add a dependency graph note in `docs/`:
+      Confirmed in `rust/bioscript-libs/Cargo.toml`:
+      `bcftools-rs`, `htslib-rs`, `kanalyze`, `kestrel`, and `samtools-rs`
+      are all local paths under `vendor/rust`.
+- [x] Add a dependency graph note in `docs/`:
       BioScript syntax/runtime -> `bioscript-libs` facade -> vendored engine.
+      See `docs/lib-support.md` "Current Dependency Graph".
 - [ ] Make native facades the default path for BioScript runtime calls where a
       native implementation exists.
 - [ ] Keep command-builder fallbacks for dry-run/planning, but mark them as
       planning surfaces rather than the primary implementation.
-- [ ] Audit Python wrappers and runtime methods so supported names match:
+- [x] Audit Python wrappers and runtime methods so supported names match:
       `from bioscript import samtools, bcftools, kestrel, pysam, pyfaidx`.
-- [ ] Add a test that imports each supported module from BioScript runtime syntax
+      Confirmed by `python/bioscript/__init__.py`, module wrapper tests, and
+      runtime import tests for the supported names.
+- [x] Add a test that imports each supported module from BioScript runtime syntax
       and verifies at least one method dispatch reaches the Rust facade.
-- [ ] Add a test that imports each supported module from `python/bioscript` and
+      Existing runtime tests cover library imports, command builders, native
+      Samtools/BCFtools materialization, Kestrel/VCF helpers, Pyfaidx aliasing,
+      and Pysam fetch through runtime dispatch.
+- [x] Add a test that imports each supported module from `python/bioscript` and
       verifies native extension delegation or a documented fallback.
+      Existing Python tests cover backend policy, pure Python fallbacks, and
+      native delegation for the supported wrappers.
 
 ## Existing BioScript Compatibility
 
-- [ ] Run all existing Rust tests before changing VNtyper behavior and save the
+- [x] Run all existing Rust tests before changing VNtyper behavior and save the
       command/output summary in this TODO.
-- [ ] Run all existing Python tests before changing VNtyper behavior and save the
+      Verified 2026-05-14: `CC=cc AR=ar cargo test --workspace` passes from
+      `rust/`.
+- [x] Run all existing Python tests before changing VNtyper behavior and save the
       command/output summary in this TODO.
-- [ ] Run existing `bioscripts/` examples or their current tests if available.
-- [ ] Keep APOL1/load-genotypes behavior unchanged unless a dedicated parity
+      Verified 2026-05-14:
+      `PYTHONPATH=python python -m unittest discover -s python/tests -p 'test_*.py'`
+      passes: 31 tests, 2 skipped.
+- [x] Run existing `bioscripts/` examples or their current tests if available.
+      The Rust workspace gate includes CLI and APOL1 real-file tests:
+      `tests/apol1_real_files.rs` and `tests/cli.rs` pass.
+- [x] Keep APOL1/load-genotypes behavior unchanged unless a dedicated parity
       test proves the refactor is equivalent.
+      No APOL1/load-genotypes refactor was made in this pass; existing APOL1
+      tests pass under the Rust workspace gate.
 - [ ] Add regression tests before replacing any old helper with a facade-backed
       implementation.
-- [ ] Check first-party production Rust source files under
+- [x] Check first-party production Rust source files under
       `rust/bioscript-*/src/**/*.rs` stay at or below 500 lines after edits.
+      Verified by `bioscript-core/tests/source_size.rs` in the Rust workspace
+      gate.
 
 ## VNtyper Program Shape
 
-- [ ] Decide the final user-facing program path.
+- [x] Decide the final user-facing program path.
       Proposed path: `ports/vntyper/bioscript/vntyper.bio` or
       `ports/vntyper/bioscript/vntyper.bs`.
-- [ ] Keep `ports/vntyper/bioscript/vntyper.bs.py` only as an executable sketch
+      Decision: use `ports/vntyper/bioscript/vntyper.bs` for the final
+      BioScript program. Documented in `ports/vntyper/bioscript/README.md`.
+- [x] Keep `ports/vntyper/bioscript/vntyper.bs.py` only as an executable sketch
       until the real BioScript/Monty program can run.
-- [ ] Define the public BioScript interface for VNtyper:
+      Documented in `ports/vntyper/bioscript/README.md`.
+- [x] Define the public BioScript interface for VNtyper:
       input BAM or FASTQ pair, reference build, output directory, participant ID,
       optional report flags.
+      Documented BAM and FASTQ entry points in
+      `ports/vntyper/bioscript/README.md`.
 - [ ] Port the current Python scaffold into actual BioScript syntax supported by
       the runtime.
 - [ ] If Monty syntax is missing required features, add the smallest runtime or
@@ -128,14 +167,18 @@ This is not just a facade spike. The finish line is:
 
 ## VNtyper Parity Tests
 
-- [ ] Inventory upstream VNtyper tests under
+- [x] Inventory upstream VNtyper tests under
       `ports/vntyper/vntyper/tests` and map each relevant test to one of:
       port directly, replace with Rust facade test, replace with BioScript
       runtime test, or intentionally out of scope.
-- [ ] Create `ports/vntyper/tests/upstream-test-map.md` with that mapping.
-- [ ] Add unit tests for VNtyper-specific post-processing:
+      See `ports/vntyper/tests/upstream-test-map.md`.
+- [x] Create `ports/vntyper/tests/upstream-test-map.md` with that mapping.
+- [x] Add unit tests for VNtyper-specific post-processing:
       VCF parsing, frameshift classification, depth score, confidence class,
       motif filtering, final best-call selection, TSV output, report JSON.
+      Existing tests cover this in `test_vntyper_port.py`,
+      `test_ported_upstream_units.py`, `test_upstream_scoring_parity.py`, and
+      `test_vntyper_report.py`.
 - [ ] Add Rust tests where the behavior belongs in `bioscript-libs` rather than
       Python scaffolding.
       Candidate areas: VCF parsing, report-neutral call table generation,
@@ -148,9 +191,13 @@ This is not just a facade spike. The finish line is:
 - [ ] Compare generated `kestrel_result.tsv` to expected fixture output.
 - [ ] Compare generated `report.json` to expected fixture output, with explicit
       allowances for paths, timestamps, and tool-version metadata.
-- [ ] Compare generated HTML report structure against expected report content:
+- [x] Compare generated HTML report structure against expected report content:
       summary, coverage QC, variant table, flags, pipeline log, and optional IGV
       configuration.
+      `test_vntyper_report.py` covers generated report structure from fixture
+      JSON/report rows, including summary, coverage QC, variant table controls,
+      flags, pipeline log, and optional IGV configuration. Byte-for-byte
+      upstream HTML parity is not available as an upstream fixture target.
 - [ ] Make every large-data parity skip message list exactly which file, tool,
       environment variable, or native extension is missing.
 
@@ -185,33 +232,49 @@ This is not just a facade spike. The finish line is:
 
 ## Python/Test Harness Work
 
-- [ ] Keep `ports/vntyper/tests/data_manifest.py` as the single source for
+- [x] Keep `ports/vntyper/tests/data_manifest.py` as the single source for
       large fixture paths and expected output paths.
+      Existing large-data gates and manifest tests route through this helper.
 - [ ] Add FASTQ native prerequisites to the manifest, parallel to the existing
       BAM native prerequisites.
 - [ ] Add or regenerate expected outputs for any checked-in representative
       FASTQ native fixtures.
-- [ ] Keep `ports/vntyper/test-data` ignored except for README/manifest files.
-- [ ] Remove generated `__pycache__` files from the repo if any are tracked.
+- [x] Keep `ports/vntyper/test-data` ignored except for README/manifest files.
+      Current git status shows no tracked test-data payload changes.
+- [x] Remove generated `__pycache__` files from the repo if any are tracked.
+      Verified with `git ls-files 'ports/vntyper/**/__pycache__/*'
+      'python/**/__pycache__/*'`: no tracked generated cache files.
 - [ ] Keep Python scaffold tests until equivalent Rust/BioScript runtime tests
       cover the behavior.
 
 ## Documentation
 
-- [ ] Document the supported BioScript imports and their backend engines.
-- [ ] Document the VNtyper BioScript interface with one BAM example and one
+- [x] Document the supported BioScript imports and their backend engines.
+      See `docs/lib-support.md`.
+- [x] Document the VNtyper BioScript interface with one BAM example and one
       FASTQ example.
-- [ ] Document how to run small tests, full local tests, and opt-in large-data
+      See `ports/vntyper/bioscript/README.md`.
+- [x] Document how to run small tests, full local tests, and opt-in large-data
       parity tests.
-- [ ] Document known gaps separately from TODO checkboxes once a gap is accepted
+      See `docs/lib-support.md` and `ports/vntyper/bioscript/README.md`.
+- [x] Document known gaps separately from TODO checkboxes once a gap is accepted
       as engine-owned or out of scope.
+      See `ports/vntyper/tests/upstream-test-map.md`.
 
 ## Completion Criteria
 
-- [ ] Old BioScript Rust test gate passes.
-- [ ] Old BioScript Python test gate passes.
-- [ ] Native facade Rust/Python tests pass.
-- [ ] VNtyper small fixture tests pass without external Java/samtools/bcftools.
+- [x] Old BioScript Rust test gate passes.
+      Verified 2026-05-14 with `CC=cc AR=ar cargo test --workspace`.
+- [x] Old BioScript Python test gate passes.
+      Verified 2026-05-14 with
+      `PYTHONPATH=python python -m unittest discover -s python/tests -p 'test_*.py'`.
+- [x] Native facade Rust/Python tests pass.
+      Verified 2026-05-14 with
+      `CC=cc AR=ar cargo test -p bioscript-libs -p bioscript-python -p bioscript-runtime`
+      and Python wrapper tests.
+- [x] VNtyper small fixture tests pass without external Java/samtools/bcftools.
+      Verified 2026-05-14 with
+      `PYTHONPATH=python:ports/vntyper/bioscript python -m unittest discover -s ports/vntyper/tests -p 'test_*.py'`.
 - [ ] VNtyper BAM positive/negative native parity gate passes.
 - [ ] VNtyper FASTQ positive/negative native parity gate passes.
 - [ ] VNtyper report JSON and TSV outputs match expected fixtures with explicit
