@@ -11,8 +11,8 @@ facade, Rust engine crate, or VNtyper-port logic.
 
 | Upstream file | BioScript mapping | Status |
 | --- | --- | --- |
-| `test_orchestration.py` | Port to BioScript/VNtyper large-data gates. BAM, FASTQ, and optional adVNTR runners should map to BioScript runner functions or runtime program execution. | Partial: BAM native gate exists and passes classification parity; FASTQ native path executes but classification parity is blocked by `kestrel-rs`; adVNTR remains deferred. |
-| `integration/test_pipeline_integration.py` | Port to opt-in large-data parity tests under `ports/vntyper/tests`. | Partial: external/native BAM gates exist; FASTQ path exists but is blocked by Kestrel parity; full TSV/report output parity remains open. |
+| `test_orchestration.py` | Port to BioScript/VNtyper large-data gates. BAM, FASTQ, and optional adVNTR runners should map to BioScript runner functions or runtime program execution. | Partial: BAM native gate exists and passes classification parity; `vntyper-fastq.bs` runs native Kestrel/BCFtools through the runtime on tiny fixtures; FASTQ large-data classification parity is blocked by `kestrel-rs`; adVNTR remains deferred. |
+| `integration/test_pipeline_integration.py` | Port to opt-in large-data parity tests under `ports/vntyper/tests`. | Partial: external/native BAM gates exist; FASTQ runtime execution exists for tiny fixtures, but large-data parity is blocked by Kestrel; full TSV/report output parity remains open. |
 | `docker/test_docker_pipeline.py` | Out of scope for BioScript core; replace with native binary/runtime smoke tests if BioScript gets a container image. | Deferred. |
 | `parametrization.py` | Keep equivalent manifest-driven case selection in `ports/vntyper/tests/data_manifest.py`. | Covered for current positive/negative BAM and FASTQ representative cases by `data_manifest.py` and skip-message tests; upstream download/checksum behavior is intentionally out of scope for normal BioScript tests. |
 | `test_data_utils.py` | Keep only local manifest validation and skip messages. BioScript should not auto-download large data during normal tests. | Covered by `test_data_manifest.py`; checksum/download behavior is out of scope. |
@@ -44,9 +44,11 @@ facade, Rust engine crate, or VNtyper-port logic.
 
 ## Required New BioScript Tests
 
-- Runtime test executing `ports/vntyper/bioscript/vntyper.bs` on tiny checked-in
-  fixture paths: covered by `rust/bioscript-runtime/tests/vntyper_program.rs`
-  for command-plan execution. Native execution of the full program remains open.
+- Runtime tests executing BioScript VNtyper programs: covered by
+  `rust/bioscript-runtime/tests/vntyper_program.rs`. `vntyper.bs` is still a
+  BAM command-plan execution test. `vntyper-fastq.bs` now runs native
+  Kestrel/BCFtools/VCF parsing on tiny generated FASTQ/reference fixtures and
+  writes a TSV summary. Full TSV/JSON/HTML post-processing remains open.
 - Rust `bioscript-libs` test for native Samtools/Kestrel/BCFtools orchestration
   on tiny fixtures: covered by `rust/bioscript-libs/tests/vntyper_facades.rs`.
 - Opt-in BAM large-data parity for positive and negative fixtures: covered by
