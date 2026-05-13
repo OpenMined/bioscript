@@ -204,43 +204,43 @@ def main():
     )
     if pkcmd[0] != kcmd[0]:
         raise Exception("bad planned kestrel command")
-    fcmd = samtools.fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz")
+    fcmd = samtools.plan_fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz")
     if fcmd[0] != "samtools":
         raise Exception("bad samtools command")
     pfcmd = samtools.plan_fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz")
     if pfcmd[1] != fcmd[1]:
         raise Exception("bad planned samtools command")
-    vcmd = samtools.view("sample.bam", "chr1:1-10", "slice.bam")
+    vcmd = samtools.plan_view("sample.bam", "chr1:1-10", "slice.bam")
     if vcmd[1] != "view":
         raise Exception("bad samtools view command")
     pvcmd = samtools.plan_view("sample.bam", "chr1:1-10", "slice.bam")
     if pvcmd[1] != vcmd[1]:
         raise Exception("bad planned samtools view command")
-    scmd = samtools.sort("slice.bam", "slice.name.bam", True)
+    scmd = samtools.plan_sort("slice.bam", "slice.name.bam", True)
     if scmd[1] != "sort":
         raise Exception("bad samtools sort command")
     pscmd = samtools.plan_sort("slice.bam", "slice.name.bam", True)
     if pscmd[1] != scmd[1]:
         raise Exception("bad planned samtools sort command")
-    facmd = samtools.faidx("ref.fa")
+    facmd = samtools.plan_faidx("ref.fa")
     if facmd[1] != "faidx":
         raise Exception("bad samtools faidx command")
     pfacmd = samtools.plan_faidx("ref.fa")
     if pfacmd[1] != facmd[1]:
         raise Exception("bad planned samtools faidx command")
-    bcmd = bcftools.sort("calls.vcf", "calls.vcf.gz")
+    bcmd = bcftools.plan_sort("calls.vcf", "calls.vcf.gz")
     if bcmd[0] != "bcftools":
         raise Exception("bad bcftools command")
     pbcmd = bcftools.plan_sort("calls.vcf", "calls.vcf.gz")
     if pbcmd[1] != bcmd[1]:
         raise Exception("bad planned bcftools command")
-    bvcmd = bcftools.view("calls.vcf", "calls.bcf", "b")
+    bvcmd = bcftools.plan_view("calls.vcf", "calls.bcf", "b")
     if bvcmd[1] != "view":
         raise Exception("bad bcftools view command")
     pbvcmd = bcftools.plan_view("calls.vcf", "calls.bcf", "b")
     if pbvcmd[1] != bvcmd[1]:
         raise Exception("bad planned bcftools view command")
-    bncmd = bcftools.norm("calls.vcf", "ref.fa", "norm.vcf.gz")
+    bncmd = bcftools.plan_norm("calls.vcf", "ref.fa", "norm.vcf.gz")
     if bncmd[1] != "norm":
         raise Exception("bad bcftools norm command")
     pbncmd = bcftools.plan_norm("calls.vcf", "ref.fa", "norm.vcf.gz")
@@ -299,9 +299,9 @@ def main():
         + "chr1\t5\t.\tC\tT\t.\tPASS\t.\n",
     )
     bcftools.view_header_native("calls.vcf", "header.vcf")
-    bcftools.view_native("calls.vcf", "calls.vcf.gz", "z")
-    bcftools.sort_native("calls.vcf", "calls.sorted.vcf.gz", "z", True)
-    bcftools.index_native("calls.vcf.gz", "calls.vcf.gz.tbi", True, True)
+    bcftools.view("calls.vcf", "calls.vcf.gz", "z")
+    bcftools.sort("calls.vcf", "calls.sorted.vcf.gz")
+    bcftools.index("calls.vcf.gz")
 
 if __name__ == "__main__":
     main()
@@ -352,12 +352,16 @@ fn bioscript_samtools_native_methods_materialize_outputs() {
 from bioscript import samtools
 
 def main():
-    records = samtools.view_region_native("11_target.bam", "ref1:1-10", "slice.bam", "11_target.bam.bai")
+    records = samtools.view("11_target.bam", "ref1:1-10", "slice.bam", "11_target.bam.bai")
     if records != 0:
         raise Exception("unexpected records return")
-    depth = samtools.depth_native("11_target.bam", "ref1:1-10", "11_target.bam.bai")
+    depth = samtools.depth("11_target.bam", "ref1:1-10", "11_target.bam.bai")
     if depth["region_length"] != 10 or depth["uncovered_bases"] != 0:
         raise Exception("bad depth summary")
+    samtools.sort("11_target.bam", "sorted.bam", False)
+    written_index = samtools.index("sorted.bam")
+    if not written_index:
+        raise Exception("missing sorted BAM index")
     fastq = samtools.fastq_native("11_target.bam", "ref1:1-10", "r1.fastq.gz", "r2.fastq.gz", "11_target.bam.bai")
     if fastq["read1_records"] != 5 or fastq["read2_records"] != 5:
         raise Exception("bad FASTQ summary")
@@ -370,6 +374,8 @@ if __name__ == "__main__":
     .unwrap();
 
     assert!(fs::metadata(dir.join("slice.bam")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("sorted.bam")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("sorted.bam.bai")).unwrap().len() > 0);
     assert!(fs::metadata(dir.join("r1.fastq.gz")).unwrap().len() > 0);
     assert!(fs::metadata(dir.join("r2.fastq.gz")).unwrap().len() > 0);
     let timings = runtime.timing_snapshot();
@@ -382,6 +388,12 @@ if __name__ == "__main__":
     }));
     assert!(timings.iter().any(|timing| {
         timing.stage == "native_tool_call" && timing.detail.contains("method=samtools.depth_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=samtools.sort_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=samtools.index_native")
     }));
 }
 

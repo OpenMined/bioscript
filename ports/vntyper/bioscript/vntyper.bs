@@ -25,20 +25,20 @@ def main():
         "input_file": input_file,
         "bam_region": bam_region,
         "vntr_region": vntr_region,
-        "samtools_view_command": samtools.view_region(
+        "samtools_view_command": samtools.plan_view_region(
             input_file,
             bam_region,
             sliced_bam,
             False,
         ),
-        "samtools_index_command": samtools.index(sliced_bam),
-        "samtools_fastq_command": samtools.fastq(
+        "samtools_index_command": samtools.plan_index(sliced_bam),
+        "samtools_fastq_command": samtools.plan_fastq(
             sliced_bam,
             fastq_1,
             fastq_2,
         ),
-        "samtools_depth_command": samtools.depth(sliced_bam, vntr_region),
-        "kestrel_command": kestrel.build_command(
+        "samtools_depth_command": samtools.plan_depth(sliced_bam, vntr_region),
+        "kestrel_command": kestrel.plan_command(
             "ports/vntyper/kestrel/kestrel.jar",
             muc1_reference,
             kestrel_vcf,
@@ -48,8 +48,8 @@ def main():
             fastq_1,
             fastq_2,
         ),
-        "bcftools_sort_command": bcftools.sort(kestrel_vcf, sorted_vcf),
-        "bcftools_index_command": bcftools.index(sorted_vcf),
+        "bcftools_sort_command": bcftools.plan_sort(kestrel_vcf, sorted_vcf),
+        "bcftools_index_command": bcftools.plan_index(sorted_vcf),
     }
     bioscript.write_tsv(output_file, [report])
 

@@ -17,7 +17,7 @@ def main():
         "participant_id": sample,
         "fastq_1": fastq_1,
         "fastq_2": fastq_2,
-        "kestrel_command": kestrel.build_command(
+        "kestrel_command": kestrel.plan_command(
             "ports/vntyper/kestrel/kestrel.jar",
             muc1_reference,
             kestrel_vcf,
@@ -27,8 +27,8 @@ def main():
             fastq_1,
             fastq_2,
         ),
-        "bcftools_sort_command": bcftools.sort(kestrel_vcf, sorted_vcf),
-        "bcftools_index_command": bcftools.index(sorted_vcf),
+        "bcftools_sort_command": bcftools.plan_sort(kestrel_vcf, sorted_vcf),
+        "bcftools_index_command": bcftools.plan_index(sorted_vcf),
     }
     bioscript.write_tsv(output_file, [report])
 

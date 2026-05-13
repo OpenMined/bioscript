@@ -146,6 +146,58 @@ impl BioscriptRuntime {
             .into(),
         ))
     }
+
+    pub(super) fn method_samtools_sort_native(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "samtools.sort_native")?;
+        if args.len() != 4 {
+            return Err(RuntimeError::InvalidArguments(
+                "samtools.sort_native expects bam, output_bam, and by_name".to_owned(),
+            ));
+        }
+        let started = RuntimeInstant::now();
+        let bam =
+            self.resolve_existing_user_path(&expect_string_arg(args, 1, "samtools.sort_native")?)?;
+        let output =
+            self.resolve_user_write_path(&expect_string_arg(args, 2, "samtools.sort_native")?)?;
+        let by_name = expect_bool_arg(args, 3, "samtools.sort_native")?;
+        samtools::sort_native(&bam, &output, by_name)
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        record_native_tool_call(self, "samtools.sort_native", started);
+        Ok(MontyObject::None)
+    }
+
+    pub(super) fn method_samtools_index_native(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "samtools.index_native")?;
+        if args.len() != 2 && args.len() != 3 {
+            return Err(RuntimeError::InvalidArguments(
+                "samtools.index_native expects bam and optional output_bai".to_owned(),
+            ));
+        }
+        let started = RuntimeInstant::now();
+        let bam =
+            self.resolve_existing_user_path(&expect_string_arg(args, 1, "samtools.index_native")?)?;
+        let output = match args.get(2) {
+            None | Some(MontyObject::None) => None,
+            Some(MontyObject::String(path)) => Some(self.resolve_user_write_path(path)?),
+            Some(other) => {
+                return Err(RuntimeError::InvalidArguments(format!(
+                    "samtools.index_native expected optional path string at position 2, got {other:?}"
+                )));
+            }
+        };
+        let written = samtools::index_native(&bam, output.as_deref())
+            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        record_native_tool_call(self, "samtools.index_native", started);
+        Ok(MontyObject::String(written.to_string_lossy().into_owned()))
+    }
 }
 
 fn optional_existing_path(
@@ -169,4 +221,22 @@ fn record_native_tool_call(runtime: &BioscriptRuntime, method: &str, started: Ru
         started.elapsed(),
         format!("method={method}"),
     );
+}
+
+fn expect_bool_arg(
+    args: &[MontyObject],
+    index: usize,
+    function_name: &str,
+) -> Result<bool, RuntimeError> {
+    let Some(value) = args.get(index) else {
+        return Err(RuntimeError::InvalidArguments(format!(
+            "{function_name} missing argument at position {index}"
+        )));
+    };
+    match value {
+        MontyObject::Bool(value) => Ok(*value),
+        other => Err(RuntimeError::InvalidArguments(format!(
+            "{function_name} expected bool at position {index}, got {other:?}"
+        ))),
+    }
 }
