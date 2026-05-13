@@ -435,7 +435,10 @@ pub(super) fn deletion_copy_number_display(
     if !matches!(manifest.spec.kind, Some(VariantKind::Deletion)) {
         return None;
     }
-    if row.get("backend").map(String::as_str) != Some("cram") {
+    if !matches!(
+        row.get("backend").map(String::as_str),
+        Some("cram" | "bam")
+    ) {
         return None;
     }
     if manifest.spec.reference.as_deref().unwrap_or_default().len() <= 1 {

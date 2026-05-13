@@ -127,7 +127,10 @@ fn deletion_copy_number_display(
     if !matches!(manifest.spec.kind, Some(bioscript_core::VariantKind::Deletion)) {
         return None;
     }
-    if row.get("backend").map(String::as_str) != Some("cram") {
+    if !matches!(
+        row.get("backend").map(String::as_str),
+        Some("cram" | "bam")
+    ) {
         return None;
     }
     if manifest.spec.reference.as_deref().unwrap_or_default().len() <= 1 {
