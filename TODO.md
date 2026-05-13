@@ -176,8 +176,12 @@ This is not just a facade spike. The finish line is:
       `require_all_native_bam_pipeline_prerequisites()` no longer requires
       Java or a Kestrel jar, and the all-native BAM parity test passed on
       2026-05-14 with `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1`.
-- [ ] Ensure the FASTQ path can run without Java Kestrel or external bcftools
+- [x] Ensure the FASTQ path can run without Java Kestrel or external bcftools
       when native gates are enabled.
+      Verified 2026-05-14 that the native FASTQ gate executes through native
+      Kestrel and native BCFtools without Java/external tools. Parity is not
+      yet correct: the negative fixture currently reports `High_Precision`
+      instead of expected `negative`.
 - [x] Add one CLI/runtime command that runs the BioScript VNtyper program against
       a BAM fixture.
       `vntyper_bioscript_program_runs_via_cli_and_writes_command_plan` runs
@@ -242,6 +246,10 @@ This is not just a facade spike. The finish line is:
       fixture and fix in the engine crate or document an intentional difference.
 - [ ] `kestrel-rs`: run VNtyper FASTQ positive/negative fixtures and compare
       VCF records against Java Kestrel expected outputs.
+      Attempted 2026-05-14 via
+      `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_fastq_pipeline_gate`.
+      The gate failed on the negative fixture: native Kestrel classification was
+      `High_Precision`, expected VNtyper classification was `negative`.
 - [ ] `kestrel-rs`: any Java parity gaps should be reduced into
       `vendor/rust/kestrel-rs` tests, not hidden in BioScript tests.
 - [x] `bcftools-rs`: confirm the VNtyper-required sort/compress/index path is
@@ -319,6 +327,8 @@ This is not just a facade spike. The finish line is:
       `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate.VntyperNativeBamPipelineGateTests.test_native_bam_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification`
       passed in 91.426s.
 - [ ] VNtyper FASTQ positive/negative native parity gate passes.
+      Current status 2026-05-14: gate runs but fails negative-fixture parity
+      (`High_Precision` vs expected `negative`).
 - [ ] VNtyper report JSON and TSV outputs match expected fixtures with explicit
       normalized fields.
 - [ ] VNtyper HTML report structure test passes.
