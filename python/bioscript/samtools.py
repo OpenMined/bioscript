@@ -5,6 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .runtime import ModuleBackendPolicy
+
+BACKEND_POLICY = ModuleBackendPolicy(
+    auto="command builders are pure Python; native helpers require bioscript._native",
+    python="command builders are pure Python; native helpers require bioscript._native",
+    rust="native helpers require bioscript._native; samtools-rs backend is pending",
+)
+
 
 def view_region(bam: str, region: str, output_bam: str, include_unmapped: bool = False) -> list[str]:
     args = ["samtools", "view", "-b", _path_arg(bam), region, "-o", _path_arg(output_bam)]
