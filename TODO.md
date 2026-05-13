@@ -176,9 +176,10 @@ uses those built-in primitives.
       expressions used by VNtyper, and useful error messages.
       Initial coverage verifies `bcftools-rs` header extraction, VCF output,
       BGZF-compressed output, native sort, CSI/TBI indexing, Python wrapper
-      delegation, and the real PyO3 native extension when installed. Filter
-      expression coverage remains pending until `bcftools-rs view` supports
-      `-i/-e`.
+      delegation, malformed-input error propagation, and the real PyO3 native
+      extension when installed. Filter expression coverage at the command-builder
+      layer exists; native filter expression coverage remains pending until
+      `bcftools-rs view` supports `-i/-e`.
 
 ## HTS / Pysam / Pyfaidx Facades
 

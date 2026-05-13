@@ -205,6 +205,21 @@ fn bcftools_native_sort_writes_bgzf_vcf_and_csi() {
 }
 
 #[test]
+fn bcftools_native_sort_reports_invalid_input_errors() {
+    let temp = tempfile::tempdir().unwrap();
+    let input = temp.path().join("malformed.vcf");
+    let output = temp.path().join("out.vcf.gz");
+    std::fs::write(&input, "not a vcf\n").unwrap();
+
+    let err = bcftools::sort_native(&input, &output, "z", true).unwrap_err();
+
+    assert!(
+        matches!(err, LibError::InvalidArguments(message) if message.contains("bcftools.sort failed"))
+    );
+    assert!(!output.exists());
+}
+
+#[test]
 fn pysam_alignment_file_accepts_read_modes_and_rejects_write_modes() {
     let file = AlignmentFile::open(
         "sample.cram",
