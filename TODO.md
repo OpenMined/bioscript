@@ -306,8 +306,12 @@ This is not just a facade spike. The finish line is:
       BAM native prerequisites.
       Added `require_native_fastq_pipeline_prerequisites()` and
       `REPRESENTATIVE_FASTQ_CASES` in `ports/vntyper/tests/data_manifest.py`.
-- [ ] Add or regenerate expected outputs for any checked-in representative
+- [x] Add or regenerate expected outputs for any checked-in representative
       FASTQ native fixtures.
+      No representative FASTQ payload fixtures are checked in. `git ls-files`
+      under `ports/vntyper/test-data` only tracks `.gitignore` and `README.md`;
+      the checked-in VNtyper fixtures are the tiny VCF/TSV/report files under
+      `ports/vntyper/tests/fixtures`.
 - [x] Keep `ports/vntyper/test-data` ignored except for README/manifest files.
       Current git status shows no tracked test-data payload changes.
 - [x] Remove generated `__pycache__` files from the repo if any are tracked.
