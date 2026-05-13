@@ -21,6 +21,62 @@ available inside BioScript.
 - Use upstream source and tests to guide compatibility, without committing to
   full-library parity up front.
 
+## Verification Gates
+
+Use these gates when changing BioScript library support or the VNtyper port.
+They are intentionally split so old BioScript compatibility, native facade
+coverage, and VNtyper-port behavior can be diagnosed separately.
+
+```sh
+cd rust
+CC=cc AR=ar cargo test --workspace
+```
+
+This is the old BioScript compatibility gate. It covers the Rust workspace,
+CLI tests, APOL1 real-file tests, runtime tests, wasm tests, facade tests, and
+the first-party Rust source-size guard.
+
+```sh
+PYTHONPATH=python python -m unittest discover -s python/tests -p 'test_*.py'
+```
+
+This is the Python wrapper gate. It verifies the `python/bioscript` package,
+backend policies, pure-Python fallbacks, and native-extension delegation tests.
+
+```sh
+cd rust
+CC=cc AR=ar cargo test -p bioscript-libs -p bioscript-python -p bioscript-runtime
+```
+
+This is the focused native facade gate. It verifies the Rust facades, PyO3
+native extension crate, and BioScript runtime dispatch for supported library
+imports.
+
+```sh
+PYTHONPATH=python:ports/vntyper/bioscript \
+  python -m unittest discover -s ports/vntyper/tests -p 'test_*.py'
+```
+
+This is the small VNtyper-port gate. It excludes large data unless the opt-in
+environment variables are set, but still covers command planning,
+post-processing, report rendering, upstream-unit ports, and skip behavior.
+
+Large-data parity gates are opt-in and must keep clear skip messages:
+
+```sh
+BIOSCRIPT_RUN_EXTERNAL_BAM_PARITY=1 \
+  PYTHONPATH=python:ports/vntyper/bioscript \
+  python -m unittest ports.vntyper.tests.test_full_pipeline_gate
+
+BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 \
+  PYTHONPATH=python:ports/vntyper/bioscript \
+  python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate
+
+BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1 \
+  PYTHONPATH=python:ports/vntyper/bioscript \
+  python -m unittest ports.vntyper.tests.test_samtools_fastq_oracle
+```
+
 ## Proposed Stack
 
 ```text
@@ -190,25 +246,14 @@ from bioscript import bcftools
 from bioscript import pysam / samtools / pyfaidx
   -> bioscript-runtime module binding or python/bioscript module
   -> rust/bioscript-libs facade
-  -> current BioScript format primitives
-  -> noodles and bioscript-formats
+  -> vendor/rust/samtools-rs for samtools operations
+  -> vendor/rust/bcftools-rs/htslib-rs for shared HTS-backed primitives
+  -> bioscript-formats and noodles where BioScript owns the domain helper
 ```
 
 Python authors can call low-level `kestrel.call_*_native(...)` helpers when
 they need VCF text, or `kestrel.run_native(reference_fasta, fastq_paths,
 output_vcf)` when a pipeline wants Kestrel-like file output.
-
-Pending paths:
-
-```text
-from bioscript import samtools
-  -> rust/bioscript-libs::samtools
-  -> vendor/rust/samtools-rs once the crate has source
-
-shared HTS primitives
-  -> top-level vendor/rust/htslib-rs after nested htslib-rs duplication is
-     unified with bcftools-rs
-```
 
 When `kestrel-rs`, `bcftools-rs`, `htslib-rs`, and `samtools-rs` stabilize,
 the default Cargo dependencies can move from local paths to published crate
