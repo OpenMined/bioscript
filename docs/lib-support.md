@@ -194,6 +194,10 @@ from bioscript import pysam / samtools / pyfaidx
   -> noodles and bioscript-formats
 ```
 
+Python authors can call low-level `kestrel.call_*_native(...)` helpers when
+they need VCF text, or `kestrel.run_native(reference_fasta, fastq_paths,
+output_vcf)` when a pipeline wants Kestrel-like file output.
+
 Pending paths:
 
 ```text

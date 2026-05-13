@@ -97,9 +97,11 @@ uses those built-in primitives.
       in-tree Kestrel internals.
 - [x] Add small deterministic adapter tests proving `kestrel-rs` emits an
       expected SNP VCF through the BioScript facade.
-- [ ] Decide whether BioScript should expose a more direct `kestrel.run(...)`
+- [x] Decide whether BioScript should expose a more direct `kestrel.run(...)`
       path that writes output files, or keep the current string-returning VCF
       helpers for Python/VNtyper integration.
+      Decision: keep string-returning low-level helpers and expose
+      `kestrel.run_native(...)` as the file-writing convenience path.
 - [ ] Move any remaining Kestrel algorithm parity expectations into
       `vendor/rust/kestrel-rs`.
 
