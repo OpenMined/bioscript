@@ -52,7 +52,7 @@ uses those built-in primitives.
 - [ ] Wire `rust/bioscript-libs` to local `samtools-rs` when available.
 - [ ] Add `[patch]` entries only where nested crate dependencies would
       otherwise pull remote git/crates.io versions instead of local submodules.
-- [ ] Document the dependency graph:
+- [x] Document the dependency graph:
       BioScript -> `bioscript-libs` facade -> vendored Rust engine crate.
 
 ## Crate Publishing

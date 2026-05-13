@@ -148,6 +148,59 @@ vendor/
 - let authors run the same scripts in normal Python before running them in
   BioScript
 
+## Current Dependency Graph
+
+The graph should stay narrow: BioScript owns language/runtime adaptation,
+`bioscript-libs` owns compatibility facades, and vendored Rust engine crates own
+native bioinformatics behavior.
+
+```text
+BioScript source
+  -> bioscript-runtime import/method binding
+  -> bioscript-libs facade module
+  -> vendored Rust engine crate
+  -> lower-level format/statistics crates as needed
+```
+
+Current wired paths:
+
+```text
+from bioscript import kestrel
+  -> bioscript-runtime KestrelModule or python/bioscript/kestrel.py
+  -> rust/bioscript-libs::kestrel
+  -> vendor/rust/kestrel-rs/crates/kestrel
+  -> vendor/rust/kestrel-rs/crates/kanalyze
+
+from bioscript import bcftools
+  -> bioscript-runtime BcftoolsModule or python/bioscript/bcftools.py
+  -> rust/bioscript-libs::bcftools
+  -> vendor/rust/bcftools-rs/crates/bcftools-rs
+  -> vendor/rust/bcftools-rs/htslib-rs
+
+from bioscript import pysam / samtools / pyfaidx
+  -> bioscript-runtime module binding or python/bioscript module
+  -> rust/bioscript-libs facade
+  -> current BioScript format primitives
+  -> noodles and bioscript-formats
+```
+
+Pending paths:
+
+```text
+from bioscript import samtools
+  -> rust/bioscript-libs::samtools
+  -> vendor/rust/samtools-rs once the crate has source
+
+shared HTS primitives
+  -> top-level vendor/rust/htslib-rs after nested htslib-rs duplication is
+     unified with bcftools-rs
+```
+
+When `kestrel-rs`, `bcftools-rs`, `htslib-rs`, and `samtools-rs` stabilize,
+the default Cargo dependencies can move from local paths to published crate
+versions. Keep the submodules for source comparison, fixture access, and local
+patching.
+
 ## Initial Library Targets
 
 ### `bioscript.pysam`
