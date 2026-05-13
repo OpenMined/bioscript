@@ -58,6 +58,81 @@ class VntyperDataManifestTests(unittest.TestCase):
                 else:
                     os.environ["BIOSCRIPT_KESTREL_JAR"] = original
 
+    def test_native_bam_skip_message_names_missing_opt_in_environment(self):
+        original_env = os.environ.get("BIOSCRIPT_RUN_NATIVE_BAM_PARITY")
+        os.environ.pop("BIOSCRIPT_RUN_NATIVE_BAM_PARITY", None)
+        original_require = data_manifest.require_test_data
+        original_import = data_manifest.import_native_module
+        try:
+            data_manifest.require_test_data = lambda check_md5=False: {
+                "present": 1,
+                "missing": [],
+                "mismatched": [],
+            }
+            data_manifest.import_native_module = lambda: None
+            with self.assertRaisesRegex(
+                unittest.SkipTest,
+                "BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1",
+            ):
+                data_manifest.require_all_native_bam_pipeline_prerequisites()
+        finally:
+            data_manifest.require_test_data = original_require
+            data_manifest.import_native_module = original_import
+            if original_env is None:
+                os.environ.pop("BIOSCRIPT_RUN_NATIVE_BAM_PARITY", None)
+            else:
+                os.environ["BIOSCRIPT_RUN_NATIVE_BAM_PARITY"] = original_env
+
+    def test_native_fastq_skip_message_names_missing_opt_in_environment(self):
+        original_env = os.environ.get("BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY")
+        os.environ.pop("BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY", None)
+        original_require = data_manifest.require_test_data
+        original_import = data_manifest.import_native_module
+        try:
+            data_manifest.require_test_data = lambda check_md5=False: {
+                "present": 1,
+                "missing": [],
+                "mismatched": [],
+            }
+            data_manifest.import_native_module = lambda: None
+            with self.assertRaisesRegex(
+                unittest.SkipTest,
+                "BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1",
+            ):
+                data_manifest.require_native_fastq_pipeline_prerequisites()
+        finally:
+            data_manifest.require_test_data = original_require
+            data_manifest.import_native_module = original_import
+            if original_env is None:
+                os.environ.pop("BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY", None)
+            else:
+                os.environ["BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY"] = original_env
+
+    def test_samtools_oracle_skip_message_names_missing_opt_in_environment(self):
+        original_env = os.environ.get("BIOSCRIPT_RUN_SAMTOOLS_ORACLE")
+        os.environ.pop("BIOSCRIPT_RUN_SAMTOOLS_ORACLE", None)
+        original_require = data_manifest.require_test_data
+        original_import = data_manifest.import_native_module
+        try:
+            data_manifest.require_test_data = lambda check_md5=False: {
+                "present": 1,
+                "missing": [],
+                "mismatched": [],
+            }
+            data_manifest.import_native_module = lambda: None
+            with self.assertRaisesRegex(
+                unittest.SkipTest,
+                "BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1",
+            ):
+                data_manifest.require_samtools_fastq_oracle_prerequisites()
+        finally:
+            data_manifest.require_test_data = original_require
+            data_manifest.import_native_module = original_import
+            if original_env is None:
+                os.environ.pop("BIOSCRIPT_RUN_SAMTOOLS_ORACLE", None)
+            else:
+                os.environ["BIOSCRIPT_RUN_SAMTOOLS_ORACLE"] = original_env
+
 
 if __name__ == "__main__":
     unittest.main()
