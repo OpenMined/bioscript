@@ -24,6 +24,33 @@ spec.loader.exec_module(vntyper_external_pipeline)
 
 
 class VntyperExternalPipelineTests(unittest.TestCase):
+    def test_minimal_bam_interface_wraps_pipeline_runner(self):
+        result = vntyper_external_pipeline.run_vntyper(
+            bam="sample.bam",
+            reference_build="hg38",
+            output_dir="work/sample1",
+            participant_id="sample1",
+            dry_run=True,
+        )
+
+        self.assertEqual(result.participant_id, "sample1")
+        self.assertEqual(result.output_dir, "work/sample1")
+        self.assertEqual(result.commands[0][0], "samtools")
+
+    def test_minimal_fastq_interface_wraps_pipeline_runner(self):
+        result = vntyper_external_pipeline.run_vntyper_fastq(
+            r1="sample_R1.fastq.gz",
+            r2="sample_R2.fastq.gz",
+            reference_build="hg38",
+            output_dir="work/sample1",
+            participant_id="sample1",
+            dry_run=True,
+        )
+
+        self.assertEqual(result.participant_id, "sample1")
+        self.assertEqual(result.output_dir, "work/sample1")
+        self.assertEqual(result.commands[0][0], "java")
+
     def test_dry_run_returns_ordered_external_commands(self):
         result = vntyper_external_pipeline.run_bam_pipeline(
             "sample.bam",

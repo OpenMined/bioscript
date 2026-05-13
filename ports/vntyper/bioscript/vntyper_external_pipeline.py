@@ -56,6 +56,42 @@ class ExternalPipelineResult:
     report_json: str
 
 
+def run_vntyper(
+    bam: str,
+    reference_build: str = "hg19",
+    output_dir: str = "vntyper-output",
+    participant_id: str | None = None,
+    **kwargs: object,
+) -> ExternalPipelineResult:
+    sample = participant_id or Path(bam).stem
+    return run_bam_pipeline(
+        bam,
+        sample,
+        output_dir,
+        assembly=reference_build,
+        **kwargs,
+    )
+
+
+def run_vntyper_fastq(
+    r1: str,
+    r2: str,
+    reference_build: str = "hg19",
+    output_dir: str = "vntyper-output",
+    participant_id: str | None = None,
+    **kwargs: object,
+) -> ExternalPipelineResult:
+    sample = participant_id or Path(r1).name.split("_")[0]
+    return run_fastq_kestrel(
+        r1,
+        r2,
+        sample,
+        output_dir,
+        assembly=reference_build,
+        **kwargs,
+    )
+
+
 def run_bam_pipeline(
     input_bam: str,
     participant_id: str,
@@ -262,6 +298,7 @@ def run_fastq_kestrel(
     fastq_2: str,
     participant_id: str,
     output_dir: str,
+    assembly: str = "unknown",
     kestrel_jar: str = vntyper_commands.DEFAULT_KESTREL_JAR,
     muc1_reference: str = vntyper_commands.DEFAULT_MUC1_REFERENCE,
     dry_run: bool = False,
@@ -309,7 +346,7 @@ def run_fastq_kestrel(
     materialize_post_kestrel_outputs(
         result,
         f"{fastq_1},{fastq_2}",
-        "unknown",
+        assembly,
         {},
         input_files={"fastq_1": fastq_1, "fastq_2": fastq_2, "vcf": result.kestrel_vcf},
         alignment_pipeline=(
