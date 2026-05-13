@@ -232,6 +232,13 @@ This is not just a facade spike. The finish line is:
 - [ ] Compare generated `kestrel_result.tsv` to expected fixture output.
 - [ ] Compare generated `report.json` to expected fixture output, with explicit
       allowances for paths, timestamps, and tool-version metadata.
+      Current all-native BAM status after the samtools singleton fix:
+      classification and `screening_summary` match expected reports, but
+      `kestrel_result.tsv` row counts still differ from expected fixtures
+      (`positive`: 2733 actual vs 3737 expected; `negative`: 2310 actual vs
+      4897 expected). Keep this open until Kestrel/report-output parity is
+      normalized or the differences are accepted with explicit field-level
+      allowances.
 - [x] Compare generated HTML report structure against expected report content:
       summary, coverage QC, variant table, flags, pipeline log, and optional IGV
       configuration.
