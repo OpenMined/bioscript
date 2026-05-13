@@ -200,6 +200,28 @@ class ToolCommandTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 kestrel.load_reference_regions(str(path))
 
+    def test_kestrel_run_native_writes_output_vcf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            reference = tmp_path / "refs.fa"
+            output = tmp_path / "nested" / "out.vcf"
+            reference.write_text(">REF1\nACGT\n", encoding="utf-8")
+
+            def call_fastq_references(*args):
+                self.assertEqual(args[0], [("REF1", "ACGT", "f1f8f4bf413b16ad135722aa4591043e")])
+                self.assertEqual(args[1], ["reads.fastq"])
+                self.assertEqual(args[2], 4)
+                return "##fileformat=VCF4.2\n#CHROM\tPOS\n"
+
+            fake_native = SimpleNamespace(kestrel_call_fastq_references_native=call_fastq_references)
+            with patch.dict("sys.modules", {"bioscript._native": fake_native}):
+                self.assertEqual(
+                    kestrel.run_native(str(reference), ["reads.fastq"], str(output), kmer_size=4),
+                    str(output),
+                )
+
+            self.assertEqual(output.read_text(encoding="utf-8"), "##fileformat=VCF4.2\n#CHROM\tPOS\n")
+
     def test_kestrel_native_sequences_wrapper_reports_missing_extension(self) -> None:
         with patch.dict("sys.modules", {"bioscript._native": None}):
             with self.assertRaises(NotImplementedError):

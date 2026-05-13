@@ -300,6 +300,38 @@ def call_fastq_references_native(
     )
 
 
+def run_native(
+    reference_fasta: str,
+    fastq_paths: Iterable[str],
+    output_vcf: str,
+    *,
+    kmer_size: int = 20,
+    sample_name: str = "sample1",
+    minimum_difference: int = 5,
+    difference_quantile: float = 0.90,
+    max_haplotypes: int = 40,
+    max_bases: int = 500,
+    max_saved_states: int = 40,
+) -> str:
+    """Run native Kestrel over FASTQs and write the resulting VCF."""
+
+    vcf = call_fastq_references_native(
+        load_reference_regions(reference_fasta),
+        fastq_paths,
+        kmer_size,
+        sample_name=sample_name,
+        minimum_difference=minimum_difference,
+        difference_quantile=difference_quantile,
+        max_haplotypes=max_haplotypes,
+        max_bases=max_bases,
+        max_saved_states=max_saved_states,
+    )
+    output = Path(_path_arg(output_vcf))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(vcf, encoding="utf-8")
+    return str(output)
+
+
 def _path_arg(path: str) -> str:
     value = str(Path(path))
     if "\0" in value:
