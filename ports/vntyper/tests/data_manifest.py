@@ -182,14 +182,33 @@ def require_fastq_kestrel_expected_outputs():
 
 def require_native_bam_pipeline_prerequisites():
     """Skip unless the native-samtools BAM path can run against copied data."""
-    manifest = require_test_data(check_md5=False)
     missing = []
-    if os.environ.get("BIOSCRIPT_RUN_NATIVE_BAM_PARITY") != "1":
-        missing.append("BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1")
     if shutil.which("java") is None:
         missing.append("java on PATH")
     if not KESTREL_JAR.exists():
         missing.append(str(KESTREL_JAR))
+    try:
+        prereqs = require_all_native_bam_pipeline_prerequisites()
+    except unittest.SkipTest as skip:
+        missing.append(str(skip))
+        prereqs = {}
+    if missing:
+        raise unittest.SkipTest(
+            "VNtyper native BAM pipeline prerequisites are missing: " + "; ".join(missing)
+        )
+    return {
+        **prereqs,
+        "java": shutil.which("java"),
+        "kestrel_jar": str(KESTREL_JAR),
+    }
+
+
+def require_all_native_bam_pipeline_prerequisites():
+    """Skip unless the all-native BAM path can run against copied data."""
+    manifest = require_test_data(check_md5=False)
+    missing = []
+    if os.environ.get("BIOSCRIPT_RUN_NATIVE_BAM_PARITY") != "1":
+        missing.append("BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1")
     if not MUC1_REFERENCE.exists():
         missing.append(str(MUC1_REFERENCE))
     missing_cases = [
@@ -215,8 +234,6 @@ def require_native_bam_pipeline_prerequisites():
         )
     return {
         "manifest": manifest,
-        "java": shutil.which("java"),
-        "kestrel_jar": str(KESTREL_JAR),
         "muc1_reference": str(MUC1_REFERENCE),
         "expected_outputs": [str(path) for path in EXPECTED_OUTPUTS],
         "bam_cases": {label: str(path) for label, path in REPRESENTATIVE_BAM_CASES.items()},
