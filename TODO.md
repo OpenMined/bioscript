@@ -207,6 +207,9 @@ uses those built-in primitives.
       instead of VNtyper manually loading references and writing VCF text.
       The FASTQ-only path can now optionally run native Kestrel followed by
       native BCFtools sort/index without Java or external bcftools.
+      The BAM path also has a native BCFtools sort/index switch, so native or
+      external Kestrel output can be materialized as sorted/indexed VCF through
+      the same `bcftools.sort_native(...)` facade.
 - [x] Define the minimal VNtyper BioScript interface, for example:
       `run_vntyper(bam=..., reference_build="hg19", output_dir=...)` and
       `run_vntyper_fastq(r1=..., r2=..., reference_build="hg19", output_dir=...)`.
