@@ -1,4 +1,4 @@
-use bioscript_formats::alignment::{AlignmentOp, AlignmentOpKind, AlignmentRecord};
+use htslib_rs::sam;
 
 use crate::{LibError, LibResult};
 
@@ -16,18 +16,43 @@ pub struct AlignedSegment {
 }
 
 impl AlignedSegment {
-    pub fn from_alignment_record(contig: &str, record: &AlignmentRecord) -> Self {
-        Self {
-            query_name: None,
-            reference_name: Some(contig.to_owned()),
-            reference_start: u64::try_from(record.start.saturating_sub(1)).ok(),
-            reference_end: u64::try_from(record.end).ok(),
-            query_sequence: None,
-            mapping_quality: None,
-            cigarstring: cigar_string(&record.cigar),
-            is_unmapped: record.is_unmapped,
-            is_reverse: false,
-        }
+    pub fn from_hts_record<R>(contig: &str, record: &R) -> LibResult<Self>
+    where
+        R: sam::alignment::Record + ?Sized,
+    {
+        let flags = record
+            .flags()
+            .map_err(|err| LibError::InvalidArguments(err.to_string()))?;
+        let alignment_start = record
+            .alignment_start()
+            .transpose()
+            .map_err(|err| LibError::InvalidArguments(err.to_string()))?
+            .map(usize::from);
+        let cigar_ops = cigar_ops(record)?;
+        let reference_span = reference_span(&cigar_ops);
+        let query_sequence = record.sequence().iter().collect::<Vec<_>>();
+
+        Ok(Self {
+            query_name: record
+                .name()
+                .map(|name| String::from_utf8_lossy(name).into_owned()),
+            reference_name: (!flags.is_unmapped()).then(|| contig.to_owned()),
+            reference_start: alignment_start
+                .and_then(|start| u64::try_from(start.saturating_sub(1)).ok()),
+            reference_end: alignment_start.and_then(|start| {
+                reference_span.and_then(|span| u64::try_from(start + span - 1).ok())
+            }),
+            query_sequence: (!query_sequence.is_empty())
+                .then(|| String::from_utf8_lossy(&query_sequence).into_owned()),
+            mapping_quality: record
+                .mapping_quality()
+                .transpose()
+                .map_err(|err| LibError::InvalidArguments(err.to_string()))?
+                .map(|mapping_quality| mapping_quality.get()),
+            cigarstring: cigar_string(&cigar_ops),
+            is_unmapped: flags.is_unmapped(),
+            is_reverse: flags.is_reverse_complemented(),
+        })
     }
 
     pub fn unmapped(query_name: Option<String>) -> Self {
@@ -56,28 +81,57 @@ impl AlignedSegment {
     }
 }
 
-fn cigar_string(ops: &[AlignmentOp]) -> Option<String> {
+fn cigar_ops<R>(record: &R) -> LibResult<Vec<sam::alignment::record::cigar::Op>>
+where
+    R: sam::alignment::Record + ?Sized,
+{
+    record
+        .cigar()
+        .iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| LibError::InvalidArguments(err.to_string()))
+}
+
+fn cigar_string(ops: &[sam::alignment::record::cigar::Op]) -> Option<String> {
     if ops.is_empty() {
         return None;
     }
     let mut out = String::new();
     for op in ops {
-        out.push_str(&op.len.to_string());
-        out.push(cigar_op_char(op.kind));
+        out.push_str(&op.len().to_string());
+        out.push(cigar_op_char(op.kind()));
     }
     Some(out)
 }
 
-fn cigar_op_char(kind: AlignmentOpKind) -> char {
+fn cigar_op_char(kind: sam::alignment::record::cigar::op::Kind) -> char {
     match kind {
-        AlignmentOpKind::Match => 'M',
-        AlignmentOpKind::Insertion => 'I',
-        AlignmentOpKind::Deletion => 'D',
-        AlignmentOpKind::Skip => 'N',
-        AlignmentOpKind::SoftClip => 'S',
-        AlignmentOpKind::HardClip => 'H',
-        AlignmentOpKind::Pad => 'P',
-        AlignmentOpKind::SequenceMatch => '=',
-        AlignmentOpKind::SequenceMismatch => 'X',
+        sam::alignment::record::cigar::op::Kind::Match => 'M',
+        sam::alignment::record::cigar::op::Kind::Insertion => 'I',
+        sam::alignment::record::cigar::op::Kind::Deletion => 'D',
+        sam::alignment::record::cigar::op::Kind::Skip => 'N',
+        sam::alignment::record::cigar::op::Kind::SoftClip => 'S',
+        sam::alignment::record::cigar::op::Kind::HardClip => 'H',
+        sam::alignment::record::cigar::op::Kind::Pad => 'P',
+        sam::alignment::record::cigar::op::Kind::SequenceMatch => '=',
+        sam::alignment::record::cigar::op::Kind::SequenceMismatch => 'X',
     }
+}
+
+fn reference_span(ops: &[sam::alignment::record::cigar::Op]) -> Option<usize> {
+    let span = ops
+        .iter()
+        .filter(|op| {
+            matches!(
+                op.kind(),
+                sam::alignment::record::cigar::op::Kind::Match
+                    | sam::alignment::record::cigar::op::Kind::Deletion
+                    | sam::alignment::record::cigar::op::Kind::Skip
+                    | sam::alignment::record::cigar::op::Kind::SequenceMatch
+                    | sam::alignment::record::cigar::op::Kind::SequenceMismatch
+            )
+        })
+        .map(|op| op.len())
+        .sum::<usize>();
+    (span > 0).then_some(span)
 }

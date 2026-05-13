@@ -7,24 +7,25 @@ from bioscript import pysam
 ```
 
 This module is a BioScript-supported subset of `pysam`, backed by Rust native
-code. Unsupported APIs should fail with explicit compatibility errors.
+code. Local BAM/CRAM fetches route through `htslib-rs` alignment helpers, and
+unsupported APIs should fail with explicit compatibility errors.
 
 ## First Slice
 
 | API | Status | Notes |
 | --- | --- | --- |
-| `pysam.AlignmentFile(path, "rc", reference_filename=...)` | Scaffolded | Rust object and mode validation exist; CRAM fetch backend is pending. |
-| `pysam.AlignmentFile(path, "rb")` | Scaffolded | Rust object and mode validation exist; BAM backend is pending. |
-| `AlignmentFile.fetch(contig, start, stop)` | Initial CRAM support | Rust and BioScript runtime can stream local CRAM fixtures when `reference_filename` is supplied. |
-| `AlignedSegment.query_name` | Scaffolded | Rust field exists. Backend population is pending. |
-| `AlignedSegment.reference_name` | Initial CRAM support | Populated from the fetch contig. |
-| `AlignedSegment.reference_start` | Initial CRAM support | Converted to pysam-style 0-based start from BioScript alignment records. |
-| `AlignedSegment.reference_end` | Initial CRAM support | Populated from BioScript alignment records. |
-| `AlignedSegment.query_sequence` | Scaffolded | Rust field exists. Backend population is pending. |
-| `AlignedSegment.mapping_quality` | Scaffolded | Rust field exists. Backend population is pending. |
-| `AlignedSegment.cigarstring` | Initial CRAM support | Populated from the BioScript alignment CIGAR operations. |
-| `AlignedSegment.is_unmapped` | Initial CRAM support | Populated from BioScript alignment records. |
-| `AlignedSegment.is_reverse` | Scaffolded | Rust field exists. Backend population is pending. |
+| `pysam.AlignmentFile(path, "rc", reference_filename=...)` | Initial support | Local indexed CRAM fetches use `htslib-rs`; `reference_filename` is required. |
+| `pysam.AlignmentFile(path, "rb")` | Initial support | Local indexed BAM fetches use `htslib-rs` associated BAI/CSI lookup. |
+| `AlignmentFile.fetch(contig, start, stop)` | Initial BAM/CRAM support | Requires explicit 0-based `start` and half-open `stop`; converts to HTSlib 1-based inclusive regions internally. |
+| `AlignedSegment.query_name` | Initial BAM/CRAM support | Populated from the read name when present. |
+| `AlignedSegment.reference_name` | Initial BAM/CRAM support | Populated from the fetch contig for mapped reads. |
+| `AlignedSegment.reference_start` | Initial BAM/CRAM support | Converted back to pysam-style 0-based start. |
+| `AlignedSegment.reference_end` | Initial BAM/CRAM support | Derived from reference-consuming CIGAR operations. |
+| `AlignedSegment.query_sequence` | Initial BAM/CRAM support | Populated from the read sequence when present. |
+| `AlignedSegment.mapping_quality` | Initial BAM/CRAM support | Populated from the read mapping quality when present. |
+| `AlignedSegment.cigarstring` | Initial BAM/CRAM support | Populated from CIGAR operations. |
+| `AlignedSegment.is_unmapped` | Initial BAM/CRAM support | Populated from SAM flags. |
+| `AlignedSegment.is_reverse` | Initial BAM/CRAM support | Populated from SAM flags. |
 
 ## Explicitly Unsupported Initially
 

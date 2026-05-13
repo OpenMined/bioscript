@@ -288,7 +288,7 @@ fn pysam_fetch_routes_bam_to_native_indexed_backend() {
     .unwrap();
     let err = file.fetch("chr_test", Some(999), Some(1001)).unwrap_err();
     assert!(
-        err.to_string().contains("failed to read BAM index"),
+        err.to_string().contains("missing associated index"),
         "{err}"
     );
 }

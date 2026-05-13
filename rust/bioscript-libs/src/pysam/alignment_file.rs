@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use bioscript_core::GenomicLocus;
-use bioscript_formats::{GenotypeLoadOptions, alignment};
+use htslib_rs::{alignment_compat, core::Region};
 
 use super::AlignedSegment;
 use crate::{LibError, LibResult};
@@ -83,54 +82,37 @@ impl AlignmentFile {
                 "AlignmentFile.fetch without explicit start and stop",
             ));
         };
-        let locus = GenomicLocus {
-            chrom: contig.to_owned(),
-            start: i64::try_from(start.saturating_add(1)).map_err(|_| {
-                LibError::InvalidArguments(
-                    "pysam.AlignmentFile.fetch start is too large".to_owned(),
-                )
-            })?,
-            end: i64::try_from(stop).map_err(|_| {
-                LibError::InvalidArguments("pysam.AlignmentFile.fetch stop is too large".to_owned())
-            })?,
-        };
+        let region = fetch_region(contig, start, stop)?;
         let records = match self.mode {
-            AlignmentMode::ReadBam | AlignmentMode::Read => alignment::query_bam_records(
-                &self.path,
-                &GenotypeLoadOptions {
-                    input_index: self.index_filename.clone(),
-                    ..GenotypeLoadOptions::default()
-                },
-                &locus,
-            ),
+            AlignmentMode::ReadBam | AlignmentMode::Read => {
+                alignment_compat::query_bam_records_from_path(&self.path, &region)
+                    .map_err(|err| LibError::InvalidArguments(err.to_string()))?
+                    .into_iter()
+                    .map(|record| AlignedSegment::from_hts_record(contig, &record))
+                    .collect::<LibResult<Vec<_>>>()
+            }
             AlignmentMode::ReadCram => {
                 let Some(reference_file) = self.reference_filename.as_ref() else {
                     return Err(LibError::InvalidArguments(
                         "pysam.AlignmentFile.fetch for CRAM requires reference_filename".to_owned(),
                     ));
                 };
-                alignment::query_cram_records(
+                alignment_compat::query_cram_records_from_path_with_reference(
                     &self.path,
-                    &GenotypeLoadOptions {
-                        input_index: self.index_filename.clone(),
-                        reference_file: Some(reference_file.clone()),
-                        allow_reference_md5_mismatch: true,
-                        ..GenotypeLoadOptions::default()
-                    },
+                    &region,
                     reference_file,
-                    &locus,
                 )
+                .map_err(|err| LibError::InvalidArguments(err.to_string()))?
+                .into_iter()
+                .map(|record| AlignedSegment::from_hts_record(contig, &record))
+                .collect::<LibResult<Vec<_>>>()
             }
-        }
-        .map_err(|err| LibError::InvalidArguments(err.to_string()))?;
+        }?;
         Ok(AlignmentFetch {
             contig: contig.to_owned(),
             start: Some(start),
             stop: Some(stop),
-            records: records
-                .into_iter()
-                .map(|record| AlignedSegment::from_alignment_record(contig, &record))
-                .collect(),
+            records,
         })
     }
 
@@ -162,4 +144,13 @@ pub struct AlignmentFetch {
 fn is_remote_path(path: &Path) -> bool {
     let text = path.to_string_lossy();
     text.starts_with("http://") || text.starts_with("https://") || text.starts_with("s3://")
+}
+
+fn fetch_region(contig: &str, start: u64, stop: u64) -> LibResult<Region> {
+    let one_based_start = start.saturating_add(1);
+    format!("{contig}:{one_based_start}-{stop}")
+        .parse()
+        .map_err(|err| {
+            LibError::InvalidArguments(format!("pysam.AlignmentFile.fetch region: {err}"))
+        })
 }

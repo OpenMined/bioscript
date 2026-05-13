@@ -188,13 +188,13 @@ uses those built-in primitives.
 - [x] `pysam.AlignmentFile.fetch` has initial BAM/CRAM read support.
 - [ ] Refactor lower-level alignment code to flow through `pysam` or
       `samtools` facades where that makes scripts more recognizable.
-- [ ] Use `htslib-rs` as the shared backend for BAM/CRAM/VCF/FASTA primitives
+- [x] Use `htslib-rs` as the shared backend for BAM/CRAM/VCF/FASTA primitives
       once vendored.
       FASTA access in `bioscript-libs` `pyfaidx` now builds and queries
       through `htslib_rs::faidx_compat`; Samtools/BCFtools already enter via
-      their vendored engine crates. This remains open until the pysam-style
-      BAM/CRAM fetch path is also routed through the shared HTS layer or a
-      deliberate exception is documented.
+      their vendored engine crates. The pysam-style BAM/CRAM fetch path now
+      routes through `htslib_rs::alignment_compat` indexed query helpers and
+      converts HTS records into the BioScript `AlignedSegment` surface.
 - [ ] Add parity tests from focused upstream `pysam` and `pyfaidx` cases, not
       the full upstream test suites.
 
