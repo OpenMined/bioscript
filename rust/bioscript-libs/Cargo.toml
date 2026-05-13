@@ -13,5 +13,8 @@ kestrel = { path = "../../vendor/rust/kestrel-rs/crates/kestrel" }
 samtools-rs = { path = "../../vendor/rust/samtools-rs/crates/samtools-rs" }
 tempfile = "3"
 
+[dev-dependencies]
+htslib-rs = { path = "../../vendor/rust/bcftools-rs/htslib-rs/crates/htslib-rs" }
+
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }

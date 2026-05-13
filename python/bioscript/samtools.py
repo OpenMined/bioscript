@@ -10,7 +10,7 @@ from .runtime import ModuleBackendPolicy
 BACKEND_POLICY = ModuleBackendPolicy(
     auto="command builders are pure Python; native helpers require bioscript._native",
     python="command builders are pure Python; native helpers require bioscript._native",
-    rust="native helpers require bioscript._native; samtools-rs backend is pending",
+    rust="native helpers require bioscript._native with the samtools-rs backend",
 )
 
 

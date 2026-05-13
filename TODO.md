@@ -128,10 +128,15 @@ uses those built-in primitives.
       `samtools.fastq` -> `samtools.depth`.
 - [ ] Keep the public BioScript API shaped like familiar samtools operations:
       `view`, `fastq`, `sort`, `index`, `depth`, `faidx`.
-- [ ] Add adapter tests for:
+- [x] Add adapter tests for:
       region parsing, indexed BAM input, `.bam/.bai` discovery, paired FASTQ
       output counts, depth summary fields, and error mapping.
-- [ ] Keep oracle tests against real samtools opt-in only.
+      Covered by `samtools_native_adapter_handles_tiny_indexed_bam`, which
+      creates a tiny SAM/BAM fixture in a temp dir and exercises the BioScript
+      Samtools facade end to end.
+- [x] Keep oracle tests against real samtools opt-in only.
+      `test_samtools_fastq_oracle.py` is gated by
+      `BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1` and external samtools availability.
 
 ## BCFtools Facade
 
@@ -264,9 +269,11 @@ uses those built-in primitives.
       `view_region_native`, `fastq_native`, and `depth_native` are backed by
       `samtools-rs`; native `index/sort` can be exposed later if VNtyper needs
       them after BAM slicing.
-- [ ] Add Samtools adapter tests using tiny BAM/FASTQ/depth fixtures.
-      Existing BioScript native fixture coverage still runs through the facade,
-      and `samtools-rs` owns broader command/native-wrapper engine tests.
+- [x] Add Samtools adapter tests using tiny BAM/FASTQ/depth fixtures.
+      `samtools_native_adapter_handles_tiny_indexed_bam` writes a tiny SAM
+      fixture, converts it to BAM, indexes it, and checks native view, FASTQ,
+      depth, and error behavior through the BioScript facade. `samtools-rs`
+      owns broader command/native-wrapper engine tests.
       Opt-in oracle testing against real `samtools fastq` is close but not
       exact yet: the native path currently emits +20 read1 records on the
       positive fixture and +3 on the negative fixture versus real samtools.
