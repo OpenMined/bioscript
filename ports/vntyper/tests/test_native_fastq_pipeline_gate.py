@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import importlib.util
 import json
 import sys
@@ -105,10 +106,24 @@ class VntyperNativeFastqPipelineGateTests(unittest.TestCase):
                         }
                         for row in top_passing
                     ],
+                    "actual_tsv_fingerprint": normalized_tsv_fingerprint(rows),
+                    "expected_tsv_fingerprint": normalized_tsv_fingerprint(expected_rows),
+                    "actual_report_summary": normalized_report_summary(actual_report),
+                    "expected_report_summary": normalized_report_summary(expected_report),
                 }
                 self.assertEqual(
                     actual_report["algorithm_results"]["kestrel"],
                     expected_report["algorithm_results"]["kestrel"],
+                    parity_context,
+                )
+                self.assertEqual(
+                    normalized_tsv_fingerprint(rows),
+                    normalized_tsv_fingerprint(expected_rows),
+                    parity_context,
+                )
+                self.assertEqual(
+                    normalized_report_summary(actual_report),
+                    normalized_report_summary(expected_report),
                     parity_context,
                 )
                 self.assertEqual(set(actual_report), set(expected_report))
@@ -122,6 +137,50 @@ class VntyperNativeFastqPipelineGateTests(unittest.TestCase):
                     "native bioscript kestrel from FASTQ",
                 )
                 self.assertEqual(actual_report["metadata"]["detected_assembly"], "hg19")
+
+def normalized_tsv_fingerprint(rows):
+    stable_fields = [
+        "CHROM",
+        "POS",
+        "REF",
+        "ALT",
+        "Estimated_Depth_AlternateVariant",
+        "Estimated_Depth_Variant_ActiveRegion",
+        "Depth_Score",
+        "Confidence",
+        "Flag",
+        "is_valid_frameshift",
+        "alt_filter_pass",
+        "passes_vntyper_filters",
+    ]
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(
+            "\t".join(str(row.get(field, "")) for field in stable_fields).encode("utf-8")
+        )
+        digest.update(b"\n")
+    return {
+        "row_count": len(rows),
+        "passing_count": len(
+            [row for row in rows if row.get("passes_vntyper_filters") in ("True", True)]
+        ),
+        "non_negative_confidence_count": len(
+            [row for row in rows if row.get("Confidence") != "Negative"]
+        ),
+        "sha256": digest.hexdigest(),
+    }
+
+
+def normalized_report_summary(report):
+    return {
+        "algorithm_results": report.get("algorithm_results"),
+        "screening_summary": report.get("screening_summary"),
+        "kestrel_variant_count": len(report.get("kestrel_variants", [])),
+        "coverage_status": report.get("coverage", {}).get("status"),
+        "quality_pass": report.get("coverage", {}).get("quality_pass"),
+        "alignment_pipeline": report.get("metadata", {}).get("alignment_pipeline"),
+        "detected_assembly": report.get("metadata", {}).get("detected_assembly"),
+    }
 
 
 if __name__ == "__main__":
