@@ -230,6 +230,7 @@ dependencies = [
  "bioscript-core",
  "bioscript-formats",
  "flate2",
+ "htslib-rs",
  "kanalyze",
  "kestrel",
  "samtools-rs",

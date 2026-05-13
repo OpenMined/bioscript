@@ -437,3 +437,49 @@ fn samtools_vntyper_subset_builds_allowed_commands() {
     assert_eq!(fastq.program(), "samtools");
     assert_eq!(fastq.args()[0], "fastq");
 }
+
+#[test]
+fn samtools_native_adapter_handles_tiny_indexed_bam() {
+    let temp = tempfile::tempdir().unwrap();
+    let sam = temp.path().join("tiny.sam");
+    let bam = temp.path().join("tiny.bam");
+    let slice = temp.path().join("slice.bam");
+    let r1 = temp.path().join("r1.fastq.gz");
+    let r2 = temp.path().join("r2.fastq.gz");
+    std::fs::write(
+        &sam,
+        concat!(
+            "@HD\tVN:1.6\tSO:coordinate\n",
+            "@SQ\tSN:chr1\tLN:8\n",
+            "pair\t65\tchr1\t1\t60\t4M\t=\t5\t8\tACGT\t!!!!\n",
+            "pair\t129\tchr1\t5\t60\t4M\t=\t1\t-8\tTGCA\t####\n",
+        ),
+    )
+    .unwrap();
+    htslib_rs::alignment_compat::write_bam_from_sam_path(
+        &sam,
+        std::fs::File::create(&bam).unwrap(),
+    )
+    .unwrap();
+    samtools_rs::native::index(&bam, Option::<&PathBuf>::None, Some(1)).unwrap();
+
+    let records_written = samtools::view_region_native(&bam, None, "chr1:1-4", &slice).unwrap();
+    assert_eq!(records_written, 0);
+    assert!(std::fs::metadata(&slice).unwrap().len() > 0);
+
+    let depth = samtools::depth_native(&bam, None, "chr1:1-8").unwrap();
+    assert_eq!(depth.region_length, 8);
+    assert_eq!(depth.uncovered_bases, 0);
+    assert_eq!(depth.min, 1);
+    assert_eq!(depth.max, 1);
+    assert_eq!(depth.mean, 1.0);
+    assert_eq!(depth.median, 1.0);
+
+    let fastq = samtools::fastq_native(&bam, None, "chr1:1-4", &r1, &r2).unwrap();
+    assert_eq!(fastq.read1_records, 1);
+    assert_eq!(fastq.read2_records, 1);
+    assert_eq!(fastq.skipped_records, 0);
+
+    let err = samtools::depth_native(&bam, None, "chr1:8-1").unwrap_err();
+    assert!(err.to_string().contains("region"), "{err}");
+}
