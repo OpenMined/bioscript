@@ -22,6 +22,18 @@ def index(vcf_gz: str) -> list[str]:
     return ["bcftools", "index", "-t", _path_arg(vcf_gz)]
 
 
+def view(input_vcf: str, output_vcf: str, output_type: str = "z") -> list[str]:
+    return [
+        "bcftools",
+        "view",
+        "-O",
+        output_type,
+        "-o",
+        _path_arg(output_vcf),
+        _path_arg(input_vcf),
+    ]
+
+
 def view_filter(input_vcf: str, output_vcf_gz: str, include_expr: str) -> list[str]:
     return [
         "bcftools",

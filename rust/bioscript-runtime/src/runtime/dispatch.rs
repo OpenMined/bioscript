@@ -28,6 +28,7 @@ impl BioscriptRuntime {
             ("PyfaidxModule", "Fasta") => self.method_pyfaidx_fasta(args, kwargs),
             ("BcftoolsModule", "sort") => self.method_bcftools_sort(args, kwargs),
             ("BcftoolsModule", "index") => self.method_bcftools_index(args, kwargs),
+            ("BcftoolsModule", "view") => self.method_bcftools_view(args, kwargs),
             ("BcftoolsModule", "view_filter") => self.method_bcftools_view_filter(args, kwargs),
             ("BcftoolsModule", "norm") => self.method_bcftools_norm(args, kwargs),
             ("BcftoolsModule", "view_header_native") => {

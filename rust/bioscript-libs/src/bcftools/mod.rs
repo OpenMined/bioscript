@@ -28,6 +28,20 @@ pub fn index(vcf_gz: &Path) -> LibResult<CommandSpec> {
     )
 }
 
+pub fn view(input_vcf: &Path, output_vcf: &Path, output_type: &str) -> LibResult<CommandSpec> {
+    CommandSpec::new(
+        "bcftools",
+        vec![
+            "view".to_owned(),
+            "-O".to_owned(),
+            output_type.to_owned(),
+            "-o".to_owned(),
+            path_arg(output_vcf)?,
+            path_arg(input_vcf)?,
+        ],
+    )
+}
+
 pub fn view_filter(
     input_vcf: &Path,
     output_vcf_gz: &Path,

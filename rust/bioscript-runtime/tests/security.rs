@@ -207,6 +207,12 @@ def main():
     bcmd = bcftools.sort("calls.vcf", "calls.vcf.gz")
     if bcmd[0] != "bcftools":
         raise Exception("bad bcftools command")
+    bvcmd = bcftools.view("calls.vcf", "calls.bcf", "b")
+    if bvcmd[1] != "view":
+        raise Exception("bad bcftools view command")
+    bncmd = bcftools.norm("calls.vcf", "ref.fa", "norm.vcf.gz")
+    if bncmd[1] != "norm":
+        raise Exception("bad bcftools norm command")
 
 if __name__ == "__main__":
     main()
@@ -233,6 +239,12 @@ if __name__ == "__main__":
     }));
     assert!(timings.iter().any(|timing| {
         timing.stage == "tool_command_plan" && timing.detail.contains("method=bcftools.sort")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=bcftools.view")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=bcftools.norm")
     }));
 }
 
