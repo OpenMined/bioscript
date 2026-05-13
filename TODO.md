@@ -449,6 +449,11 @@ This is not just a facade spike. The finish line is:
       `KESTREL_RUN_VNTYPER_FASTQ_PARITY=1 CC=cc AR=ar cargo test -p kestrel --test vntyper_fastq_parity vntyper_negative_fastq_matches_java_expected_vcf -- --nocapture`
       fails in `vendor/rust/kestrel-rs` with Rust VCF record count 2322 vs
       Java expected 4897 after 110.39s.
+      Diagnostic re-run of the native negative FASTQ output found 42 rows with
+      `passes_vntyper_filters=True`; the highest-depth false positives are
+      absent from the Java expected TSV, e.g. `5C-M:61 T>TG` and `B-M:59 G>GT`
+      at depth score `0.026635564717370077`. The Java expected negative TSV has
+      4897 rows, zero passing rows, and zero non-negative-confidence rows.
 - [ ] VNtyper report JSON and TSV outputs match expected fixtures with explicit
       normalized fields.
 - [x] VNtyper HTML report structure test passes.
