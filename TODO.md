@@ -178,8 +178,11 @@ uses those built-in primitives.
 - [x] Keep top-level `python/bioscript` matching BioScript import names.
 - [x] Keep optional delegation to real Python libraries where useful.
 - [x] Expose native functions through `rust/bioscript-python`.
-- [ ] Add Python tests that call the real native extension for each engine
+- [x] Add Python tests that call the real native extension for each engine
       facade with tiny fixtures.
+      `python/tests/test_tools.py` now exercises real `_native` calls for
+      Kestrel, Samtools, and BCFtools. `pysam` and `pyfaidx` remain documented
+      as pending Rust-backed shims rather than native engine facades.
 - [x] Keep mocked-extension tests for argument normalization and missing-native
       behavior.
 - [x] Make Python-only fallback behavior explicit per module:

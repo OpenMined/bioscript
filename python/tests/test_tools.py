@@ -232,6 +232,35 @@ class ToolCommandTests(unittest.TestCase):
             with self.assertRaises(NotImplementedError):
                 kestrel.call_fastq_references_native([("MUC1", "ACGT", "md5")], ["reads.fastq"], 4)
 
+    def test_kestrel_native_real_extension_emits_tiny_variant(self) -> None:
+        try:
+            import bioscript as bioscript_package
+
+            native = importlib.import_module("bioscript._native")
+        except ImportError as exc:
+            self.skipTest(f"BioScript native extension is not installed: {exc}")
+
+        try:
+            vcf = kestrel.call_sequences_native(
+                "chr1",
+                "AAAACCCCGGGGTTTT",
+                ["AAAATCCCGGGGTTTT"] * 5,
+                4,
+                sample_name="sample1",
+                minimum_difference=1,
+                max_haplotypes=4,
+                max_saved_states=4,
+            )
+        finally:
+            if getattr(bioscript_package, "_native", None) is native:
+                delattr(bioscript_package, "_native")
+            sys.modules.pop("bioscript._native", None)
+
+        self.assertIn("##fileformat=VCF4.2\n", vcf)
+        self.assertIn("##contig=<ID=chr1,length=16", vcf)
+        self.assertIn("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1", vcf)
+        self.assertIn("chr1\t5\t.\tC\tT", vcf)
+
     def test_samtools_fastq_and_view_region(self) -> None:
         self.assertEqual(
             samtools.fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz"),
@@ -300,6 +329,54 @@ class ToolCommandTests(unittest.TestCase):
                     "r1.fastq.gz",
                     "r2.fastq.gz",
                 )
+
+    def test_samtools_native_real_extension_handles_indexed_bam_fixture(self) -> None:
+        try:
+            import bioscript as bioscript_package
+
+            native = importlib.import_module("bioscript._native")
+        except ImportError as exc:
+            self.skipTest(f"BioScript native extension is not installed: {exc}")
+
+        root = Path(__file__).resolve().parents[2]
+        bam = root / "vendor" / "rust" / "samtools-rs" / "samtools" / "test" / "stat" / "11_target.bam"
+        if not bam.exists() or not Path(f"{bam}.bai").exists():
+            self.skipTest("vendored indexed samtools BAM fixture is unavailable")
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                slice_bam = tmp_path / "slice.bam"
+                r1 = tmp_path / "r1.fastq.gz"
+                r2 = tmp_path / "r2.fastq.gz"
+
+                records = samtools.view_region_native(
+                    str(bam),
+                    "ref1:1-10",
+                    str(slice_bam),
+                    index=f"{bam}.bai",
+                )
+                depth = samtools.depth_native(str(bam), "ref1:1-10", index=f"{bam}.bai")
+                fastq = samtools.fastq_native(
+                    str(bam),
+                    "ref1:1-10",
+                    str(r1),
+                    str(r2),
+                    index=f"{bam}.bai",
+                )
+                slice_size = slice_bam.stat().st_size
+        finally:
+            if getattr(bioscript_package, "_native", None) is native:
+                delattr(bioscript_package, "_native")
+            sys.modules.pop("bioscript._native", None)
+
+        self.assertEqual(records, 0)
+        self.assertGreater(slice_size, 0)
+        self.assertEqual(depth["region_length"], 10.0)
+        self.assertEqual(depth["uncovered_bases"], 0.0)
+        self.assertEqual(depth["min"], 1.0)
+        self.assertEqual(depth["max"], 5.0)
+        self.assertEqual(fastq, {"read1_records": 5, "read2_records": 5, "skipped_records": 0})
 
     def test_bcftools_vcf_helpers(self) -> None:
         self.assertEqual(
