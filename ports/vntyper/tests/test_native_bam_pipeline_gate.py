@@ -125,6 +125,50 @@ class VntyperNativeBamPipelineGateTests(unittest.TestCase):
                 )
                 self.assertEqual(actual_report["metadata"]["detected_assembly"], "hg19")
 
+    def test_native_bam_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification(self):
+        for label, bam in self.prereqs["bam_cases"].items():
+            with self.subTest(label=label):
+                expected_root = data_manifest.EXPECTED_OUTPUT_ROOT / label
+                with (expected_root / "report.json").open("r", encoding="utf-8") as handle:
+                    expected_report = json.load(handle)
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    result = vntyper_external_pipeline.run_bam_pipeline(
+                        bam,
+                        label,
+                        str(Path(tmp) / label),
+                        kestrel_jar=self.prereqs["kestrel_jar"],
+                        muc1_reference=self.prereqs["muc1_reference"],
+                        use_native_samtools=True,
+                        use_native_kestrel=True,
+                        use_native_bcftools=True,
+                    )
+
+                    with open(result.report_json, "r", encoding="utf-8") as handle:
+                        actual_report = json.load(handle)
+                    with open(result.kestrel_tsv, "r", encoding="utf-8", newline="") as handle:
+                        rows = list(csv.DictReader(handle, delimiter="\t"))
+
+                    sorted_vcf = Path(actual_report["input_files"]["sorted_vcf"])
+                    sorted_vcf_index = Path(f"{sorted_vcf}.csi")
+
+                    self.assertTrue(sorted_vcf.exists())
+                    self.assertTrue(sorted_vcf_index.exists())
+
+                self.assertGreater(len(rows), 0)
+                self.assertEqual(
+                    actual_report["algorithm_results"]["kestrel"],
+                    expected_report["algorithm_results"]["kestrel"],
+                )
+                self.assertEqual(set(actual_report), set(expected_report))
+                self.assertEqual(len(actual_report["kestrel_variants"]), len(rows))
+                self.assertEqual(actual_report["screening_summary"], expected_report["screening_summary"])
+                self.assertEqual(
+                    actual_report["metadata"]["alignment_pipeline"],
+                    "native bioscript samtools/kestrel",
+                )
+                self.assertEqual(actual_report["metadata"]["detected_assembly"], "hg19")
+
 
 if __name__ == "__main__":
     unittest.main()

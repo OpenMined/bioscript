@@ -270,12 +270,13 @@ uses those built-in primitives.
 - [ ] Keep VNtyper data/config small and explicit:
       MUC1 coordinates, motif FASTA path, confidence thresholds, report schema,
       and optional validation toggles.
-- [ ] Now that `samtools-rs` and `bcftools-rs` are wired, rerun the BAM path using
+- [x] Now that `samtools-rs` and `bcftools-rs` are wired, rerun the BAM path using
       only BioScript native facades.
-      Verified the opt-in native-Samtools BAM gate with Java Kestrel for the
-      positive and negative fixtures. The all-native path with native Kestrel
-      still needs a bounded parity run; an ad hoc smoke attempt did not finish
-      within about a minute and was stopped.
+      Verified the opt-in native-Samtools BAM gate with Java Kestrel, native
+      Kestrel, and the all-native native-Samtools/native-Kestrel/native-BCFtools
+      path for the representative positive and negative fixtures. The all-native
+      gate now asserts matching Kestrel classification, matching screening
+      summary, and creation of the native BCFtools sorted VCF plus CSI index.
 - [ ] Compare native-facade VNtyper output against expected positive/negative
       fixtures for:
       FASTQ path, BAM path, report JSON, and HTML report.

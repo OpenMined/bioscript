@@ -96,7 +96,7 @@ class VntyperFastqExpectedOutputsTests(unittest.TestCase):
                 max_saved_states=4,
             )
 
-        self.assertIn("##fileformat=VCF4.2\n", vcf)
+        self.assertIn("##fileformat=VCFv4.2\n", vcf)
         self.assertIn("##contig=<ID=chr1,length=16", vcf)
         self.assertIn("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1", vcf)
         self.assertIn("chr1\t5\t.\tC\tT", vcf)

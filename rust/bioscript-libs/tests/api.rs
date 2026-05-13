@@ -406,7 +406,7 @@ fn kestrel_native_adapter_calls_vendored_kestrel_rs_for_sequences() {
     )
     .unwrap();
 
-    assert!(vcf.contains("##fileformat=VCF4.2\n"));
+    assert!(vcf.contains("##fileformat=VCFv4.2\n"));
     assert!(vcf.contains("##contig=<ID=chr1,length=16"));
     assert!(vcf.contains("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1"));
     assert!(vcf.contains("chr1\t5\t.\tC\tT"), "{vcf}");
@@ -440,7 +440,7 @@ fn kestrel_native_adapter_accepts_gzipped_fastq_for_kestrel_rs() {
     )
     .unwrap();
 
-    assert!(vcf.contains("##fileformat=VCF4.2\n"));
+    assert!(vcf.contains("##fileformat=VCFv4.2\n"));
     assert!(vcf.contains("##contig=<ID=chr1,length=16"));
     assert!(vcf.contains("chr1\t5\t.\tC\tT"), "{vcf}");
 }
