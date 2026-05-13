@@ -138,6 +138,10 @@ This is not just a facade spike. The finish line is:
       `ports/vntyper/bioscript/README.md`.
 - [ ] Port the current Python scaffold into actual BioScript syntax supported by
       the runtime.
+      Initial command-planning program exists at
+      `ports/vntyper/bioscript/vntyper.bs` and runs through the CLI. The native
+      execution/post-processing pipeline still needs to move from the Python
+      scaffold into runnable BioScript/runtime-supported calls.
 - [ ] If Monty syntax is missing required features, add the smallest runtime or
       syntax support needed and cover it with runtime tests.
 - [ ] Keep VNtyper-specific constants in one config surface:
@@ -160,8 +164,11 @@ This is not just a facade spike. The finish line is:
       external bcftools when native gates are enabled.
 - [ ] Ensure the FASTQ path can run without Java Kestrel or external bcftools
       when native gates are enabled.
-- [ ] Add one CLI/runtime command that runs the BioScript VNtyper program against
+- [x] Add one CLI/runtime command that runs the BioScript VNtyper program against
       a BAM fixture.
+      `vntyper_bioscript_program_runs_via_cli_and_writes_command_plan` runs
+      `ports/vntyper/bioscript/vntyper.bs` with the representative positive BAM
+      fixture and verifies the generated command plan.
 - [ ] Add one CLI/runtime command that runs the BioScript VNtyper program against
       a FASTQ fixture pair.
 

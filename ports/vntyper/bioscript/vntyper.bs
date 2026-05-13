@@ -1,0 +1,58 @@
+from bioscript import bcftools
+from bioscript import kestrel
+from bioscript import samtools
+
+
+def main():
+    sample = participant_id
+    work_dir = "ports/vntyper/output/" + sample
+    bam_region = "chr1:155158000-155163000"
+    vntr_region = "chr1:155160500-155162000"
+    muc1_reference = (
+        "ports/vntyper/vntyper/reference/"
+        + "All_Pairwise_and_Self_Merged_MUC1_motifs_filtered.fa"
+    )
+
+    sliced_bam = work_dir + "/alignment/" + sample + "_sliced.bam"
+    fastq_1 = work_dir + "/fastq/" + sample + "_R1.fastq.gz"
+    fastq_2 = work_dir + "/fastq/" + sample + "_R2.fastq.gz"
+    kestrel_vcf = work_dir + "/kestrel/output.vcf"
+    kestrel_sam = work_dir + "/kestrel/output.sam"
+    sorted_vcf = work_dir + "/kestrel/output.sorted.vcf.gz"
+
+    report = {
+        "participant_id": sample,
+        "input_file": input_file,
+        "bam_region": bam_region,
+        "vntr_region": vntr_region,
+        "samtools_view_command": samtools.view_region(
+            input_file,
+            bam_region,
+            sliced_bam,
+            False,
+        ),
+        "samtools_index_command": samtools.index(sliced_bam),
+        "samtools_fastq_command": samtools.fastq(
+            sliced_bam,
+            fastq_1,
+            fastq_2,
+        ),
+        "samtools_depth_command": samtools.depth(sliced_bam, vntr_region),
+        "kestrel_command": kestrel.build_command(
+            "ports/vntyper/kestrel/kestrel.jar",
+            muc1_reference,
+            kestrel_vcf,
+            kestrel_sam,
+            work_dir + "/kestrel/tmp",
+            sample,
+            fastq_1,
+            fastq_2,
+        ),
+        "bcftools_sort_command": bcftools.sort(kestrel_vcf, sorted_vcf),
+        "bcftools_index_command": bcftools.index(sorted_vcf),
+    }
+    bioscript.write_tsv(output_file, [report])
+
+
+if __name__ == "__main__":
+    main()

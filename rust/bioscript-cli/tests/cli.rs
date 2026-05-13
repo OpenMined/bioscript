@@ -147,6 +147,41 @@ fn lookup_variant_details_returns_counts_and_decision_fields() {
 }
 
 #[test]
+fn vntyper_bioscript_program_runs_via_cli_and_writes_command_plan() {
+    let root = repo_root();
+    let output_path = root.join("target/vntyper-bs-plan.tsv");
+    if output_path.exists() {
+        fs::remove_file(&output_path).unwrap();
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("ports/vntyper/test-data/example_6449_hg19_subset.bam")
+        .arg("--output-file")
+        .arg("target/vntyper-bs-plan.tsv")
+        .arg("--participant-id")
+        .arg("positive")
+        .arg("ports/vntyper/bioscript/vntyper.bs")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let plan = fs::read_to_string(&output_path).unwrap();
+    assert!(plan.contains("participant_id"));
+    assert!(plan.contains("positive"));
+    assert!(plan.contains("samtools_view_command"));
+    assert!(plan.contains("chr1:155158000-155163000"));
+    assert!(plan.contains("kestrel_command"));
+    assert!(plan.contains("bcftools_sort_command"));
+    fs::remove_file(output_path).unwrap();
+}
+
+#[test]
 fn inspect_subcommand_reports_detected_vendor_and_platform() {
     let root = repo_root();
     let path = root.join("rust/bioscript-formats/tests/fixtures/ancestrydna_v2_sample.txt");
