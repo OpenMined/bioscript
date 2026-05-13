@@ -200,6 +200,60 @@ fn vcf_missing_locus_defaults_to_imputed_reference_with_sex_aware_ploidy() {
 }
 
 #[test]
+fn indexed_vcf_missing_deletion_imputes_reference_when_region_has_unrelated_record() {
+    let dir = temp_dir("vcf-indexed-impute-deletion");
+    let path = dir.join("sample.vcf.gz");
+    let index_path = dir.join("sample.vcf.gz.tbi");
+    let vcf_text = "##fileformat=VCFv4.2\n\
+         ##reference=GRCh37\n\
+         ##contig=<ID=22,length=51304566>\n\
+         ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
+         #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+         22\t36662046\tunrelated\tA\tG\t.\tPASS\t.\tGT\t0/1\n";
+
+    let mut bgzf_writer = noodles::bgzf::io::Writer::new(Vec::new());
+    bgzf_writer.write_all(vcf_text.as_bytes()).unwrap();
+    let bgzf_vcf = bgzf_writer.finish().unwrap();
+    let tbi = alignment::generate_vcf_tbi_bytes(&bgzf_vcf).unwrap();
+    fs::write(&path, bgzf_vcf).unwrap();
+    fs::write(&index_path, tbi).unwrap();
+
+    let store = GenotypeStore::from_file_with_options(
+        &path,
+        &GenotypeLoadOptions {
+            input_index: Some(index_path),
+            assembly: Some(bioscript_core::Assembly::Grch37),
+            impute_vcf_missing_as_reference: true,
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
+
+    let observation = store
+        .lookup_variant(&VariantSpec {
+            rsids: vec!["rs71785313".to_owned()],
+            grch37: Some(bioscript_core::GenomicLocus {
+                chrom: "22".to_owned(),
+                start: 36_662_046,
+                end: 36_662_051,
+            }),
+            reference: Some("TTATAA".to_owned()),
+            alternate: Some("<DEL:6>".to_owned()),
+            kind: Some(VariantKind::Deletion),
+            deletion_length: Some(6),
+            ..VariantSpec::default()
+        })
+        .unwrap();
+
+    assert_eq!(observation.genotype.as_deref(), Some("II"));
+    assert!(
+        observation.evidence[0].contains("imputed reference genotype"),
+        "{:?}",
+        observation.evidence
+    );
+}
+
+#[test]
 fn vcf_locus_lookup_handles_deletion_insertion_and_unresolved_evidence() {
     let dir = temp_dir("vcf-indel-locus");
     let path = dir.join("sample.hg19.vcf");

@@ -31,7 +31,10 @@ use cram_backend::{
     detect_reference_assembly, first_base, indel_at_anchor, infer_copy_number_genotype,
     infer_snp_genotype, len_as_i64, normalize_pileup_base, record_overlaps_locus, spans_position,
 };
-pub use cram_backend::{observe_cram_indel_with_reader, observe_cram_snp_with_reader};
+pub use cram_backend::{
+    observe_cram_deletion_with_reader, observe_cram_indel_with_reader,
+    observe_cram_snp_with_reader,
+};
 pub(crate) use delimited::{
     COMMENT_PREFIXES, DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row,
 };

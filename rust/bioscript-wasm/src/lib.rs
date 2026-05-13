@@ -15,6 +15,7 @@
 //! - Indel / deletion observations on CRAM.
 
 mod inspect_api;
+mod index_api;
 mod js_reader;
 mod lookup_api;
 mod package_api;
@@ -22,6 +23,11 @@ mod report_api;
 mod variant_yaml;
 
 pub use inspect_api::{inspect_bytes, resolve_remote_resource_text};
+pub use index_api::{
+    generate_bam_bai, generate_bam_bai_from_reader, generate_cram_crai,
+    generate_cram_crai_from_reader, generate_fasta_fai, generate_fasta_fai_from_reader,
+    generate_vcf_tbi,
+};
 pub use lookup_api::{
     lookup_cram_variants, lookup_genotype_bytes_rsids, lookup_genotype_bytes_variants,
     lookup_vcf_variants,

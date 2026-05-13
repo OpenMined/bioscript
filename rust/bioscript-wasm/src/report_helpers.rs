@@ -498,3 +498,64 @@ fn sex_detection_confidence_name(value: SexDetectionConfidence) -> &'static str 
 pub(super) fn parse_optional_u32(value: Option<&String>) -> Option<u32> {
     value.and_then(|value| value.parse::<u32>().ok())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_long_deletion_reference_tokens_as_insertion_deletion_copy_number() {
+        assert_eq!(
+            normalize_app_genotype(
+                "II",
+                "TTATAA",
+                "<DEL:6>",
+                Some(VariantKind::Deletion),
+                "22",
+                None,
+            ),
+            ("0/0".to_owned(), "hom_ref".to_owned())
+        );
+        assert_eq!(
+            normalize_app_genotype(
+                "ID",
+                "TTATAA",
+                "<DEL:6>",
+                Some(VariantKind::Deletion),
+                "22",
+                None,
+            ),
+            ("0/1".to_owned(), "het".to_owned())
+        );
+    }
+
+    #[test]
+    fn displays_cram_long_deletion_copy_number_as_insertion_deletion_tokens() {
+        let manifest = VariantManifest {
+            path: PathBuf::from("rs71785313.yaml"),
+            name: "APOL1_G2".to_owned(),
+            tags: Vec::new(),
+            spec: VariantSpec {
+                reference: Some("TTATAA".to_owned()),
+                alternate: Some("<DEL:6>".to_owned()),
+                kind: Some(VariantKind::Deletion),
+                ..VariantSpec::default()
+            },
+        };
+        let mut row = BTreeMap::new();
+        row.insert("backend".to_owned(), "cram".to_owned());
+
+        assert_eq!(
+            deletion_copy_number_display(&row, &manifest, Some(39), Some(0)).as_deref(),
+            Some("II")
+        );
+        assert_eq!(
+            deletion_copy_number_display(&row, &manifest, Some(39), Some(39)).as_deref(),
+            Some("DD")
+        );
+        assert_eq!(
+            deletion_copy_number_display(&row, &manifest, Some(40), Some(20)).as_deref(),
+            Some("DI")
+        );
+    }
+}

@@ -16,8 +16,8 @@ mod prepare;
 pub use genotype::{
     BackendCapabilities, GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind,
     choose_variant_locus_for_assembly, imputed_reference_observation,
-    observe_cram_indel_with_reader, observe_cram_snp_with_reader, observe_vcf_snp_with_reader,
-    observe_vcf_variant_with_reader,
+    observe_cram_deletion_with_reader, observe_cram_indel_with_reader,
+    observe_cram_snp_with_reader, observe_vcf_snp_with_reader, observe_vcf_variant_with_reader,
 };
 pub use inspect::{
     DetectedKind, DetectionConfidence, FileContainer, FileInspection, InferredSex, InspectOptions,
