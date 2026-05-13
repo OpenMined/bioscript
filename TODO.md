@@ -189,6 +189,11 @@ uses those built-in primitives.
       `samtools` facades where that makes scripts more recognizable.
 - [ ] Use `htslib-rs` as the shared backend for BAM/CRAM/VCF/FASTA primitives
       once vendored.
+      FASTA access in `bioscript-libs` `pyfaidx` now builds and queries
+      through `htslib_rs::faidx_compat`; Samtools/BCFtools already enter via
+      their vendored engine crates. This remains open until the pysam-style
+      BAM/CRAM fetch path is also routed through the shared HTS layer or a
+      deliberate exception is documented.
 - [ ] Add parity tests from focused upstream `pysam` and `pyfaidx` cases, not
       the full upstream test suites.
 
