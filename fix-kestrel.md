@@ -408,6 +408,27 @@ unit of traversal. Candidates:
   needed for that test are: J-R reference (already in /tmp/jr.fa) and
   the post-kmercount-filter count map for the J-R region.
 
+### `region_sequence_limit` experiments
+
+Added two diagnostic knobs that change the loose default
+`region_len + peak_scan + k_size`:
+
+- `KESTREL_MED_SEQ_LIMIT=1` (limit = `region_len + peak_scan`): 6818
+  records (extra=2481, missing=560, ins=409 vs Java's 390 — closest yet
+  to Java's insertion count). Insertions drop from 1300 to 409 with
+  this knob.
+- `KESTREL_TIGHT_SEQ_LIMIT=1` (limit = `region_len`): 6532 records
+  (extra=2185, missing=550, ins=0). Insertions vanish entirely.
+
+So Java's natural addBase-driven exit appears to cap consensus length
+near `region_len + peak_scan` for this dataset. The default
+`region_len + peak_scan + k_size` ceiling is too loose by ~20 bases and
+that extra rope is exactly what fuels Rust's deletion-like haplotype
+traversal through MUC1 repeats. These knobs are off by default so the
+existing N-S regression test (`graph_haplotypes_recovers_reduced_vntyper_ns_insertion_branch`)
+remains in scope; once the root cause of the over-extension is found
+they should become unnecessary.
+
 Current observed behavior:
 
 - Reduced static regression at `10/15`: Rust emits the expected insertion
