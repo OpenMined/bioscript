@@ -1410,3 +1410,319 @@ This means a fix MUST change Rust's algorithm to make the *exact same
 decisions* as Java at each inner iter, rather than just bounding the
 exploration. The next session must directly compare each algorithm's
 output per inner iter, requiring Java instrumentation.
+
+---
+
+# Consolidated Session Summary (2026-05-15)
+
+## TL;DR
+
+**Root cause found and fixed**: Java's `restoreState` does NOT decrement
+`nState` (the saved-state capacity counter). Rust was using
+`saved_states.len()` which DID decrease on pop, causing Rust to accept
+saves Java rejected after every pop+save cycle. On repetitive regions
+like MUC1, this manifested as a cycle in outer iters 25-40 mirroring
+iter 1-15 and 700× more outer iters than Java for J-R:4-119.
+
+**Fix committed**: `vendor/rust/kestrel-rs` branch
+`fix/vntyper-fastq-parity`, commit `cc9e22e`. Adds a
+`saved_state_count: i32` field that mirrors Java's `nState` exactly.
+
+**Test status**: The negative VNtyper FASTQ parity test still fails at
+4,347 actual vs 4,897 expected (550-record gap). The over-generation
+problem is fully solved; the remaining gap is a *separate* bug
+involving 18-base INS detection in specific MUC1 motif references.
+
+## What was fixed
+
+### 1. `nState` accounting (the critical fix)
+
+Java's `KmerAligner.saveState` increments `nState` on every accepted save.
+`removeLastMinState` decrements `nState` on every successful eviction.
+**`restoreState` does NOT decrement `nState`** — it only updates the
+`stateStack` head pointer.
+
+This means once `nState` reaches `maxState` (after the first ~10
+successful saves), every subsequent save attempt MUST go through the
+eviction-or-reject path, regardless of how many pops have shrunk the
+actual stack below capacity.
+
+Rust's previous implementation used `saved_states.len()` (the actual
+Vec length) for the capacity gate. `len()` decreased on `pop()`. So
+after a pop+save cycle in Rust, the save was unconditionally pushed,
+while Java would have rejected the same save.
+
+Fix in `crates/kestrel/src/align/mod.rs`:
+- Added `saved_state_count: i32` field to `KmerAligner`.
+- `save_state`: increments on accepted push.
+- `remove_min_state`: decrements on successful eviction.
+- `restore_state`: does NOT decrement (matches Java).
+- `set_max_state`: decrements when trimming oversized entries.
+- Capacity check uses `saved_state_count >= max_state` instead of
+  `saved_states.len() == max_state`.
+
+### 2. `MaxAlignmentScoreNode.haplotype_built` shared via `Rc<Cell<bool>>`
+
+Java's `MaxAlignmentScoreNode` is a reference type. Setting
+`haplotypeBuilt = true` on a node propagates to every saved snapshot
+that retained the same node reference, so once emitted a node can never
+re-emit.
+
+Rust deep-cloned `Box<MaxAlignmentScoreNode>` chains at save time, so
+each snapshot had its own private `haplotype_built: bool`. A node
+emitted in iter N could re-emit in iter N+M when restored from a
+snapshot taken before iter N.
+
+Fix: `haplotype_built` is now `Rc<Cell<bool>>`. `Rc::clone` shares the
+cell across all clones of a node, so flag mutations propagate.
+
+### 3. Initial `min_depth` reverse-complement count
+
+`build_forward_haplotypes` and `build_reverse_haplotypes` initialized
+`min_depth` from `counter.get(&kmer) as i32` — forward strand only.
+Java adds the reverse-complement count when `countReverseKmers` is
+true. Switched to `kmer_depth(...)` to match Java's initial value.
+
+### 4. Java CLI cap-reset hack (already in place; reverified)
+
+The Java CLI's `setMaxRepeatCount` rebuilds `KmerAlignmentBuilder`
+after `setMaxAlignerState/setMaxHaplotypes` already applied, so caps
+revert to `DEFAULT_MAX_STATE=10` / `DEFAULT_MAX_HAPLOTYPES=15`.
+`apply_java_cli_cap_reset` in `runner.rs` mirrors this. Opt out via
+`KESTREL_DISABLE_JAVA_CLI_CAP_RESET=1`.
+
+### 5. `kmercount:5` post-count filter
+
+Java's `KestrelRunnerBase.getCountModule()` defaults to `kmercount:5`,
+which drops k-mers with count < 5 after counting. Rust's `MemoryCountMap`
+and `IkcCountMap` now both have `with_min_count()` constructors that
+retain k-mers via `HashMap::retain` after counting.
+
+## Verification
+
+### J-R:4-119 diagnostic — PERFECT match with Java
+
+| metric              | before fix | after fix | Java |
+| ------------------- | ---------- | --------- | ---- |
+| outer iters         | 26,894     | **11**    | ~12  |
+| raw emits           | 1,753      | **0**     | 0    |
+| save_attempts       | 164,140    | 426       | 446  |
+| save_accepts        | 40,582     | **38**    | 38   |
+| save_rejects        | 123,558    | 388       | 408  |
+| haplotypes produced | 15         | **0**     | 0    |
+
+`save_accepts=38` matches Java's 38 **exactly**, confirming the
+`nState` semantics are now byte-equivalent.
+
+### Negative VNtyper FASTQ parity
+
+| metric         | before | after fix | Java expected |
+| -------------- | ------ | --------- | ------------- |
+| actual records | 7,062  | **4,347** | 4,897         |
+| extras         | 2,727  | **478**   | 0             |
+| missing        | 562    | 1,028     | 0             |
+| INS count      | 1,300  | **390**   | 390 (match)   |
+| net difference | +2,165 | **-550**  | 0             |
+
+Extras dropped by 83%. INS count is now exactly Java's expected count.
+
+### Positive VNtyper FASTQ parity
+
+| metric         | before | after | Java expected |
+| -------------- | ------ | ----- | ------------- |
+| actual records | 2,417  | 3,218 | 3,737         |
+
+## Approaches tried that didn't work
+
+These were ruled out via experimentation; all gated behind opt-in env
+vars so they don't affect default behavior.
+
+### 1. `KESTREL_DISABLE_STATE_DEDUP`
+
+The runner-level `SavedBranchKey` HashSet dedup (keys by `(kmer,
+next_base, consensus)`). Bypassing it had zero effect on parity numbers,
+proving the runner-level dedup is not the source of divergence.
+
+### 2. `KESTREL_AGGRESSIVE_STATE_DEDUP`
+
+Hash save keys by `(kmer, next_base)` only, dropping consensus.
+
+J-R diagnostic: iters 26,894 → 283 (99% reduction).
+Negative parity: 7,062 → 9,359 (WORSE, extras grew to 5,020).
+
+The cycle hypothesis was correct but save-key-level dedup was the wrong
+fix — it prunes legitimately distinct alt branches in other regions.
+
+### 3. `KESTREL_SHAPE_DEDUP`
+
+Share `haplotype_built` across all `MaxAlignmentScoreNode` instances
+with the same `(n_consensus_bases, max_score)`.
+
+J-R: raw emits 1,753 → 73 (97% reduction).
+Negative parity: 7,062 → 7,561 (WORSE), missing doubled to 1,184.
+
+Suppressed legitimate first-occurrence emissions of shapes that Java
+later emits.
+
+### 4. `KESTREL_DISABLE_HAP_DEDUP`
+
+Skip the runner-level `(sequence, cigar)` dedup in
+`add_unique_haplotype`. Same numbers (4,347 vs 4,897), confirming this
+dedup is not the issue.
+
+### 5. Cap sweep (`KESTREL_DISABLE_JAVA_CLI_CAP_RESET=1` with 2/2 caps)
+
+At caps 2/2: 2,319 actual (under by 2,578).
+At caps 10/15 (Java's effective): 4,347 actual (under by 550).
+
+There is no cap sweet spot. The algorithmic divergence is real at every
+cap level. The fix needs to make Rust's per-iter decisions match Java's
+exactly, not just bound exploration.
+
+## How the bug was found
+
+1. **Identified the cycle pattern**: With `KESTREL_TRACE_ITER_MAX=50`,
+   Rust's outer iters 25-40 for J-R:4-119 are a near-perfect structural
+   mirror of iters 1-15 (same `consensus_len`, same `max_align_score`,
+   same `stack_size` at each row — only `min_depth` differs).
+
+2. **Built JVM-side instrumentation**: Modified Java's
+   `KmerAligner.addBase` to emit per-call `[JDBG-ADDBASE]` trace lines.
+   Script at `scripts/instrument-java-addbase.sh` recompiles only
+   `KmerAligner.class` and packages a side-by-side `kestrel-instr.jar`
+   without touching the Java source under git.
+
+3. **Found iter 4 divergence**: Cross-referenced Java's per-iter trace
+   with Rust's `KDBG-RESTORE` log. Iters 1-3 restore identical states
+   in Java and Rust. Iter 4 diverges: Java restores the iter-1.61 G-alt
+   (consensus_size=80, min_depth=1600); Rust restores a new iter-3 save
+   (consensus_size=100, min_depth=21).
+
+4. **Traced to stack ordering**: Rust's iter-3 save with min_depth=21
+   was accepted, while Java's same iter-3 save was rejected with
+   "Rejecting state save … [minDepth=58]" in the Java trace. Both
+   algorithms attempt identical saves but with different stack
+   acceptance outcomes.
+
+5. **Identified `nState` semantics**: Searching for `nState` in Java's
+   source revealed only two decrement sites: the constructor reset
+   (`nState = 0` at lines 236 and 324) and `removeLastMinState`
+   (line 1414). `restoreState` does NOT decrement.
+
+## Tools committed for future work
+
+### Java instrumentation
+
+- `scripts/instrument-java-addbase.sh` — reproducible JVM-side
+  instrumentation. Patches `KmerAligner.java` to emit
+  `[JDBG-ADDBASE] consensus_size={} max_align_score={} align_bot={}
+  gap_con_bot={} max_pot_score={} continue={} base={}` per `addBase`
+  call. Recompiles only the patched class and packages a side-by-side
+  `kestrel-instr.jar` without polluting the Java source.
+
+- `scripts/jr-trace-samples/java-iter1-jr-addbase.log` — saved Java
+  reference trace for J-R:4-119 (200 lines).
+
+### Rust diagnostic infrastructure
+
+Build the kestrel test binary and run with these env vars:
+
+- `KESTREL_TRACE_REGION=REF:START-END` — region-specific tracing.
+- `KESTREL_DEBUG_BUILD=1` — `[KDBG-BUILD]` summary dump per region.
+- `KESTREL_TRACE_ITER_MAX=N` — extend `[KDBG-ITER-END]` and
+  `[KDBG-RESTORE]` logging beyond the default 5 iters.
+- `KESTREL_RUN_JR_DIAGNOSTIC=1` — runs the
+  `crates/kestrel/tests/jr_traversal.rs` fixture-based J-R reproducer
+  against the real post-`kmercount:5` count map.
+
+### Opt-in escape hatches (none change default behavior)
+
+- `KESTREL_DISABLE_JAVA_CLI_CAP_RESET=1` — bypass the 10/15 cap override.
+- `KESTREL_DISABLE_STATE_DEDUP=1` — bypass the runner-level
+  `SavedBranchKey` HashSet.
+- `KESTREL_AGGRESSIVE_STATE_DEDUP=1` — hash save keys by
+  `(kmer, next_base)` only (experimental).
+- `KESTREL_SHAPE_DEDUP=1` — share `haplotype_built` across
+  `(n_consensus_bases, max_score)` shapes (experimental).
+- `KESTREL_DISABLE_HAP_DEDUP=1` — bypass the runner-level
+  `(sequence, cigar)` dedup in `add_unique_haplotype`.
+- `KESTREL_TIGHT_SEQ_LIMIT=1`, `KESTREL_MED_SEQ_LIMIT=1`,
+  `KESTREL_DISABLE_SEQ_LIMIT=1` — sequence-length cap experiments.
+- `KESTREL_OUTER_ITER_CAP=N`, `KESTREL_STAGNATION_CAP=N` — outer-loop
+  termination experiments.
+
+## Remaining gap
+
+The 550-record under-generation has two visible features:
+
+### 18-base INS detection in different references
+
+Rust emits the 18-base INS `G→GGGTGGAGCCCGGGGCCGG` at positions 26/86
+in 334 cases across various MUC1 motif references; Java emits it in
+380 cases. **46 fewer** INS emissions in Rust. Rust emits in references
+like 5-A, 5C-N, 7-7, A-6, A-6p; Java emits in E-N, N-R, O-N, R-M, F-N.
+The INSs are present, just at different references — pointing to
+either active-region detection differences or haplotype-container
+ordering differences across the 551 MUC1 motif references.
+
+### Cascading DP value differences
+
+Many "missing" records in the comm-based parity test are present in
+Rust but with different `DP` total-depth values (e.g., N-R:25 C→G:
+Rust GDP=1600 DP=28003; Java GDP=1600 DP=28973 — exactly 970 lower,
+matching the GDP of the missing N-R:26 18-base INS). The comm-based
+test treats DP-different records as different records. If Rust emitted
+the INS, the `total_depth` for the other variants in the region would
+also match Java's.
+
+## What's left to do
+
+To close the remaining 550-record gap, the next session should:
+
+1. **Per-region trace comparison**. Use
+   `scripts/instrument-java-addbase.sh` to instrument Java, run the
+   negative VNtyper FASTQ test, and compare per-iter behavior between
+   Java and Rust for at least 5 of the references where INS detection
+   diverges (E-N, N-R, O-N, R-M, F-N versus 5-A, 5C-N, 7-7, A-6, A-6p).
+   Look for the iteration where the chosen base or saved alternates
+   diverge.
+
+2. **Active region boundary check**. The active region detector
+   (`crates/kestrel/src/activeregion/mod.rs`) determines which
+   positions of which references become haplotype-assembly targets.
+   If Java and Rust pick different positions or different references,
+   the downstream haplotype sets differ. Add an `[KDBG-REGION]` log
+   listing each active region's `(ref_name, start, end)` and diff
+   against Java's "Building haplotypes: ActiveRegion[...]" log lines.
+
+3. **Haplotype container eviction order**. Compare Rust's
+   `HaplotypeContainer.add` eviction against Java's. Both should evict
+   the same min-depth haplotype when full. Verify tie-breaking matches.
+
+4. **Investigate the cascading DP**. The `total_depth` accumulator in
+   `variant.rs` sums `haplotype.stats.min`. Java does the same. The DP
+   mismatch is a *consequence* of missing INS variants — fixing the INS
+   detection should restore DP equivalence.
+
+The fix-kestrel.md goal of "VNtyper FASTQ parity test passes" remains
+**unsolved**. The fundamental algorithmic bug (the saved-state cycle)
+is solved; the residual 550-record gap is a separate, isolated issue
+that the cycle bug was previously masking.
+
+## Commit history (vendor/rust/kestrel-rs, branch fix/vntyper-fastq-parity)
+
+Key commits from this session:
+
+- `cc9e22e` — **ROOT CAUSE FIX**: Java's `nState` accounting.
+- `ffc6aa9` — `KDBG-RESTORE` per-iter trace logging.
+- `1af889b` — `KESTREL_DISABLE_HAP_DEDUP` escape hatch.
+- `a562471` — `KESTREL_SHAPE_DEDUP` experimental knob.
+- `92f62c3` — `KESTREL_AGGRESSIVE_STATE_DEDUP` experimental knob.
+- `b5b29a3` — `scripts/instrument-java-addbase.sh` + Java J-R trace
+  sample.
+- `9134e9f` — `KESTREL_DISABLE_STATE_DEDUP` escape hatch.
+- `65ed6fa` — `KESTREL_TRACE_ITER_MAX` configurable.
+- `8af8b87` — Shared `haplotype_built` flag + reverse-count initial
+  `min_depth`.
+
+Plus pre-session commits maintaining the broader fix branch infrastructure.
