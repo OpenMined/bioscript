@@ -480,7 +480,11 @@ This is not just a facade spike. The finish line is:
       `HaplotypeContainer`; the current Rust runner still uses
       `read_backed_haplotypes(...)` to derive candidate consensus sequences
       from reads before alignment. That algorithmic gap is the next likely
-      source of the remaining VCF depth/record differences.
+      source of the remaining VCF depth/record differences. An experimental
+      forward graph traversal in the Rust runner passed the normal Kestrel
+      crate tests but was not kept because the VNtyper negative fixture still
+      failed and regressed the direct parity count to 1656 Rust records vs 4897
+      Java records after about 80s.
       Diagnostic re-run of the native negative FASTQ output found 42 rows with
       `passes_vntyper_filters=True`; the highest-depth false positives are
       absent from the Java expected TSV, e.g. `5C-M:61 T>TG` and `B-M:59 G>GT`
