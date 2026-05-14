@@ -174,14 +174,166 @@ while incorrectly merging Java's two `N-S` active regions into one large region.
 The new active-region regression reproduces that missing Java behavior directly
 from a reduced `N-S` profile.
 
-## Current Blocker
+## 2026-05-15 Update: Empirical confirmation of cap-reset and traversal divergence
+
+### Java cap-reset bug confirmed empirically
+Running the Java jar (`vendor/rust/kestrel-rs/kestrel/lib/kestrel.jar`) against
+the negative FASTQ with three different cap settings produces **byte-identical**
+output:
+
+```sh
+java -jar kestrel.jar -k 20 --maxalignstates 2  --maxhapstates 2  ...   # md5 cb0ed3...
+java -jar kestrel.jar -k 20 --maxalignstates 10 --maxhapstates 15 ...   # md5 cb0ed3...
+java -jar kestrel.jar -k 20 --maxalignstates 40 --maxhapstates 40 ...   # md5 cb0ed3...
+```
+
+All three produce the same 4897 records that the expected fixture contains
+(after sorting). This proves Java's CLI silently runs at `DEFAULT_MAX_STATE=10`
+/ `DEFAULT_MAX_HAPLOTYPES=15` regardless of the flags, because
+`ActiveRegionDetector.setMaxRepeatCount(int)` calls `initAlignmentBuilder()`
+which constructs a fresh `KmerAlignmentBuilder` with default caps, throwing
+away the user-supplied `setMaxAlignerState` / `setMaxHaplotypes`.
+
+So the parity test's `2/2` defaults are wrong — Java's expected output was
+generated at effective `10/15`.
+
+### Even at matching 10/15 caps, Rust still emits ~70 % more records
+Running Rust at `KESTREL_VNTYPER_MAX_ALIGNER_STATES=10` /
+`KESTREL_VNTYPER_MAX_HAPLOTYPES=15` (negative case, release mode, ~8.5 min):
+
+- Rust: 8269 records vs Java 4897 (shared 4272, missing 625, extra 3997).
+- Rust per-record type distribution skews heavily toward insertions:
+  `del:112, ins:2589, snp:5568` vs Java `del:75, ins:390, snp:4432`.
+- Rust GDP bucket distribution has tons of low-GDP records (`1:679, 2-5:620,
+  6-20:747, 21-100:529, >100:5694`) while Java has almost everything in
+  `>100:4878` and only `2:21-100, 8:6-20, 9:21-100, 2:2-5` outside.
+- Active-region detection counts match almost exactly (Rust 980 vs Java 976).
+
+So the parity gap is in **haplotype graph traversal**, not active-region
+detection.
+
+### Per-region haplotype-count distributions diverge sharply
+After instrumenting `[KDBG-BUILD]` in `build_forward_haplotypes` /
+`build_reverse_haplotypes`:
+
+- Java max haplotypes per region = **8**. Distribution peaks at 4 (237 regions)
+  and 7 (201 regions).
+- Rust max haplotypes per region = **15** (the cap). **501 of ~993 regions hit
+  the cap**, generating thousands of unique haplotype keys per region.
+
+For the worst Rust region `J-R:4-119`:
+- Rust: 219,920 outer iters, 4040 raw emits, 3771 unique emitted, 15 in
+  container. Save attempts 1,689,188 / accepts 302,576 / rejects 1,386,612
+  (18 % accept rate).
+- Java (same region): 446 save attempts, 408 rejects, 38 successful saves, 28
+  evictions, **0 haplotypes emitted** ("Built 0 haplotypes (fwd)").
+
+So Java's traversal never produces any trace that reaches `refLength - 1` with
+positive score for this region (the chain stays empty even after 38 restore
+cycles). Rust's traversal reaches end-of-region thousands of times.
+
+### Findings on what is NOT the cause
+- Toggling the runner-side `saved_states: HashSet<SavedBranchKey>` dedup off
+  (`KESTREL_DISABLE_STATE_DEDUP=1`) does not change the result — keys never
+  collide, so the dedup is a no-op for this workload.
+- Toggling `region_sequence_limit` off (`KESTREL_DISABLE_SEQ_LIMIT=1`) makes
+  the divergence **worse** (higher iter counts).
+- `Base::ALL` ordering matches Java's A,C,G,T order.
+- `state_min_depth`, save-rejection logic, `remove_min_state` tie behaviour,
+  `add_base` return semantics, and `record_max_node` all match Java
+  line-for-line.
+- `KmerHashSet::insert` (Rust) and Java `KmerHashSet.add(int[])` both copy
+  k-mers on insertion (no mutable-bucket-history difference).
+- `extend_kmer` / `kUtil.append` produce byte-identical encoded k-mers.
+
+### Active region retry: the missing piece
+
+A direct comparison of active-region traces in `J-R` finally exposed the
+biggest divergence: **Java retries overlapping active regions from
+`refCountIndex + 1` whenever haplotype assembly returns zero (or wildtype-only)
+haplotypes**. Rust's pipeline does not. Java's `KestrelRunner.exec` walks
+`refCountIndex` one base at a time when haps fail; Rust's
+`detect_active_regions` returns a static list and the runner consumes each
+region exactly once.
+
+For the `J-R` reference Java tries five overlapping active regions —
+`4-119`, `11-119`, `18-119`, `19-60`, `41-119` — and rejects the first four
+because their wider spans hit cycles before reaching the right anchor. Only
+`J-R:41-119` succeeds and produces the 8 haplotypes that yield the 9 expected
+VCF records. Rust's detector emits only `J-R:4-119`, accepts it (since
+Rust's traversal happens to reach the right end), produces 15 noisy
+haplotypes whose minimum k-mer depths are low, and emits a different mix of
+VCF records.
+
+So the missing fix is at the detector–runner interface, not (only) inside the
+haplotype graph:
+
+1. Replicate Java's `KestrelRunner.exec` flow: each iteration of the main
+   `REF_SEARCH` loop tries one candidate region. Build haplotypes for it
+   immediately. If the result is empty or wildtype-only, advance
+   `refCountIndex` by 1; otherwise skip past the region. This must be done
+   for both right-anchor and left-anchor scans.
+2. Implement Java's `setMaxRepeatCount`-driven cap reset (already added as
+   `apply_java_cli_cap_reset` in `run_pipeline`).
+3. Keep the haplotype trim, capacity, and dedup logic as-is.
+
+The second-order question — why Rust's `J-R:4-119` produces 15 haplotypes
+where Java's produces 0 — likely resolves on its own once Java-style
+overlap-retry is in place, because Java's narrower retry region
+`J-R:41-119` is exactly the region whose haplotypes match the expected VCF.
+If Rust starts emitting from `J-R:41-119`, the wider `J-R:4-119` is no
+longer the only candidate and the noisy haplotype set should match Java
+without any change to graph traversal.
+
+### Current Blocker
 
 The active-region split is fixed, and a reduced static N-S graph now emits the
-Java insertion haplotype. Full VNtyper FASTQ parity remains blocked because the
-parity harness still runs Rust with `max_haplotypes=2` and
-`max_aligner_states=2`, while Java's CLI path appears to reset those caps to
-builder defaults after `setMaxRepeatCount(0)` reconstructs
-`KmerAlignmentBuilder`.
+Java insertion haplotype. Full VNtyper FASTQ parity remains blocked because:
+
+1. The parity harness used the wrong caps (Java's `2/2` is silently `10/15`).
+   **Fixed** with `apply_java_cli_cap_reset` in `run_pipeline`.
+2. Rust never applied Java's default `kmercount:5` post-count filter. Java's
+   `KestrelRunnerBase.getCountModule()` adds the filter whenever
+   `minKmerCount > 0`; Rust kept the field on the config but never applied
+   it. **Fixed** with `MemoryCountMap::with_min_count` /
+   `IkcCountMap::with_min_count` + `KmerCounter::retain`. Also updated the
+   parity test to use `min_kmer_count=5` (Java's effective default) instead
+   of `1`.
+3. Active-region detector didn't retry overlapping regions when haplotype
+   assembly produced 0 / wildtype-only haplotypes. **Fixed** with
+   `ActiveRegionDetector::detect_from_counts_with`, a callback-driven
+   variant that mirrors Java's `REF_SEARCH` loop.
+
+After these three fixes the negative VNtyper FASTQ case now produces 7062
+records vs Java 4897 (shared 4335, missing 562, extra 2727). That is a 33%
+reduction in extras from the pre-fix state of 4040 extras. The test now
+completes in ~93s instead of ~520s. K-mer counts and per-step choose_branch
+decisions now match Java's trace line-for-line for the J-R:4-119 region.
+
+### Remaining gap (in progress)
+
+Even with the kmercount filter Rust still emits more haplotypes per region
+than Java for wide repetitive regions. Example: 4-5:3-88 — Java assembles 0
+haplotypes and retries with narrower 4-5:48-88; Rust assembles 6 haplotypes
+from 4-5:3-88 and never reaches 4-5:48-88. Save attempts/accepts:
+
+- Java 4-5:3-88: 503 attempts, 466 rejects, 37 accepts (93% reject), 0 haps.
+- Rust 4-5:3-88: 12,745 attempts, 4,454 rejects, 8,291 accepts (35% reject),
+  6 haps.
+
+So Rust's saved-state acceptance rate is still much higher than Java's
+despite matching k-mer counts and matching choose_branch decisions on the
+first ~20 inner iterations. The candidates for the remaining work:
+
+- Investigate whether Rust's saved alignment matrices accumulate scores in
+  a way that lets a later restored state propagate higher scores than
+  Java's, allowing more chain entries to record max alignments.
+- Check whether Rust's haplotype container or `MaxAlignmentScoreNode` chain
+  retains nodes that Java naturally drops via shared-mutable
+  `haplotypeBuilt` flag semantics.
+- Verify whether Java's CountModule has an additional filter (e.g. read
+  length minimum, segment cutoff) that is being applied to FASTQ input
+  before counting.
 
 Current observed behavior:
 
