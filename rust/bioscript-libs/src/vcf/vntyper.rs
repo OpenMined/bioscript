@@ -9,6 +9,12 @@ const ALT_DEPTH_LOW: f64 = 20.0;
 const ALT_DEPTH_MID_LOW: f64 = 21.0;
 const ALT_DEPTH_MID_HIGH: f64 = 100.0;
 const VAR_ACTIVE_REGION_THRESHOLD: f64 = 200.0;
+const MOTIF_POSITION_THRESHOLD: i64 = 60;
+const EXCLUDE_MOTIFS_RIGHT: &[&str] = &["8", "9", "7", "6p", "6"];
+const ALT_FOR_MOTIF_RIGHT_GG: &str = "GG";
+const MOTIFS_FOR_ALT_GG: &[&str] = &[];
+const EXCLUDE_ALTS_COMBINED: &[&str] = &["CCGCC", "CGGCG", "CGGCC"];
+const EXCLUDE_MOTIFS_COMBINED: &[&str] = &["6", "6p", "7"];
 
 pub fn vntyper_kestrel_rows(records: &[VcfRecord]) -> Vec<VcfRecord> {
     records.iter().map(vntyper_kestrel_row).collect()
@@ -115,9 +121,12 @@ fn vntyper_kestrel_row(record: &VcfRecord) -> VcfRecord {
     let confidence = confidence(alt_depth, region_depth, depth_score);
     let depth_confidence_pass = confidence != NEGATIVE_LABEL;
     let alt_filter_pass = alt_filter_pass(row.get("ALT").map(String::as_str), depth_score);
-    let motif_filter_pass = motif_filter_pass(&row, is_valid_frameshift);
+    let motif_filter = motif_filter(&row, is_valid_frameshift);
+    for (key, value) in &motif_filter.annotations {
+        row.insert((*key).to_owned(), value.clone());
+    }
     let passes_vntyper_filters =
-        is_valid_frameshift && depth_confidence_pass && alt_filter_pass && motif_filter_pass;
+        is_valid_frameshift && depth_confidence_pass && alt_filter_pass && motif_filter.passes;
 
     row.insert(
         "Estimated_Depth_AlternateVariant".to_owned(),
@@ -142,7 +151,7 @@ fn vntyper_kestrel_row(record: &VcfRecord) -> VcfRecord {
     row.insert("alt_filter_pass".to_owned(), title_bool(alt_filter_pass));
     row.insert(
         "motif_filter_pass".to_owned(),
-        title_bool(motif_filter_pass),
+        title_bool(motif_filter.passes),
     );
     row.insert(
         "passes_vntyper_filters".to_owned(),
@@ -187,15 +196,56 @@ fn alt_filter_pass(alt: Option<&str>, depth_score: Option<f64>) -> bool {
     alt != Some("GG") || depth_score.is_some_and(|score| score >= LOW_DEPTH_SCORE)
 }
 
-fn motif_filter_pass(row: &VcfRecord, is_valid_frameshift: bool) -> bool {
-    let Some(chrom) = row.get("CHROM") else {
-        return is_valid_frameshift;
-    };
-    let parts = chrom.split('-').collect::<Vec<_>>();
+struct MotifFilter {
+    passes: bool,
+    annotations: Vec<(&'static str, String)>,
+}
+
+fn motif_filter(row: &VcfRecord, is_valid_frameshift: bool) -> MotifFilter {
+    let motifs = row
+        .get("Motifs")
+        .or_else(|| row.get("CHROM"))
+        .cloned()
+        .unwrap_or_default();
+    let parts = motifs.split('-').collect::<Vec<_>>();
     if parts.len() != 2 {
-        return true;
+        return MotifFilter {
+            passes: is_valid_frameshift,
+            annotations: Vec::new(),
+        };
     }
-    is_valid_frameshift
+
+    let pos = parse_row_float(row, "POS") as i64;
+    let is_right_motif = pos >= MOTIF_POSITION_THRESHOLD;
+    let motif = if is_right_motif { parts[0] } else { parts[1] }.to_owned();
+    let alt = row.get("ALT").map(String::as_str).unwrap_or_default();
+
+    let mut passes = is_valid_frameshift;
+    if is_right_motif && EXCLUDE_MOTIFS_RIGHT.contains(&motif.as_str()) {
+        passes = false;
+    }
+    if is_right_motif
+        && alt == ALT_FOR_MOTIF_RIGHT_GG
+        && !MOTIFS_FOR_ALT_GG.contains(&motif.as_str())
+    {
+        passes = false;
+    }
+    if EXCLUDE_ALTS_COMBINED.contains(&alt) {
+        passes = false;
+    }
+    if EXCLUDE_MOTIFS_COMBINED.contains(&motif.as_str()) {
+        passes = false;
+    }
+
+    MotifFilter {
+        passes,
+        annotations: vec![
+            ("Motifs", motifs.clone()),
+            ("Motif_fasta", motifs),
+            ("POS_fasta", pos.to_string()),
+            ("Motif", motif),
+        ],
+    }
 }
 
 fn flags(row: &VcfRecord, depth_score: Option<f64>) -> String {

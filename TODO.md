@@ -254,14 +254,17 @@ This is not just a facade spike. The finish line is:
       motif filtering, final best-call selection, TSV output, report JSON.
       Existing tests cover this in `test_vntyper_port.py`,
       `test_ported_upstream_units.py`, `test_upstream_scoring_parity.py`, and
-      `test_vntyper_report.py`.
+      `test_vntyper_report.py`. Rust-side VNtyper VCF tests now also cover
+      motif annotations and motif exclusion rules used by the Python port.
 - [x] Add Rust tests where the behavior belongs in `bioscript-libs` rather than
       Python scaffolding.
       Candidate areas: VCF parsing, report-neutral call table generation,
       facade error mapping, and native command result shapes.
       Added `rust/bioscript-libs/tests/vntyper_facades.rs` for the native
       Samtools/Kestrel/BCFtools facade path on tiny generated fixtures. Existing
-      `api.rs` tests cover VCF parsing and facade error mapping.
+      `api.rs` tests cover VCF parsing and facade error mapping. Added focused
+      VNtyper motif-filter parity coverage in
+      `rust/bioscript-libs/tests/vntyper_vcf.rs`.
 - [x] Add BioScript runtime tests that execute the VNtyper BioScript program on
       tiny deterministic fixtures.
       Added `rust/bioscript-runtime/tests/vntyper_program.rs`, which executes

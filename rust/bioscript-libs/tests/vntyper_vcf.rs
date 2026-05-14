@@ -63,6 +63,42 @@ fn builds_vntyper_kestrel_call_rows_for_fixture() {
 }
 
 #[test]
+fn annotates_and_filters_vntyper_motif_fields_like_python_port() {
+    let records = parse_kestrel_vcf(concat!(
+        "##fileformat=VCFv4.2\n",
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample\n",
+        "6-M\t61\t.\tG\tGT\t.\tPASS\t.\tGT:GDP:DP\t1:80:1000\n",
+        "5C-M\t61\t.\tG\tGT\t.\tPASS\t.\tGT:GDP:DP\t1:80:1000\n",
+        "5C-M\t61\t.\tG\tGG\t.\tPASS\t.\tGT:GDP:DP\t1:80:1000\n",
+        "5C-M\t61\t.\tG\tGCCGCC\t.\tPASS\t.\tGT:GDP:DP\t1:80:1000\n",
+    ))
+    .unwrap();
+
+    let rows = vntyper_kestrel_rows(&records);
+
+    assert_eq!(rows[0].get("Motif").map(String::as_str), Some("6"));
+    assert_eq!(
+        rows[0].get("motif_filter_pass").map(String::as_str),
+        Some("False")
+    );
+    assert_eq!(
+        rows[1].get("motif_filter_pass").map(String::as_str),
+        Some("True")
+    );
+    assert_eq!(
+        rows[2].get("motif_filter_pass").map(String::as_str),
+        Some("False")
+    );
+    assert_eq!(
+        rows[3].get("motif_filter_pass").map(String::as_str),
+        Some("False")
+    );
+    assert_eq!(rows[1].get("Motifs").map(String::as_str), Some("5C-M"));
+    assert_eq!(rows[1].get("Motif_fasta").map(String::as_str), Some("5C-M"));
+    assert_eq!(rows[1].get("POS_fasta").map(String::as_str), Some("61"));
+}
+
+#[test]
 fn builds_vntyper_report_summary_for_fixture() {
     let records = parse_kestrel_vcf(include_str!(
         "../../../ports/vntyper/tests/fixtures/kestrel_minimal.vcf"
