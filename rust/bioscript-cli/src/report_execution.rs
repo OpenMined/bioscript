@@ -244,3 +244,205 @@ fn parse_analysis_output(
 fn participant_id_from_path(path: &Path) -> String {
     bioscript_reporting::participant_id_from_path(path)
 }
+
+#[cfg(test)]
+mod app_report_execution_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!(
+            "bioscript-report-execution-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn path_and_analysis_output_helpers_normalize_values() {
+        let root = Path::new("/tmp/runtime-root");
+        let nested = root.join("analysis/p1/out.json");
+        assert_eq!(runtime_path_string(root, &nested), "analysis/p1/out.json");
+        assert_eq!(
+            runtime_path_string(root, Path::new("/outside/file.txt")),
+            "/outside/file.txt"
+        );
+        assert_eq!(
+            participant_id_from_path(Path::new("/data/sample.vcf.gz")),
+            "sample"
+        );
+
+        let dir = temp_dir("analysis-output");
+        let json = dir.join("rows.json");
+        fs::write(&json, r#"{"rows":[{"score":2,"label":"ok"}]}"#).unwrap();
+        let (rows, headers) = parse_analysis_output(&json, "json").unwrap();
+        assert_eq!(rows[0]["score"], 2);
+        assert!(headers.contains(&"score".to_owned()));
+
+        let bad = dir.join("bad.json");
+        fs::write(&bad, "{").unwrap();
+        assert!(parse_analysis_output(&bad, "json")
+            .unwrap_err()
+            .contains("failed to parse analysis output"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn run_interpretations_rejects_unsupported_kinds_before_runtime() {
+        let dir = temp_dir("unsupported-kind");
+        let manifest = dir.join("panel.yaml");
+        let input = dir.join("input.txt");
+        fs::write(&input, "rsid\tgenotype\nrs1\tA/G\n").unwrap();
+        let interpretation = PanelInterpretation {
+            id: "not-bioscript".to_owned(),
+            label: Some("Not BioScript".to_owned()),
+            kind: "python".to_owned(),
+            path: "analysis.py".to_owned(),
+            output_format: Some("json".to_owned()),
+            derived_from: Vec::new(),
+            emits: Vec::new(),
+            logic: None,
+        };
+        let loader = GenotypeLoadOptions::default();
+        let options = ReportAnalysisOptions {
+            runtime_root: &dir,
+            input_file: &input,
+            participant_id: "p1",
+            loader: &loader,
+            output_dir: &dir,
+            observation_rows: &[],
+            filters: &[],
+            max_duration_ms: 10,
+        };
+
+        let err =
+            run_interpretations_for_report(&manifest, "assay", &[interpretation], &options)
+                .unwrap_err();
+        assert!(err.contains("unsupported kind"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn run_manifest_rows_for_report_reads_text_input_and_variant_manifest() {
+        let dir = temp_dir("manifest-rows");
+        let manifest = dir.join("variant.yaml");
+        fs::write(
+            &manifest,
+            r#"
+schema: bioscript:variant:1.0
+version: "1.0"
+name: rs1
+gene: ABC
+identifiers:
+  rsids: [rs1]
+coordinates:
+  grch38:
+    chrom: "1"
+    pos: 100
+alleles:
+  kind: snv
+  ref: A
+  alts: [G]
+"#,
+        )
+        .unwrap();
+        let input = dir.join("sample.txt");
+        fs::write(&input, "rsid\tgenotype\nrs1\tA/G\n").unwrap();
+        let loader = GenotypeLoadOptions {
+            format: Some(GenotypeSourceFormat::Text),
+            ..GenotypeLoadOptions::default()
+        };
+
+        let rows =
+            run_manifest_rows_for_report(&dir, &manifest, &input, "p1", &loader, &[]).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["participant_id"], "p1");
+        assert_eq!(rows[0]["matched_rsid"], "rs1");
+        assert_eq!(rows[0]["genotype"], "AG");
+
+        let missing_input = dir.join("missing.txt");
+        assert!(run_manifest_rows_for_report(
+            &dir,
+            &manifest,
+            &missing_input,
+            "p1",
+            &loader,
+            &[],
+        )
+        .unwrap_err()
+        .contains("No such file"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn run_interpretations_executes_bioscript_analysis_and_builds_json_output() {
+        let dir = temp_dir("analysis-success");
+        let manifest = dir.join("assay.yaml");
+        let script = dir.join("analysis.bs");
+        let input = dir.join("sample.txt");
+        let output = dir.join("out");
+        fs::write(&input, "rsid\tgenotype\nrs1\tA/G\n").unwrap();
+        fs::write(
+            &script,
+            r#"
+def main():
+    bioscript.write_tsv(output_file, [
+        {"participant": participant_id, "score": 7, "source": input_file, "observations": observations_file}
+    ])
+
+if __name__ == "__main__":
+    main()
+"#,
+        )
+        .unwrap();
+        let interpretation = PanelInterpretation {
+            id: "score".to_owned(),
+            label: Some("Score".to_owned()),
+            kind: "bioscript".to_owned(),
+            path: "analysis.bs".to_owned(),
+            output_format: Some("tsv".to_owned()),
+            derived_from: Vec::new(),
+            emits: Vec::new(),
+            logic: None,
+        };
+        let rows = [BTreeMap::from([
+            ("participant_id".to_owned(), "sample".to_owned()),
+            ("matched_rsid".to_owned(), "rs1".to_owned()),
+            ("genotype".to_owned(), "AG".to_owned()),
+        ])];
+        let loader = GenotypeLoadOptions::default();
+        let options = ReportAnalysisOptions {
+            runtime_root: &dir,
+            input_file: &input,
+            participant_id: "sample",
+            loader: &loader,
+            output_dir: &output,
+            observation_rows: &rows,
+            filters: &[],
+            max_duration_ms: 1000,
+        };
+
+        let outputs =
+            run_interpretations_for_report(&manifest, "assay-one", &[interpretation], &options)
+                .unwrap();
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0]["assay_id"], "assay-one");
+        assert_eq!(outputs[0]["participant_id"], "sample");
+        assert_eq!(outputs[0]["rows"][0]["score"], "7");
+        let headers = outputs[0]["row_headers"].as_array().unwrap();
+        assert!(headers.contains(&serde_json::Value::String("participant".to_owned())));
+        assert!(output
+            .join("analysis/sample/score.observations.tsv")
+            .exists());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

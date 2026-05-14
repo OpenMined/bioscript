@@ -144,3 +144,81 @@ fn validate_snv_alleles(kind: &str, reference: &str, alts: &[String], issues: &m
     }
 }
 
+#[cfg(test)]
+mod allele_validator_tests {
+    use super::*;
+
+    fn yaml(text: &str) -> Value {
+        serde_yaml::from_str(text).unwrap()
+    }
+
+    fn issue_paths(issues: &[Issue]) -> Vec<String> {
+        issues.iter().map(|issue| issue.path.clone()).collect()
+    }
+
+    #[test]
+    fn allele_validator_reports_required_shape_and_sequence_errors() {
+        let mut issues = Vec::new();
+        validate_alleles(&yaml("{}"), &mut issues);
+        let paths = issue_paths(&issues);
+        assert!(paths.contains(&"alleles".to_owned()));
+        assert!(paths.contains(&"alleles.kind".to_owned()));
+        assert!(paths.contains(&"alleles.ref".to_owned()));
+        assert!(paths.contains(&"alleles.alts".to_owned()));
+
+        let mut issues = Vec::new();
+        validate_alleles(
+            &yaml(
+                r#"
+alleles:
+  kind: other
+  canonical_alt: A
+  ref: ""
+  alts: not-a-list
+"#,
+            ),
+            &mut issues,
+        );
+        let paths = issue_paths(&issues);
+        assert!(paths.contains(&"alleles.kind".to_owned()));
+        assert!(paths.contains(&"alleles.canonical_alt".to_owned()));
+        assert!(paths.contains(&"alleles.ref".to_owned()));
+        assert!(paths.contains(&"alleles.alts".to_owned()));
+    }
+
+    #[test]
+    fn allele_validator_reports_bad_alts_and_observed_alt_mismatches() {
+        let root = yaml(
+            r#"
+alleles:
+  kind: snv
+  ref: N
+  alts: [A, "", 3, D]
+  observed_alts: [A]
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_alleles(&root, &mut issues);
+        let paths = issue_paths(&issues);
+        assert!(paths.contains(&"alleles.ref".to_owned()));
+        assert!(paths.contains(&"alleles.alts[1]".to_owned()));
+        assert!(paths.contains(&"alleles.alts[2]".to_owned()));
+        assert!(paths.contains(&"alleles.observed_alts".to_owned()));
+    }
+
+    #[test]
+    fn allele_validator_accepts_indel_observed_alt_superset() {
+        let root = yaml(
+            r#"
+alleles:
+  kind: indel
+  ref: AT
+  alts: [A]
+  observed_alts: [A, ATT]
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_alleles(&root, &mut issues);
+        assert!(issues.is_empty());
+    }
+}

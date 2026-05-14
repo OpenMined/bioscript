@@ -457,3 +457,432 @@ fn is_package_release_path(path: &Path) -> bool {
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "yaml" | "yml"))
 }
+
+#[cfg(test)]
+mod package_tests {
+    use super::*;
+    use std::{
+        io::Write as _,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!(
+            "bioscript-package-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_zip(path: &Path, entries: &[(&str, &str)]) {
+        let file = fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, body) in entries {
+            if name.ends_with('/') {
+                writer.add_directory(*name, options).unwrap();
+            } else {
+                writer.start_file(*name, options).unwrap();
+                writer.write_all(body.as_bytes()).unwrap();
+            }
+        }
+        writer.finish().unwrap();
+    }
+
+    fn variant_manifest(name: &str) -> String {
+        format!(
+            r#"
+schema: bioscript:variant:1.0
+name: {name}
+gene: ABC
+identifiers:
+  rsids: [rs1]
+"#
+        )
+    }
+
+    #[test]
+    fn package_path_and_type_helpers_validate_inputs() {
+        assert_eq!(
+            checked_relative_package_path("./nested/manifest.yaml").unwrap(),
+            PathBuf::from("nested/manifest.yaml")
+        );
+        assert!(checked_relative_package_path("../escape.yaml")
+            .unwrap_err()
+            .contains("escapes"));
+        assert!(checked_relative_package_path("/absolute.yaml")
+            .unwrap_err()
+            .contains("must be relative"));
+        assert!(checked_relative_package_path(".").unwrap_err().contains("empty"));
+
+        assert!(is_allowed_package_file(Path::new("manifest.yaml")));
+        assert!(is_allowed_package_file(Path::new("docs/readme.md")));
+        assert!(!is_allowed_package_file(Path::new("bin/tool.sh")));
+        assert!(is_package_url("https://example.test/pkg.zip"));
+        assert!(is_package_url("http://example.test/pkg.zip"));
+        assert!(is_package_zip_path(Path::new("PKG.ZIP")));
+        assert!(is_package_release_path(Path::new("package.yml")));
+        assert!(!is_package_release_path(Path::new("package.zip")));
+    }
+
+    #[test]
+    fn package_descriptor_loads_supported_shapes_and_reports_errors() {
+        let dir = temp_dir("descriptors");
+
+        fs::write(dir.join("variant.yaml"), variant_manifest("Fallback")).unwrap();
+        let descriptor = load_package_descriptor(&dir).unwrap();
+        assert_eq!(descriptor.entrypoint, PathBuf::from("variant.yaml"));
+        assert_eq!(descriptor.name, None);
+        fs::remove_file(dir.join("variant.yaml")).unwrap();
+
+        fs::write(dir.join("manifest.yaml"), variant_manifest("Direct")).unwrap();
+        let descriptor = load_package_descriptor(&dir).unwrap();
+        assert_eq!(descriptor.entrypoint, PathBuf::from("manifest.yaml"));
+        assert_eq!(descriptor.name, Some("Direct".to_owned()));
+        fs::remove_file(dir.join("manifest.yaml")).unwrap();
+
+        fs::write(
+            dir.join("manifest.yaml"),
+            r#"
+schema: bioscript:package:1.0
+name: Wrapped
+entrypoint: nested/panel.yaml
+"#,
+        )
+        .unwrap();
+        let descriptor = load_package_descriptor(&dir).unwrap();
+        assert_eq!(descriptor.entrypoint, PathBuf::from("nested/panel.yaml"));
+        assert_eq!(descriptor.name, Some("Wrapped".to_owned()));
+
+        fs::write(
+            dir.join("manifest.yaml"),
+            r#"
+schema: bioscript:package:1.0
+name: Missing Entrypoint
+"#,
+        )
+        .unwrap();
+        assert!(descriptor_err(&dir).contains("missing entrypoint"));
+
+        fs::write(
+            dir.join("manifest.yaml"),
+            r#"
+schema: bioscript:package:1.0
+entrypoint: ../escape.yaml
+"#,
+        )
+        .unwrap();
+        assert!(descriptor_err(&dir).contains("escapes"));
+
+        fs::write(dir.join("manifest.yaml"), "schema: unsupported\n").unwrap();
+        assert!(descriptor_err(&dir).contains("unsupported schema"));
+
+        fs::write(dir.join("manifest.yaml"), "name: missing schema\n").unwrap();
+        assert!(descriptor_err(&dir).contains("missing schema"));
+
+        fs::remove_file(dir.join("manifest.yaml")).unwrap();
+        fs::write(
+            dir.join(LEGACY_PACKAGE_DESCRIPTOR),
+            r#"
+schema: bioscript:package:1.0
+name: Legacy
+entrypoint: assay.yaml
+"#,
+        )
+        .unwrap();
+        let descriptor = load_package_descriptor(&dir).unwrap();
+        assert_eq!(descriptor.entrypoint, PathBuf::from("assay.yaml"));
+        assert_eq!(descriptor.name, Some("Legacy".to_owned()));
+        fs::remove_file(dir.join(LEGACY_PACKAGE_DESCRIPTOR)).unwrap();
+
+        assert!(descriptor_err(&dir).contains("does not contain"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn import_package_zip_extracts_and_validates_entrypoint() {
+        let dir = temp_dir("import");
+        let zip_path = dir.join("pkg.zip");
+        write_zip(
+            &zip_path,
+            &[
+                (
+                    "manifest.yaml",
+                    r#"
+schema: bioscript:package:1.0
+name: Test Package
+entrypoint: nested/variant.yaml
+"#,
+                ),
+                ("nested/", ""),
+                ("nested/variant.yaml", &variant_manifest("Nested")),
+                ("docs/readme.md", "hello"),
+            ],
+        );
+
+        let imported = import_package_zip(&dir, &zip_path, Some(Path::new("out"))).unwrap();
+        assert_eq!(imported.name, Some("Test Package".to_owned()));
+        assert!(imported.entrypoint.ends_with("nested/variant.yaml"));
+        assert!(imported.root.join("docs/readme.md").exists());
+
+        let occupied = dir.join("occupied");
+        fs::create_dir_all(&occupied).unwrap();
+        fs::write(occupied.join("existing.txt"), "x").unwrap();
+        assert!(import_err(&dir, &zip_path, Some(Path::new("occupied"))).contains("not empty"));
+
+        let empty_output = dir.join("empty-output");
+        fs::create_dir_all(&empty_output).unwrap();
+        let imported_empty =
+            import_package_zip(&dir, &zip_path, Some(Path::new("empty-output"))).unwrap();
+        assert!(imported_empty.entrypoint.ends_with("nested/variant.yaml"));
+
+        let cached = import_package_zip(&dir, &zip_path, None).unwrap();
+        assert!(cached
+            .root
+            .starts_with(dir.join(PACKAGE_CACHE_DIR).canonicalize().unwrap()));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn extract_package_zip_rejects_bad_entries_and_bad_archives() {
+        let dir = temp_dir("extract-errors");
+        let bad_zip = dir.join("not.zip");
+        fs::write(&bad_zip, "not a zip").unwrap();
+        assert!(extract_package_zip(&bad_zip, &dir.join("out"))
+            .unwrap_err()
+            .contains("failed to read package zip"));
+
+        let unsupported = dir.join("unsupported.zip");
+        write_zip(&unsupported, &[("script.sh", "echo no")]);
+        assert!(extract_package_zip(&unsupported, &dir.join("unsupported-out"))
+            .unwrap_err()
+            .contains("unsupported extension"));
+
+        let unsafe_path = dir.join("unsafe.zip");
+        write_zip(&unsafe_path, &[("../escape.yaml", "no")]);
+        assert!(extract_package_zip(&unsafe_path, &dir.join("unsafe-out"))
+            .unwrap_err()
+            .contains("unsafe path"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn import_package_zip_reports_entrypoint_resolution_and_schema_errors() {
+        let dir = temp_dir("import-entrypoint-errors");
+
+        let missing_entrypoint = dir.join("missing-entrypoint.zip");
+        write_zip(
+            &missing_entrypoint,
+            &[(
+                "manifest.yaml",
+                r#"
+schema: bioscript:package:1.0
+entrypoint: missing.yaml
+"#,
+            )],
+        );
+        assert!(import_err(&dir, &missing_entrypoint, Some(Path::new("missing-out")))
+            .contains("failed to resolve package entrypoint"));
+
+        let bad_schema = dir.join("bad-schema.zip");
+        write_zip(
+            &bad_schema,
+            &[
+                (
+                    "manifest.yaml",
+                    r#"
+schema: bioscript:package:1.0
+entrypoint: nested/custom.yaml
+"#,
+                ),
+                ("nested/custom.yaml", "schema: custom:schema\nname: bad\n"),
+            ],
+        );
+        assert!(import_err(&dir, &bad_schema, Some(Path::new("bad-schema-out")))
+            .contains("unsupported schema"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn package_release_manifest_resolves_local_artifacts_and_hashes() {
+        let dir = temp_dir("release");
+        let zip_path = dir.join("pkg.zip");
+        write_zip(&zip_path, &[("manifest.yaml", &variant_manifest("Release"))]);
+        let digest = sha256_file(&zip_path).unwrap();
+        let release_path = dir.join("package.yaml");
+        fs::write(
+            &release_path,
+            format!(
+                r#"
+schema: bioscript:package-release:1.0
+artifact:
+  path: pkg.zip
+  sha256: {digest}
+"#
+            ),
+        )
+        .unwrap();
+
+        let resolved = package_zip_from_release_manifest(&dir, &release_path, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved, zip_path);
+
+        fs::write(
+            &release_path,
+            r#"
+schema: bioscript:package-release:1.0
+artifact:
+  path: pkg.zip
+  sha256: bad
+"#,
+        )
+        .unwrap();
+        assert!(package_zip_from_release_manifest(&dir, &release_path, None)
+            .unwrap_err()
+            .contains("sha256 mismatch"));
+
+        fs::write(&release_path, "schema: bioscript:variant:1.0\n").unwrap();
+        assert!(package_zip_from_release_manifest(&dir, &release_path, None)
+            .unwrap()
+            .is_none());
+        assert!(package_zip_from_release_manifest(&dir, &dir.join("missing.yaml"), None)
+            .unwrap()
+            .is_none());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn prepare_package_entrypoint_imports_zip_and_release_manifests() {
+        let dir = temp_dir("prepare-entrypoint");
+        let zip_path = dir.join("pkg.zip");
+        write_zip(&zip_path, &[("manifest.yaml", &variant_manifest("Prepared"))]);
+
+        let entrypoint = prepare_package_entrypoint_from_arg(&dir, &zip_path).unwrap();
+        assert!(entrypoint.ends_with("manifest.yaml"));
+        assert!(entrypoint.starts_with(dir.join(PACKAGE_CACHE_DIR).canonicalize().unwrap()));
+
+        let digest = sha256_file(&zip_path).unwrap();
+        let release_path = dir.join("package.yaml");
+        fs::write(
+            &release_path,
+            format!(
+                r#"
+schema: bioscript:package-release:1.0
+artifact:
+  path: pkg.zip
+  sha256: {digest}
+"#
+            ),
+        )
+        .unwrap();
+        let release_entrypoint = prepare_package_entrypoint_from_arg(&dir, &release_path).unwrap();
+        assert!(release_entrypoint.ends_with("manifest.yaml"));
+
+        let plain = dir.join("panel.yaml");
+        fs::write(&plain, "schema: bioscript:panel:1.0\n").unwrap();
+        assert_eq!(prepare_package_entrypoint_from_arg(&dir, &plain).unwrap(), plain);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn package_release_helpers_cover_yaml_strings_urls_and_download_validation() {
+        let value: serde_yaml::Value = serde_yaml::from_str("name: Example\n").unwrap();
+        assert_eq!(yaml_string(&value, "name"), Some("Example".to_owned()));
+        assert_eq!(yaml_string(&value, "missing"), None);
+        assert_eq!(
+            join_url("https://example.test/releases/package.yaml?download=1", "pkg.zip"),
+            "https://example.test/releases/pkg.zip"
+        );
+        assert_eq!(
+            join_url("https://cdn.test/pkg.zip", "https://other.test/pkg.zip"),
+            "https://other.test/pkg.zip"
+        );
+
+        let dir = temp_dir("download-validation");
+        assert!(download_package_url(&dir, "http://example.test/pkg.zip")
+            .unwrap_err()
+            .contains("must use https"));
+        assert!(download_package_url(&dir, "https://example.test/pkg.exe")
+            .unwrap_err()
+            .contains("must point"));
+        let target = package_cache_target(&dir, Path::new("weird package!.zip"));
+        assert!(target.display().to_string().contains("weird-package-"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn import_package_command_validates_arguments() {
+        assert!(run_import_package(Vec::new()).unwrap_err().contains("usage"));
+        assert!(run_import_package(vec!["--bad".to_owned()])
+            .unwrap_err()
+            .contains("unexpected argument"));
+        assert!(run_import_package(vec!["one.zip".to_owned(), "two.zip".to_owned()])
+            .unwrap_err()
+            .contains("unexpected argument"));
+        assert!(run_import_package(vec!["one.zip".to_owned(), "--root".to_owned()])
+            .unwrap_err()
+            .contains("--root requires"));
+    }
+
+    #[test]
+    fn import_package_command_imports_local_zip_to_output_dir() {
+        let dir = temp_dir("import-command");
+        let zip_path = dir.join("pkg.zip");
+        write_zip(
+            &zip_path,
+            &[
+                (
+                    "manifest.yaml",
+                    r#"
+schema: bioscript:package:1.0
+name: Import Command Package
+entrypoint: variant.yaml
+"#,
+                ),
+                ("variant.yaml", &variant_manifest("Imported")),
+            ],
+        );
+        let output = dir.join("imported");
+
+        run_import_package(vec![
+            zip_path.display().to_string(),
+            "--root".to_owned(),
+            dir.display().to_string(),
+            "--output-dir".to_owned(),
+            output.display().to_string(),
+        ])
+        .unwrap();
+
+        assert!(output.join("manifest.yaml").exists());
+        assert!(output.join("variant.yaml").exists());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn descriptor_err(root: &Path) -> String {
+        match load_package_descriptor(root) {
+            Ok(_) => panic!("expected package descriptor to fail"),
+            Err(err) => err,
+        }
+    }
+
+    fn import_err(runtime_root: &Path, zip_path: &Path, output_dir: Option<&Path>) -> String {
+        match import_package_zip(runtime_root, zip_path, output_dir) {
+            Ok(_) => panic!("expected package import to fail"),
+            Err(err) => err,
+        }
+    }
+}

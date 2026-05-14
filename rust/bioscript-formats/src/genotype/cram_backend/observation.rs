@@ -372,3 +372,210 @@ impl CramBackend {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::PathBuf};
+
+    use super::*;
+    use crate::genotype::GenotypeLoadOptions;
+
+    fn fixtures_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+    }
+
+    fn locus() -> GenomicLocus {
+        GenomicLocus {
+            chrom: "chr_test".to_owned(),
+            start: 1000,
+            end: 1000,
+        }
+    }
+
+    fn backend() -> CramBackend {
+        let dir = fixtures_dir();
+        CramBackend {
+            path: dir.join("mini.cram"),
+            options: GenotypeLoadOptions {
+                input_index: Some(dir.join("mini.cram.crai")),
+                reference_file: Some(dir.join("mini.fa")),
+                ..GenotypeLoadOptions::default()
+            },
+        }
+    }
+
+    fn open_reader() -> cram::io::indexed_reader::IndexedReader<std::fs::File> {
+        let dir = fixtures_dir();
+        let reference = dir.join("mini.fa");
+        let repository = alignment::build_reference_repository(&reference).unwrap();
+        let index = alignment::parse_crai_bytes(&fs::read(dir.join("mini.cram.crai")).unwrap())
+            .unwrap();
+        alignment::build_cram_indexed_reader_from_reader(
+            fs::File::open(dir.join("mini.cram")).unwrap(),
+            index,
+            repository,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn observe_with_reader_dispatches_snp_deletion_indel_and_unsupported_kind() {
+        let backend = backend();
+        let locus = locus();
+
+        let mut reader = open_reader();
+        let snp = VariantSpec {
+            rsids: vec!["mini_snp".to_owned()],
+            reference: Some("A".to_owned()),
+            alternate: Some("C".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        };
+        let observation = backend
+            .observe_with_reader(&mut reader, "mini.cram", &snp, Assembly::Grch38, &locus)
+            .unwrap();
+        assert_eq!(observation.backend, "cram");
+        assert_eq!(observation.matched_rsid.as_deref(), Some("mini_snp"));
+        assert_eq!(observation.genotype.as_deref(), Some("AA"));
+        assert_eq!(observation.ref_count, Some(50));
+        assert_eq!(observation.alt_count, Some(0));
+        assert_eq!(observation.depth, Some(50));
+
+        let mut reader = open_reader();
+        let deletion = VariantSpec {
+            rsids: vec!["mini_del".to_owned()],
+            reference: Some("I".to_owned()),
+            alternate: Some("D".to_owned()),
+            kind: Some(VariantKind::Deletion),
+            deletion_length: Some(1),
+            ..VariantSpec::default()
+        };
+        let observation = backend
+            .observe_with_reader(
+                &mut reader,
+                "mini.cram",
+                &deletion,
+                Assembly::Grch38,
+                &locus,
+            )
+            .unwrap();
+        assert_eq!(observation.genotype.as_deref(), Some("II"));
+        assert_eq!(observation.ref_count, Some(50));
+        assert_eq!(observation.alt_count, Some(0));
+        assert!(observation.evidence[0].contains("observed deletion anchor"));
+
+        let mut reader = open_reader();
+        let indel = VariantSpec {
+            rsids: vec!["mini_indel".to_owned()],
+            reference: Some("A".to_owned()),
+            alternate: Some("AT".to_owned()),
+            kind: Some(VariantKind::Insertion),
+            ..VariantSpec::default()
+        };
+        let observation = backend
+            .observe_with_reader(&mut reader, "mini.cram", &indel, Assembly::Grch38, &locus)
+            .unwrap();
+        assert_eq!(observation.matched_rsid.as_deref(), Some("mini_indel"));
+        assert_eq!(observation.genotype.as_deref(), Some("AA"));
+
+        let mut reader = open_reader();
+        let err = backend
+            .observe_with_reader(
+                &mut reader,
+                "mini.cram",
+                &VariantSpec {
+                    kind: Some(VariantKind::Other),
+                    ..VariantSpec::default()
+                },
+                Assembly::Grch38,
+                &locus,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("does not yet support"));
+    }
+
+    #[test]
+    fn observe_with_reader_reports_required_variant_fields() {
+        let backend = backend();
+        let locus = locus();
+
+        let mut reader = open_reader();
+        let err = backend
+            .observe_with_reader(
+                &mut reader,
+                "mini.cram",
+                &VariantSpec {
+                    alternate: Some("C".to_owned()),
+                    kind: Some(VariantKind::Snp),
+                    ..VariantSpec::default()
+                },
+                Assembly::Grch38,
+                &locus,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("SNP variant requires ref"));
+
+        let mut reader = open_reader();
+        let err = backend
+            .observe_with_reader(
+                &mut reader,
+                "mini.cram",
+                &VariantSpec {
+                    reference: Some("A".to_owned()),
+                    kind: Some(VariantKind::Snp),
+                    ..VariantSpec::default()
+                },
+                Assembly::Grch38,
+                &locus,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("SNP variant requires alt"));
+
+        let mut reader = open_reader();
+        let err = backend
+            .observe_with_reader(
+                &mut reader,
+                "mini.cram",
+                &VariantSpec {
+                    kind: Some(VariantKind::Deletion),
+                    ..VariantSpec::default()
+                },
+                Assembly::Grch38,
+                &locus,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("deletion_length"));
+
+        let mut reader = open_reader();
+        let err = backend
+            .observe_with_reader(
+                &mut reader,
+                "mini.cram",
+                &VariantSpec {
+                    alternate: Some("AT".to_owned()),
+                    kind: Some(VariantKind::Indel),
+                    ..VariantSpec::default()
+                },
+                Assembly::Grch38,
+                &locus,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("indel variant requires ref"));
+
+        let mut reader = open_reader();
+        let err = backend
+            .observe_with_reader(
+                &mut reader,
+                "mini.cram",
+                &VariantSpec {
+                    reference: Some("A".to_owned()),
+                    kind: Some(VariantKind::Indel),
+                    ..VariantSpec::default()
+                },
+                Assembly::Grch38,
+                &locus,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("indel variant requires alt"));
+    }
+}

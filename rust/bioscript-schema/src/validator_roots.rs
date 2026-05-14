@@ -332,3 +332,171 @@ fn validate_coordinate_range_values(start: i64, end: i64, assembly: &str, issues
     }
 }
 
+#[cfg(test)]
+mod root_validator_tests {
+    use super::*;
+
+    fn yaml(text: &str) -> Value {
+        serde_yaml::from_str(text).unwrap()
+    }
+
+    fn messages(issues: &[Issue]) -> Vec<String> {
+        issues
+            .iter()
+            .map(|issue| format!("{}:{}", issue.path, issue.message))
+            .collect()
+    }
+
+    #[test]
+    fn variant_root_reports_identity_optional_tag_identifier_and_coordinate_edges() {
+        let root = yaml(
+            r#"
+schema: bioscript:variant
+version: "1.0"
+name: ""
+label: ""
+gene: [not, string]
+tags: ["", 7]
+variant_id: legacy
+identifiers:
+  rsids: [bad, rs1, rs1, 9]
+  aliases: bad-shape
+coordinates:
+  grch37:
+    chrom: 99
+    pos: 0
+  grch38:
+    chrom: "1"
+    pos: 1
+    start: 1
+    end: 1
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_variant_root(&root, &mut issues);
+        let rendered = messages(&issues).join("\n");
+
+        assert!(rendered.contains("schema:legacy schema value"));
+        assert!(rendered.contains("name:empty string"));
+        assert!(rendered.contains("label:empty string"));
+        assert!(rendered.contains("gene:expected string"));
+        assert!(rendered.contains("tags[0]:empty tag string"));
+        assert!(rendered.contains("tags[1]:expected string"));
+        assert!(rendered.contains("variant_id:variant_id is legacy"));
+        assert!(rendered.contains("identifiers.rsids[0]:expected rsid"));
+        assert!(rendered.contains("identifiers.rsids[2]:duplicate identifier"));
+        assert!(rendered.contains("identifiers.rsids[3]:expected string"));
+        assert!(rendered.contains("identifiers.aliases:expected a sequence"));
+        assert!(rendered.contains("coordinates.grch37.chrom:missing chrom"));
+        assert!(rendered.contains("coordinates.grch38:use either pos or start/end"));
+    }
+
+    #[test]
+    fn coordinate_range_validation_reports_missing_non_integer_bounds_and_single_position() {
+        let root = yaml(
+            r#"
+schema: bioscript:variant:1.0
+version: "1.0"
+name: coordinate-errors
+coordinates:
+  grch37:
+    chrom: Z
+    start: zero
+    end: 1
+  grch38:
+    chrom: X
+    start: 5
+    end: 5
+alleles:
+  kind: snv
+  ref: A
+  alts: [G]
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_variant_root(&root, &mut issues);
+        let rendered = messages(&issues).join("\n");
+
+        assert!(rendered.contains("coordinates.grch37.chrom:invalid chromosome"));
+        assert!(rendered.contains("coordinates.grch37:expected integer start/end"));
+        assert!(rendered.contains("coordinates.grch38:single-position coordinate"));
+
+        let root = yaml(
+            r#"
+schema: bioscript:variant:1.0
+version: "1.0"
+name: bad-range
+coordinates:
+  grch38:
+    chrom: MT
+    start: 0
+    end: -1
+alleles:
+  kind: snv
+  ref: A
+  alts: [G]
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_variant_root(&root, &mut issues);
+        let rendered = messages(&issues).join("\n");
+        assert!(rendered.contains("coordinates.grch38.start:expected integer >= 1"));
+        assert!(rendered.contains("coordinates.grch38.end:expected integer >= 1"));
+        assert!(rendered.contains("coordinates.grch38.end:expected end >= start"));
+    }
+
+    #[test]
+    fn panel_assay_and_pgx_roots_report_root_level_shape_errors() {
+        let root = yaml(
+            r#"
+schema: bioscript:panel:1.0
+version: "1.0"
+name: panel
+tags: not-a-list
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_panel_root(&root, &mut issues);
+        let rendered = messages(&issues).join("\n");
+        assert!(rendered.contains("tags:expected a sequence of strings"));
+
+        let root = yaml(
+            r#"
+schema: bioscript:assay:1.0
+version: "1.0"
+name: assay
+tags: [ok, ""]
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_assay_root(&root, &mut issues);
+        let rendered = messages(&issues).join("\n");
+        assert!(rendered.contains("tags[1]:empty tag string"));
+
+        let root = yaml(
+            r#"
+schema: bioscript:pgx-findings:1.0
+version: "1.0"
+gene: ABC
+findings: not-a-list
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_pgx_findings_root(&root, &mut issues);
+        let rendered = messages(&issues).join("\n");
+        assert!(rendered.contains("variant/rsid:expected at least one variant identifier"));
+        assert!(rendered.contains("findings:expected a sequence of findings"));
+
+        let root = yaml(
+            r#"
+schema: bioscript:pgx-findings:1.0
+version: "1.0"
+rsid: rs1
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_pgx_findings_root(&root, &mut issues);
+        let rendered = messages(&issues).join("\n");
+        assert!(rendered.contains("findings:missing required field"));
+    }
+}

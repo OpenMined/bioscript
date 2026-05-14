@@ -566,6 +566,63 @@ mod tests {
     }
 
     #[test]
+    fn genotype_public_cache_wrappers_and_empty_store_cover_lookup_contracts() {
+        let fallback = GenotypeStore::from_bytes("fallback.txt", b"rsid\tgenotype\nrs2\tCC\n")
+            .unwrap();
+        let cached_observation = VariantObservation {
+            matched_rsid: Some("rs1".to_owned()),
+            genotype: Some("AG".to_owned()),
+            ..VariantObservation::default()
+        };
+        let cached =
+            GenotypeStore::with_cached_observations(vec![cached_observation.clone()], fallback);
+        assert_eq!(cached.backend_name(), "cached");
+        assert_eq!(cached.get("rs1").unwrap().as_deref(), Some("AG"));
+        assert_eq!(cached.get("rs2").unwrap().as_deref(), Some("CC"));
+        let observations = cached
+            .lookup_variants(&[
+                VariantSpec {
+                    rsids: vec!["rs1".to_owned()],
+                    ..VariantSpec::default()
+                },
+                VariantSpec {
+                    rsids: vec!["rs2".to_owned()],
+                    ..VariantSpec::default()
+                },
+            ])
+            .unwrap();
+        assert_eq!(observations[0].genotype.as_deref(), Some("AG"));
+        assert_eq!(observations[1].genotype.as_deref(), Some("CC"));
+
+        let required = GenotypeStore::with_required_cached_observations(
+            vec![cached_observation],
+            GenotypeStore::empty(),
+        );
+        assert_eq!(required.get("rs1").unwrap().as_deref(), Some("AG"));
+        assert!(
+            required
+                .get("rs-missing")
+                .unwrap_err()
+                .to_string()
+                .contains("required preloaded genotype observation missing")
+        );
+        assert!(
+            required
+                .lookup_variant(&VariantSpec {
+                    rsids: vec!["rs-missing".to_owned()],
+                    ..VariantSpec::default()
+                })
+                .unwrap_err()
+                .to_string()
+                .contains("required preloaded genotype observation missing")
+        );
+
+        let empty = GenotypeStore::empty();
+        assert!(empty.get("rs-any").unwrap().is_none());
+        assert_eq!(empty.backend_name(), "text");
+    }
+
+    #[test]
     fn genotype_private_helpers_cover_assembly_sorting_and_decision_rules() {
         let variant = variant_with_loci();
 

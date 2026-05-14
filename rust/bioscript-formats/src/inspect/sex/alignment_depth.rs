@@ -265,3 +265,110 @@ fn ratio_to_autosome(value: f64, autosome_mean: f64) -> f64 {
         value / autosome_mean
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, path::PathBuf};
+
+    fn stats(autosome_records: usize, x_records: usize, y_records: usize) -> AlignmentSexStats {
+        AlignmentSexStats {
+            autosome_windows: 8,
+            autosome_records,
+            x_windows: 8,
+            x_records,
+            y_windows: 8,
+            y_records,
+        }
+    }
+
+    #[test]
+    fn classifies_alignment_depth_patterns() {
+        let female = classify_alignment_stats(&stats(800, 760, 10));
+        assert_eq!(female.sex, InferredSex::Female);
+        assert_eq!(female.confidence, SexDetectionConfidence::High);
+        assert!(female
+            .evidence
+            .iter()
+            .any(|value| value == "x_to_autosome_ratio=0.950"));
+
+        let male = classify_alignment_stats(&stats(800, 360, 120));
+        assert_eq!(male.sex, InferredSex::Male);
+        assert_eq!(male.confidence, SexDetectionConfidence::High);
+
+        let medium_female = classify_alignment_stats(&stats(800, 620, 160));
+        assert_eq!(medium_female.sex, InferredSex::Female);
+        assert_eq!(medium_female.confidence, SexDetectionConfidence::Medium);
+
+        let medium_male = classify_alignment_stats(&stats(800, 560, 40));
+        assert_eq!(medium_male.sex, InferredSex::Male);
+        assert_eq!(medium_male.confidence, SexDetectionConfidence::Medium);
+
+        let low_depth = classify_alignment_stats(&stats(16, 8, 8));
+        assert_eq!(low_depth.sex, InferredSex::Unknown);
+        assert_eq!(low_depth.confidence, SexDetectionConfidence::Low);
+    }
+
+    #[test]
+    fn alignment_depth_math_handles_empty_and_saturating_inputs() {
+        assert_eq!(mean_records(10, 0), 0.0);
+        assert_eq!(mean_records(20, 4), 5.0);
+        assert!(mean_records(usize::MAX, 1) > 4_000_000_000.0);
+        assert_eq!(ratio_to_autosome(10.0, 0.0), 0.0);
+        assert_eq!(ratio_to_autosome(5.0, 10.0), 0.5);
+    }
+
+    #[test]
+    fn non_cram_or_missing_reference_reports_unsupported_or_unknown() {
+        let non_cram = infer_sex_from_alignment_path(
+            Path::new("sample.bam"),
+            &InspectOptions::default(),
+            DetectedKind::AlignmentBam,
+        )
+        .unwrap();
+        assert_eq!(non_cram.sex, InferredSex::Unknown);
+        assert_eq!(non_cram.method, "unsupported_source_type");
+
+        let missing_reference = infer_sex_from_alignment_path(
+            Path::new("sample.cram"),
+            &InspectOptions::default(),
+            DetectedKind::AlignmentCram,
+        )
+        .unwrap();
+        assert_eq!(missing_reference.sex, InferredSex::Unknown);
+        assert_eq!(missing_reference.method, "alignment_y_x_coverage");
+        assert!(missing_reference.evidence[0].contains("--reference-file"));
+    }
+
+    fn fixtures_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+    }
+
+    #[test]
+    fn alignment_depth_path_and_reader_entrypoints_report_missing_standard_contigs() {
+        let dir = fixtures_dir();
+        let cram = dir.join("mini.cram");
+        let reference = dir.join("mini.fa");
+        let index = dir.join("mini.cram.crai");
+        let options = InspectOptions {
+            input_index: Some(index.clone()),
+            reference_file: Some(reference.clone()),
+            ..InspectOptions::default()
+        };
+
+        let err = infer_sex_from_alignment_path(&cram, &options, DetectedKind::AlignmentCram)
+            .unwrap_err();
+        assert!(err.to_string().contains("does not contain contig"));
+
+        let repository = alignment::build_reference_repository(&reference).unwrap();
+        let crai = alignment::parse_crai_bytes(&fs::read(index).unwrap()).unwrap();
+        let mut reader = alignment::build_cram_indexed_reader_from_reader(
+            fs::File::open(cram).unwrap(),
+            crai,
+            repository,
+        )
+        .unwrap();
+        let err = infer_sex_from_alignment_reader(&mut reader, "mini.cram", true).unwrap_err();
+        assert!(err.to_string().contains("does not contain contig"));
+    }
+}

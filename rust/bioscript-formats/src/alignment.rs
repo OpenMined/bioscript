@@ -310,6 +310,30 @@ mod tests {
                 .contains("tabix index")
         );
         assert!(
+            parse_bai_bytes(b"not a bai")
+                .unwrap_err()
+                .to_string()
+                .contains("BAM index")
+        );
+        assert!(
+            generate_cram_crai_bytes(b"not a cram")
+                .unwrap_err()
+                .to_string()
+                .contains("failed to read CRAM header")
+        );
+        assert!(
+            generate_bam_bai_bytes(b"not a bam")
+                .unwrap_err()
+                .to_string()
+                .contains("failed to read BAM header")
+        );
+        assert!(
+            generate_vcf_tbi_bytes(b"not a bgzipped vcf")
+                .unwrap_err()
+                .to_string()
+                .contains("failed to read VCF header")
+        );
+        assert!(
             build_reference_repository(Path::new("/definitely/missing/reference.fa"))
                 .unwrap_err()
                 .to_string()
@@ -346,6 +370,21 @@ mod tests {
         assert!(is_reference_md5_mismatch(&err));
         let err = std::io::Error::other("other decode error");
         assert!(!is_reference_md5_mismatch(&err));
+    }
+
+    #[test]
+    fn alignment_helpers_generate_and_parse_fasta_index_bytes() {
+        let fasta_bytes = b">chr1\nACGT\n>chr2\nAACCGG\n";
+        let fai_bytes = generate_fasta_fai_bytes(fasta_bytes).unwrap();
+        let fai_text = String::from_utf8(fai_bytes.clone()).unwrap();
+        assert!(fai_text.contains("chr1\t4\t6\t4\t5"));
+        assert!(fai_text.contains("chr2\t6"));
+
+        let index = parse_fai_bytes(&fai_bytes).unwrap();
+        let _repository = build_reference_repository_from_readers(
+            std::io::BufReader::new(std::io::Cursor::new(fasta_bytes.to_vec())),
+            index,
+        );
     }
 
     #[test]
@@ -405,5 +444,19 @@ mod tests {
         })
         .unwrap();
         assert_eq!(raw_seen, 2);
+    }
+
+    #[test]
+    fn alignment_helpers_generate_crai_from_mini_cram_fixture() {
+        let dir = mini_fixtures_dir();
+        let cram = dir.join("mini.cram");
+        let crai_bytes = generate_cram_crai_bytes(&std::fs::read(&cram).unwrap()).unwrap();
+        let index = parse_crai_bytes(&crai_bytes).unwrap();
+        assert!(!index.is_empty());
+
+        let crai_reader_bytes =
+            generate_cram_crai_reader(File::open(&cram).unwrap()).expect("reader CRAI");
+        let index_from_reader = parse_crai_bytes(&crai_reader_bytes).unwrap();
+        assert_eq!(index_from_reader.len(), index.len());
     }
 }

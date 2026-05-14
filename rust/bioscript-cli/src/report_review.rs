@@ -305,3 +305,207 @@ fn review_case_genotype_text(case: &ReviewCase) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod review_report_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!(
+            "bioscript-review-report-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn run_review_report_validates_required_arguments() {
+        assert!(run_review_report(Vec::new()).unwrap_err().contains("usage"));
+        assert!(run_review_report(vec!["manifest.yaml".to_owned()])
+            .unwrap_err()
+            .contains("--cases"));
+        assert!(run_review_report(vec![
+            "manifest.yaml".to_owned(),
+            "--cases".to_owned(),
+            "cases.yaml".to_owned(),
+        ])
+        .unwrap_err()
+        .contains("--output-dir"));
+        assert!(run_review_report(vec![
+            "manifest.yaml".to_owned(),
+            "--unknown".to_owned(),
+        ])
+        .unwrap_err()
+        .contains("unexpected argument"));
+        assert!(run_review_report(vec![
+            "first.yaml".to_owned(),
+            "second.yaml".to_owned(),
+        ])
+        .unwrap_err()
+        .contains("unexpected argument"));
+    }
+
+    #[test]
+    fn review_cases_load_labels_variants_and_null_genotypes() {
+        let dir = temp_dir("cases");
+        let cases_path = dir.join("cases.yaml");
+        fs::write(
+            &cases_path,
+            r#"
+cases:
+  - id: c1
+    label: First case
+    genotypes:
+      rs1: A/G
+      rs2: null
+  - id: c2
+    variants:
+      rs3: C/T
+"#,
+        )
+        .unwrap();
+
+        let cases = load_review_cases(&cases_path).unwrap();
+        assert_eq!(cases.len(), 2);
+        assert_eq!(cases[0].label, "First case");
+        assert_eq!(cases[0].genotypes["rs1"], Some("A/G".to_owned()));
+        assert_eq!(cases[0].genotypes["rs2"], None);
+        assert_eq!(cases[1].label, "c2");
+        assert_eq!(cases[1].genotypes["rs3"], Some("C/T".to_owned()));
+
+        let text = review_case_genotype_text(&cases[0]);
+        assert!(text.contains("rs1\tA/G"));
+        assert!(!text.contains("rs2"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn review_case_parser_reports_shape_errors() {
+        let missing_cases = serde_yaml::from_str::<serde_yaml::Value>("not_cases: []").unwrap();
+        let path = temp_dir("errors").join("missing-cases.yaml");
+        fs::write(&path, serde_yaml::to_string(&missing_cases).unwrap()).unwrap();
+        assert!(review_cases_err(&path).contains("missing cases list"));
+        let dir = path.parent().unwrap().to_path_buf();
+
+        let missing_id = serde_yaml::from_str::<serde_yaml::Value>(
+            r#"{label: no id, genotypes: {rs1: A/G}}"#,
+        )
+        .unwrap();
+        assert!(review_case_err(&missing_id).contains("missing id"));
+
+        let missing_genotypes =
+            serde_yaml::from_str::<serde_yaml::Value>(r#"{id: c1}"#).unwrap();
+        assert!(review_case_err(&missing_genotypes).contains("missing genotypes"));
+
+        let bad_key =
+            serde_yaml::from_str::<serde_yaml::Value>(r#"{id: c1, genotypes: {1: A/G}}"#)
+                .unwrap();
+        assert!(review_case_err(&bad_key).contains("non-string genotype key"));
+
+        let bad_value =
+            serde_yaml::from_str::<serde_yaml::Value>(r#"{id: c1, genotypes: {rs1: [A, G]}}"#)
+                .unwrap();
+        assert!(review_case_err(&bad_value).contains("must be string or null"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn review_cases_err(path: &Path) -> String {
+        match load_review_cases(path) {
+            Ok(_) => panic!("expected review cases to fail"),
+            Err(err) => err,
+        }
+    }
+
+    fn review_case_err(value: &serde_yaml::Value) -> String {
+        match review_case_from_yaml(value) {
+            Ok(_) => panic!("expected review case to fail"),
+            Err(err) => err,
+        }
+    }
+
+    #[test]
+    fn generate_review_report_writes_observations_reports_html_and_cleans_temp_input() {
+        let dir = temp_dir("generate");
+        let manifest = dir.join("variant.yaml");
+        fs::write(
+            &manifest,
+            r#"
+schema: bioscript:variant:1.0
+version: "1.0"
+name: rs1
+gene: ABC
+identifiers:
+  rsids: [rs1]
+coordinates:
+  grch38:
+    chrom: "1"
+    pos: 100
+alleles:
+  kind: snv
+  ref: A
+  alts: [G]
+findings:
+  - schema: bioscript:trait:1.0
+    summary: Variant present
+    binding:
+      source: variant
+      variant: variant.yaml
+      key: outcome
+      value: variant
+provenance:
+  sources:
+    - kind: database
+      label: Fixture
+      url: https://example.test/rs1
+"#,
+        )
+        .unwrap();
+        let cases = dir.join("cases.yaml");
+        fs::write(
+            &cases,
+            r#"
+cases:
+  - id: case1
+    label: Case One
+    genotypes:
+      rs1: A/G
+  - id: case2
+    genotypes:
+      rs1: null
+"#,
+        )
+        .unwrap();
+        let output = dir.join("out");
+        let options = ReviewReportOptions {
+            manifest_path: manifest,
+            cases_path: cases,
+            output_dir: output.clone(),
+            root: dir.clone(),
+            html: true,
+            filters: Vec::new(),
+        };
+
+        generate_review_report(&options).unwrap();
+
+        assert!(fs::read_to_string(output.join("observations.tsv"))
+            .unwrap()
+            .contains("case1"));
+        let reports = fs::read_to_string(output.join("reports.jsonl")).unwrap();
+        assert!(reports.contains("\"review_case\""));
+        assert!(reports.contains("\"case1\""));
+        assert!(fs::read_to_string(output.join("index.html"))
+            .unwrap()
+            .contains("<!doctype html>"));
+        assert!(!output.join(".review-temp").exists());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

@@ -308,3 +308,122 @@ fn has_extension(value: &str, extensions: &[&str]) -> bool {
             .any(|item| extension.eq_ignore_ascii_case(item))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_yaml_resource_kind_title_version_hash_and_dependencies() {
+        let text = r#"
+schema: bioscript:panel:1.0
+version: "1.0"
+label: Example Panel
+members:
+  - kind: variant
+    path: variants/rs1.yaml
+    version: v1
+downloads:
+  - url: https://example.test/data.zip
+    version: v2
+metadata:
+  file: scripts/report.py
+  url: https://example.test/data.zip
+"#;
+        let resolved = resolve_remote_resource_text(
+            "https://github.com/org/repo/blob/main/panels/panel.yaml",
+            "panel.yaml",
+            text,
+        )
+        .unwrap();
+
+        assert_eq!(resolved.kind, RemoteResourceKind::Panel);
+        assert_eq!(resolved.schema.as_deref(), Some("bioscript:panel:1.0"));
+        assert_eq!(resolved.title, "Example Panel");
+        assert_eq!(resolved.version.as_deref(), Some("1.0"));
+        assert_eq!(resolved.sha256, sha256_hex(text.as_bytes()));
+        assert_eq!(resolved.dependencies.len(), 3);
+        assert!(resolved
+            .dependencies
+            .iter()
+            .any(|dep| dep.kind == "member"
+                && dep.url == "https://github.com/org/repo/blob/main/panels/variants/rs1.yaml"));
+        assert!(resolved
+            .dependencies
+            .iter()
+            .any(|dep| dep.kind == "download" && dep.version.as_deref() == Some("v2")));
+    }
+
+    #[test]
+    fn infers_resource_kind_from_schema_extension_and_content_shape() {
+        assert_eq!(
+            resolve_remote_resource_text("https://example.test/script.py", "script.py", "print(1)")
+                .unwrap()
+                .kind,
+            RemoteResourceKind::Python
+        );
+        assert_eq!(
+            resolve_remote_resource_text(
+                "https://example.test/catalog.json",
+                "catalog.json",
+                r#"{"assays": []}"#,
+            )
+            .unwrap()
+            .kind,
+            RemoteResourceKind::Catalogue
+        );
+        assert_eq!(
+            resolve_remote_resource_text(
+                "https://example.test/variant.yaml",
+                "variant.yaml",
+                "rsid: rs1\n",
+            )
+            .unwrap()
+            .kind,
+            RemoteResourceKind::Variant
+        );
+        assert_eq!(
+            resolve_remote_resource_text(
+                "https://example.test/assay.yaml",
+                "assay.yaml",
+                "assay:\n  version: v1\n",
+            )
+            .unwrap()
+            .version
+            .as_deref(),
+            Some("v1")
+        );
+    }
+
+    #[test]
+    fn dependency_url_resolution_handles_github_absolute_repo_paths_and_standard_relative_paths() {
+        assert_eq!(
+            resolve_resource_url(
+                "https://github.com/org/repo/blob/main/panels/panel.yaml",
+                "/variants/rs1.yaml",
+            )
+            .as_deref(),
+            Some("https://github.com/org/repo/blob/main/variants/rs1.yaml")
+        );
+        assert_eq!(
+            resolve_resource_url("https://example.test/a/b/panel.yaml", "../v/rs1.yaml")
+                .as_deref(),
+            Some("https://example.test/a/v/rs1.yaml")
+        );
+        assert!(resolve_resource_url("not a url", "relative.yaml").is_none());
+    }
+
+    #[test]
+    fn parse_structured_text_reports_yaml_and_json_errors() {
+        assert!(parse_structured_text("bad.yaml", "{")
+            .unwrap_err()
+            .contains("failed to parse YAML"));
+        assert!(parse_structured_text("bad.json", "{")
+            .unwrap_err()
+            .contains("failed to parse JSON"));
+        assert!(parse_structured_text("notes.txt", "not structured")
+            .unwrap()
+            .is_none());
+        assert!(has_extension("PANEL.YAML", &["yaml"]));
+    }
+}

@@ -378,3 +378,172 @@ fn validate_panel_file(path: &Path) -> Result<FileReport, String> {
         issues,
     })
 }
+
+#[cfg(test)]
+mod load_validator_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "bioscript-schema-load-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn variant_yaml(name: &str) -> String {
+        format!(
+            r#"
+schema: bioscript:variant:1.0
+version: "1.0"
+name: {name}
+tags: [tag:test]
+identifiers:
+  rsids: [rs1]
+coordinates:
+  grch38:
+    chrom: "1"
+    pos: 100
+alleles:
+  kind: snv
+  ref: A
+  alts: [G]
+"#
+        )
+    }
+
+    #[test]
+    fn manifest_loaders_parse_variant_panel_and_assay_text() {
+        let variant = load_variant_manifest_text("variant.yaml", &variant_yaml("rs1")).unwrap();
+        assert_eq!(variant.name, "rs1");
+        assert_eq!(variant.tags, vec!["tag:test"]);
+
+        let lookup = load_variant_manifest_text_for_lookup(
+            "legacy.yaml",
+            &variant_yaml("rs1").replace("bioscript:variant:1.0", "bioscript:variant"),
+        )
+        .unwrap();
+        assert_eq!(lookup.spec.rsids, vec!["rs1"]);
+
+        let panel = load_panel_manifest_text(
+            "panel.yaml",
+            r#"
+schema: bioscript:panel:1.0
+version: "1.0"
+name: panel
+label: Panel
+permissions:
+  domains: [https://example.test]
+downloads:
+  - id: dl
+    url: https://example.test/file.yaml
+    sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    version: "1"
+members:
+  - kind: variant
+    path: variant.yaml
+analyses:
+  - id: a
+    kind: bioscript
+    path: analysis.bs
+    output_format: json
+    derived_from: [variant.yaml]
+"#,
+        )
+        .unwrap();
+        assert_eq!(panel.downloads.len(), 1);
+        assert_eq!(panel.members.len(), 1);
+        assert_eq!(panel.interpretations.len(), 1);
+
+        let assay = load_assay_manifest_text(
+            "assay.yaml",
+            r#"
+schema: bioscript:assay:1.0
+version: "1.0"
+name: assay
+members:
+  - kind: variant
+    path: variant.yaml
+"#,
+        )
+        .unwrap();
+        assert_eq!(assay.members.len(), 1);
+    }
+
+    #[test]
+    fn manifest_loaders_report_parse_and_validation_errors() {
+        assert!(load_variant_manifest_text("bad.yaml", "{")
+            .unwrap_err()
+            .contains("failed to parse YAML"));
+        assert!(load_variant_manifest_text("bad.yaml", "schema: bioscript:variant:1.0\n")
+            .unwrap_err()
+            .contains("missing required field"));
+        assert!(load_variant_manifest_text_for_lookup("bad.yaml", "schema: bad\n")
+            .unwrap_err()
+            .contains("expected schema"));
+        assert!(load_panel_manifest_text("bad.yaml", "schema: bad\n")
+            .unwrap_err()
+            .contains("expected schema"));
+        assert!(load_assay_manifest_text("bad.yaml", "schema: bad\n")
+            .unwrap_err()
+            .contains("expected schema"));
+    }
+
+    #[test]
+    fn validate_manifest_path_collects_yaml_files_recursively_and_ignores_other_schemas() {
+        let dir = temp_dir("collect");
+        fs::write(dir.join("variant.yaml"), variant_yaml("rs1")).unwrap();
+        fs::write(dir.join("panel.yml"), "schema: bioscript:panel:1.0\n").unwrap();
+        fs::write(dir.join("notes.txt"), "ignored").unwrap();
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        fs::write(dir.join("nested/missing-schema.yaml"), "name: missing\n").unwrap();
+
+        let files = collect_yaml_files(&dir).unwrap();
+        assert_eq!(files.len(), 3);
+
+        let report = validate_variants_path(&dir).unwrap();
+        assert_eq!(report.files_scanned, 3);
+        assert_eq!(report.total_errors(), 1);
+        assert!(report.render_text().contains("missing schema"));
+
+        let panel_report = validate_panels_path(&dir).unwrap();
+        assert_eq!(panel_report.files_scanned, 3);
+        assert!(panel_report.total_errors() >= 1);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn validate_file_helpers_skip_unrelated_schemas_and_handle_missing_schema() {
+        let dir = temp_dir("files");
+        let missing = dir.join("missing.yaml");
+        fs::write(&missing, "name: missing\n").unwrap();
+        assert_eq!(validate_variant_file(&missing).unwrap().issues[0].path, "schema");
+        assert_eq!(validate_panel_file(&missing).unwrap().issues[0].path, "schema");
+        assert_eq!(validate_assay_file(&missing).unwrap().issues[0].path, "schema");
+
+        let panel = dir.join("panel.yaml");
+        fs::write(&panel, "schema: bioscript:panel:1.0\n").unwrap();
+        assert!(validate_variant_file(&panel).unwrap().issues.is_empty());
+
+        let pgx = dir.join("pgx.yaml");
+        fs::write(
+            &pgx,
+            r#"
+schema: bioscript:pgx-findings:1.0
+version: "1.0"
+findings: []
+"#,
+        )
+        .unwrap();
+        assert!(!validate_variant_file(&pgx).unwrap().issues.is_empty());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
