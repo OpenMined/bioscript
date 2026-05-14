@@ -429,6 +429,42 @@ existing N-S regression test (`graph_haplotypes_recovers_reduced_vntyper_ns_inse
 remains in scope; once the root cause of the over-extension is found
 they should become unnecessary.
 
+### Focused diagnostic test
+
+`crates/kestrel/tests/jr_traversal.rs` runs the haplotype graph
+assembly on the real post-`kmercount:5` k-mer count map for the
+negative VNtyper FASTQ (committed as
+`crates/kestrel/tests/fixtures/jr_counts.tsv`, ~603 KB, 25,299 unique
+k-mers). It assembles `J-R:4-119` and asserts that the result should
+match Java's 0 haplotypes. The test currently fails with 15 Rust
+haplotypes. Gate it behind `KESTREL_RUN_JR_DIAGNOSTIC=1` so it does
+not block normal test runs.
+
+The new `[KDBG-ITER-END]` trace adds per-iter consensus length,
+max-alignment-score, and saved-state stack-size at the end of each
+outer iter (first 5 only). For J-R:4-119 in isolation:
+
+```
+iter=1 consensus_len=80  max_align_score=536  stack_size=10
+iter=2 consensus_len=117 max_align_score=940  stack_size=10
+iter=3 consensus_len=100 max_align_score=728  stack_size=10
+iter=4 consensus_len=117 max_align_score=980  stack_size=10
+iter=5 consensus_len=117 max_align_score=960  stack_size=10
+```
+
+First successful emit lands at iter 481 with `consensus_len=117`.
+So early iters all build chain entries that `trim_haplotypes` removes
+(consensus does not end-anchor on `ref[100..120]`), and the saved-
+state stack never drains. The cycle break rate per iter is ~4.7% in
+Rust vs ~29% in Java — Rust's saved-state stack stays churning while
+Java's saturates. The investigation has gone as far as code reading,
+empirical experiments, and per-iter diagnostics can take it without
+side-by-side Java instrumentation. The next step is either to add a
+custom JVM agent that prints Java's `maxAlignmentScoreNode` chain
+contents per addBase, or to write a Rust-only emulator that mirrors
+Java's exact stack and chain-handling and bisects against the
+observed Rust trace.
+
 Current observed behavior:
 
 - Reduced static regression at `10/15`: Rust emits the expected insertion
