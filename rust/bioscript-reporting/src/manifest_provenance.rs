@@ -61,7 +61,7 @@ mod tests {
     #[test]
     fn collect_manifest_provenance_entries_deduplicates_sources() {
         let value: serde_yaml::Value = serde_yaml::from_str(
-            r#"
+            r"
 schema: bioscript:variant:1.0
 provenance:
   sources:
@@ -71,7 +71,7 @@ provenance:
     - kind: database
       label: Duplicate dbSNP
       url: https://www.ncbi.nlm.nih.gov/snp/rs1
-"#,
+",
         )
         .unwrap();
 
@@ -90,7 +90,7 @@ provenance:
             files: BTreeMap::from([
                 (
                     "panel.yaml".to_owned(),
-                    r#"
+                    r"
 schema: bioscript:panel:1.0
 members:
   - kind: variant
@@ -102,24 +102,24 @@ provenance:
     - kind: database
       label: Panel
       url: https://example.test/panel
-"#
+"
                     .to_owned(),
                 ),
                 (
                     "rs1.yaml".to_owned(),
-                    r#"
+                    r"
 schema: bioscript:variant:1.0
 provenance:
   sources:
     - kind: database
       label: Variant
       url: https://example.test/variant
-"#
+"
                     .to_owned(),
                 ),
                 (
                     "assay/manifest.yaml".to_owned(),
-                    r#"
+                    r"
 schema: bioscript:assay:1.0
 members:
   - kind: variant
@@ -129,19 +129,19 @@ provenance:
     - kind: database
       label: Assay
       url: https://example.test/assay
-"#
+"
                     .to_owned(),
                 ),
                 (
                     "assay/rs2.yaml".to_owned(),
-                    r#"
+                    r"
 schema: bioscript:variant:1.0
 provenance:
   sources:
     - kind: database
       label: Nested Variant
       url: https://example.test/nested
-"#
+"
                     .to_owned(),
                 ),
             ]),
