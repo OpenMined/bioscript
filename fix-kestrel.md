@@ -1036,6 +1036,100 @@ against Rust's same trace to find the FIRST iter where bottom-row
 scores diverge. Without that comparison point, all the algorithm
 components match by inspection but produce different outputs.
 
+### Java instrumentation built and used (2026-05-15)
+
+Built `scripts/instrument-java-addbase.sh` which patches Java's
+`KmerAligner.addBase` to emit per-call `[JDBG-ADDBASE]` log lines
+(consensus_size, max_align_score, align_bot, gap_con_bot, max_pot_score,
+continue, base) without permanently modifying the source. Generated a
+side-by-side `kestrel-instr.jar` and reran the negative VNtyper FASTQ
+test (Java effective caps 10/15). Trace at
+`scripts/jr-trace-samples/java-iter1-jr-addbase.log` (200 lines).
+
+Critical finding from the trace: **Iter 1 ends at consensus_size=80 in
+BOTH Java and Rust** (cycle break on C: kmer
+`GGGCGGTGGAGCCCGGGGCC` already in hash from iter 1.1). **Iter 2 starts
+with restore of T-alt in both** (saved at iter 1.61 with min_depth=1572,
+the most recent push). The `[JDBG-ADDBASE]` log shows:
+
+```
+consensus_size=80 max_align_score=536 base=C       <- iter 1's last addBase
+Saving state GGGCGGTGGAGCCCGGGGCA (count=6, ...)   <- A save rejected
+Rejecting state save GGGCGGTGGAGCCCGGGGCA          <- rejection log
+Saving state GGGCGGTGGAGCCCGGGGCG (count=1600, ...)<- G save accepted
+Removing saved state CTGGTGTCCGGGGCCGAGGG [minDepth=699] <- eviction
+Saving state GGGCGGTGGAGCCCGGGGCT (count=1572, ...)<- T save accepted
+Removing saved state TGACACCGTGGGCTGGGGGT [minDepth=965] <- eviction
+Cycle detected: GGGCGGTGGAGCCCGGGGCC ...           <- iter 1 cycle break
+Trimming alignment ... MaxAlignment[len=80, score=536]
+consensus_size=81 max_align_score=536 base=T       <- iter 2's first addBase via restore
+```
+
+So Java's iter 1→iter 2 boundary is at consensus_size=80→81 (a CONTINUOUS
+consensus_size sequence). The naive `cs <= prev` detection misses this
+boundary entirely. Genuine iter boundaries have to be detected via the
+"Cycle detected" + "Trimming alignment" log markers that precede each
+restore.
+
+This proves Rust's iter 1 + iter 2 behavior is **identical** to Java's
+for J-R:4-119 — same cycle break point, same T-alt restore. The
+divergence must therefore be in iter 3+.
+
+### Iter 4 divergence pinpointed
+
+Counting Java's iter boundaries via "Cycle detected" + "Trimming alignment"
+log markers in the instrumented trace:
+
+| iter | Java chain head (len, score) | Java cycle break kmer (if any) | Rust KDBG-ITER-END (consensus_len, max_align) |
+| ---- | ---------------------------- | ------------------------------ | --------------------------------------------- |
+| 1    | (80, 536)                    | GGGCGGTGGAGCCCGGGGCC           | (80, 536.0)                                   |
+| 2    | (116, 940)                   | — (addBase false at 117)       | (117, 940.0)                                  |
+| 3    | (98, 728)                    | GGCCTGGTGTCCGGGGCCGA           | (100, 728.0)                                  |
+| 4    | (80, 536)                    | GGGCGGTGGAGCCCGGGGCC           | (117, 980.0)  ←── **DIVERGES**                |
+| 5    | (98, 728)                    | GGCCTGGTGTCCGGGGCCGA           | (117, 960.0)                                  |
+| 6    | (81, 590)                    | GCGGTGGAGCCCGGGGCCGG           | (115, 886.0)                                  |
+
+**Iter 4 is the first divergence.** Java's iter 4 cycles at consensus_size=80
+with chain head score=536 (the SAME chain as iter 1). Rust's iter 4 reaches
+consensus_len=117 with score=980 — a NEW HIGHER max than iter 2's 940.
+
+Java's iter 4 follows the same starting state as iter 1 because Java's iter
+4 restores from a save that puts it on a near-identical path. Rust's iter 4
+restores from a different save that leads to a NEW high-scoring path.
+
+The difference must be in **what's on the saved-state stack at iter 3 end**.
+Both Java and Rust have the same chains for iters 1-3, so the SAVE EVENTS
+should match. But the ORDER and ACCEPTANCE of saves might differ, leaving
+different top-of-stack states for iter 4's restore.
+
+### Hypothesis for the next session
+
+Java's iter 4 restoring a state that retraces iter 1's path (cycle break at
+consensus_size=80) means the restored save was one of iter 1's alts
+(specifically G-alt at consensus_size=80, since A-alt was rejected). After
+restore, addBase(G) sets a path that quickly cycles back to consensus_size=80.
+
+Rust's iter 4 restoring a HIGHER-scoring path means Rust's stack at this
+point has a DIFFERENT top — perhaps a save from iter 2 or iter 3 that
+leads to a richer chain.
+
+To pin this down: instrument Rust's `restore_state` to log the restored
+`(kmer, next_base, consensus_size, min_depth)` per iter, then compare with
+Java's restore events. The iter where Rust's restored kmer differs from
+Java's is the smoking gun.
+
+Implementation sketch:
+
+```rust
+// In restore_state() right before the Ok return:
+eprintln!("[KDBG-RESTORE] consensus_size={} kmer={} next_base={:?} min_depth={}",
+          saved.consensus_size, kmer_util.decode(&saved.kmer).iter().collect::<String>(),
+          saved.next_base, saved.min_depth);
+```
+
+With this trace from Rust + the existing Java instrumentation, the next
+session can directly find iter 4's restore disagreement.
+
 ### Cap-sweep diagnostic
 
 Final session experiment: running with cap-reset DISABLED (Rust uses the
