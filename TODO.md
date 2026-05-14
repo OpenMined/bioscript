@@ -479,6 +479,11 @@ This is not just a facade spike. The finish line is:
       Rust output (`2189` SNP, `69` insertion, `64` deletion), reinforcing that
       this is Kestrel engine assembly/depth parity rather than VNtyper
       post-processing.
+      The same vendor gate accepts `KESTREL_VNTYPER_MAX_HAPLOTYPES` and
+      `KESTREL_VNTYPER_MAX_ALIGNER_STATES` overrides. Defaults stay bounded at
+      `2/2` for runnable diagnostics; upstream VNtyper's Java config is
+      `40/40`, so exact upstream-limit reruns should use both overrides when
+      the Rust engine is fast enough.
       Rechecked after adding vendor failure-context diagnostics: the negative
       fixture still fails after 110.51s with Rust record count 2322 vs Java
       expected 4897. Missing examples include `1-2:43 T>C GDP=5 DP=901`,
