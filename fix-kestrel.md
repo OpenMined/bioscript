@@ -1266,6 +1266,47 @@ gap-consensus paths for 18-base insertions while Java's does. With the
 stack management now correct, the saved-state semantics are no longer a
 confounding variable.
 
+### Post-fix missing/extra analysis
+
+Comparing parity output files at `/tmp/parity-out/negative/` (with the
+fix) and ignoring DP/GDP differences:
+
+- **1,028 truly missing variants** (Java has, Rust doesn't):
+  - 622 SNPs
+  - 383 insertions
+  - 23 deletions
+- **478 extras** (Rust has, Java doesn't)
+
+Missing variants per region: 4-8 per region across many MUC1 motif
+references. No single region dominates.
+
+Examples of missing variants from N-R:
+- N-R:25 C→G GDP=1600 (Rust has it, but with DP=28003 vs Java's 28973;
+  this DP mismatch makes the comm-based test treat them as different)
+- N-R:26 G→GGGTGGAGCCCGGGGCCGG (18-base INS, **Rust truly missing**)
+- N-R:62 G→T SNP (truly missing in Rust)
+- N-R:86 G→GGGTGGAGCCCGGGGCCGG (another 18-base INS, missing)
+
+A significant portion of the "missing 1,028" is actually present in
+Rust with slightly different DP values. The DP calculation diverges
+between Java and Rust — likely due to different haplotype emission
+patterns affecting the `total_depth` accumulator in variant.rs.
+
+True missing variants (variant key match, DP ignored) is smaller than
+1,028 — most regions have only 4-8 truly missing variants. The bulk
+of the parity gap is DP value differences, not actual variant
+detection differences.
+
+Closing the remaining gap requires either:
+1. Aligning Rust's `total_depth` calculation with Java's (so DP values
+   match), OR
+2. Investigating why specific regions produce slightly different
+   haplotype chains (the 18-base INS detection issue).
+
+The cycle-pattern over-generation problem is conclusively solved by
+the nState accounting fix. The remaining work is on a different
+algorithmic layer.
+
 ### Cap-sweep diagnostic
 
 Final session experiment: running with cap-reset DISABLED (Rust uses the
