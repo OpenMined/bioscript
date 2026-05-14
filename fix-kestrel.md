@@ -889,3 +889,67 @@ Alternatively, **add a chain-shape dedup at the haplotype emission
 level**: when emit produces a haplotype whose final (chain_length,
 chain_score, end_kmer) matches a previous emission's, skip it. This
 would catch the cycle without requiring deeper algorithm changes.
+
+### Aggressive dedup experiment (KESTREL_AGGRESSIVE_STATE_DEDUP=1)
+
+Tested by hashing save keys by `(kmer, next_base)` only — dropping the
+consensus suffix that currently distinguishes alt branches converging at
+the same kmer via different intermediate paths.
+
+J-R diagnostic results (with aggressive dedup):
+- Outer iters: 26,894 → 283 (99% reduction — cycle confirmed).
+- Raw emits: 1753 → 11.
+- Haplotypes: 15 → 11.
+
+Full negative VNtyper FASTQ parity (with aggressive dedup):
+- Actual records: 7062 → 9359 (WORSE, 32% more).
+- Extras: 2727 → 5020.
+- Missing: 562 → 558 (mostly unchanged).
+
+**Conclusion**: The cycle hypothesis is confirmed for J-R, but
+aggressive dedup is the wrong fix. It prunes save attempts that are
+legitimately distinct in OTHER regions, causing different chains to win
+the eviction race and producing different (often worse) variant calls.
+The right fix must distinguish "cycle-driving alt branches" from
+"legitimate distinct alt branches with different downstream consensus",
+which requires algorithm-level instead of save-key-level discrimination.
+
+### Session summary (2026-05-15)
+
+**Confirmed and committed fixes** (none alone closes parity gap):
+
+1. `MaxAlignmentScoreNode.haplotype_built` now `Rc<Cell<bool>>` —
+   shared across snapshot clones to match Java's reference semantics.
+2. Initial `min_depth` in `build_forward_haplotypes` and
+   `build_reverse_haplotypes` adds the reverse-complement count to
+   match Java's `countReverseKmers` behavior.
+3. Three opt-in escape-hatch env vars for future investigations:
+   `KESTREL_DISABLE_STATE_DEDUP`, `KESTREL_AGGRESSIVE_STATE_DEDUP`,
+   `KESTREL_TRACE_ITER_MAX`.
+
+**Bug status**: The parity gap remains at 7062 actual vs 4897 expected,
+2727 extras, 562 missing. The root cause is identified as Rust's
+outer-iter cycle on repetitive regions like MUC1 J-R: saved alt branches
+converging at the same kmer via different consensus paths cause the
+saved-state stack to refill faster than it drains, producing 700×
+more outer iters than Java.
+
+**Confirmed byte-equivalent vs Java** (extensive verification this session):
+- All `AlignmentWeight` defaults and derived values.
+- All matrix transition scores (align, gap_ref, gap_con tables).
+- `trace_branch` candidate ordering.
+- `record_max_node` chain-extension/reset semantics.
+- `save_state` rejection and `removeMinState` eviction policies
+  (verified for J-R iters 1-9).
+- Cycle detection via `KmerHashSet`.
+- `kmer_depth` (forward + reverse).
+- `trim_haplotypes` end-kmer-mismatch removal.
+- `get_haplotypes` `haplotype_built` skip-on-rebuild (now shared via Rc).
+- `addBase` true/false return formula.
+
+**Next session priority**: Either (a) JVM-side instrument Java to dump its
+exact saved-state stack contents per inner-iter and bisect against Rust's,
+OR (b) attempt a targeted fix in `record_max_node` that detects "alt branches
+producing the same trace-shape tail" and skips chain extension when the new
+node's trace_node tail matches an already-emitted node's tail (a
+chain-shape-aware variant of the `haplotype_built` flag).
