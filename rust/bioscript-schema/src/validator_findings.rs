@@ -242,3 +242,147 @@ fn validate_finding_binding_operator(parent: &str, binding: &Mapping, issues: &m
         }),
     }
 }
+
+#[cfg(test)]
+mod finding_validator_tests {
+    use super::*;
+
+    fn yaml(text: &str) -> Value {
+        serde_yaml::from_str(text).unwrap()
+    }
+
+    fn issue_paths(issues: &[Issue]) -> Vec<String> {
+        issues.iter().map(|issue| issue.path.clone()).collect()
+    }
+
+    #[test]
+    fn validate_findings_reports_shape_schema_alt_and_content_issues() {
+        let root = yaml(
+            r#"
+alleles:
+  alts: [A]
+findings:
+  - not a mapping
+  - {}
+  - schema: ""
+  - schema: bioscript:pgx:1.0
+    alt: T
+  - schema: bioscript:trait:1.0
+    alt: "*"
+    summary: ok
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_findings(&root, &mut issues);
+        let paths = issue_paths(&issues);
+        assert!(paths.contains(&"findings[0]".to_owned()));
+        assert!(paths.contains(&"findings[1].schema".to_owned()));
+        assert!(paths.contains(&"findings[2].schema".to_owned()));
+        assert!(paths.contains(&"findings[3].schema".to_owned()));
+        assert!(paths.contains(&"findings[3].alt".to_owned()));
+        assert!(paths.contains(&"findings[3]".to_owned()));
+    }
+
+    #[test]
+    fn variant_and_analysis_binding_validation_covers_required_fields() {
+        let root = yaml(
+            r#"
+findings:
+  - schema: bioscript:trait:1.0
+    summary: ok
+    binding:
+      source: variant
+      operator: equals
+  - schema: bioscript:trait:1.0
+    summary: ok
+    binding:
+      source: analysis
+      operator: equals
+      key: ""
+  - schema: bioscript:trait:1.0
+    summary: ok
+    binding:
+      source: external
+      operator: in
+      key: outcome
+      values: []
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_findings(&root, &mut issues);
+        let paths = issue_paths(&issues);
+        assert!(paths.contains(&"findings[0].binding.variant".to_owned()));
+        assert!(paths.contains(&"findings[0].binding.value".to_owned()));
+        assert!(paths.contains(&"findings[1].binding.key".to_owned()));
+        assert!(paths.contains(&"findings[1].binding.analysis_id".to_owned()));
+        assert!(paths.contains(&"findings[1].binding.value".to_owned()));
+        assert!(paths.contains(&"findings[2].binding.source".to_owned()));
+        assert!(paths.contains(&"findings[2].binding.values".to_owned()));
+    }
+
+    #[test]
+    fn dosage_binding_validation_covers_equals_in_and_unknown_operators() {
+        let root = yaml(
+            r#"
+findings:
+  - schema: bioscript:trait:1.0
+    summary: ok
+    binding:
+      source: variant
+      variant: rs1.yaml
+      operator: dosage_equals
+      allele: ""
+      value: 4
+  - schema: bioscript:trait:1.0
+    summary: ok
+    binding:
+      source: variant
+      variant: rs1.yaml
+      operator: dosage_in
+      allele: A
+      values: [0, bad, 2]
+  - schema: bioscript:trait:1.0
+    summary: ok
+    binding:
+      source: variant
+      variant: rs1.yaml
+      operator: contains
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_findings(&root, &mut issues);
+        let paths = issue_paths(&issues);
+        assert!(paths.contains(&"findings[0].binding.allele".to_owned()));
+        assert!(paths.contains(&"findings[0].binding.value".to_owned()));
+        assert!(paths.contains(&"findings[1].binding.values".to_owned()));
+        assert!(paths.contains(&"findings[2].binding.operator".to_owned()));
+    }
+
+    #[test]
+    fn effect_validation_covers_non_sequence_and_nested_effect_bindings() {
+        let root = yaml(
+            r"
+findings:
+  - schema: bioscript:trait:1.0
+    summary: ok
+    effects: not-a-sequence
+  - schema: bioscript:trait:1.0
+    summary: ok
+    effects:
+      - not-a-mapping
+      - binding:
+          source: variant
+          variant: rs1.yaml
+          operator: dosage_in
+          allele: A
+          values: []
+",
+        );
+        let mut issues = Vec::new();
+        validate_findings(&root, &mut issues);
+        let paths = issue_paths(&issues);
+        assert!(paths.contains(&"findings[0].effects".to_owned()));
+        assert!(paths.contains(&"findings[1].effects[0]".to_owned()));
+        assert!(paths.contains(&"findings[1].effects[1].binding.values".to_owned()));
+    }
+}

@@ -8,6 +8,7 @@ use bioscript_schema::{
     load_variant_manifest_text,
 };
 
+#[path = "manifest_provenance.rs"]
 mod provenance;
 
 pub use provenance::{collect_manifest_provenance_entries, load_manifest_provenance_links};
@@ -512,10 +513,11 @@ mod tests {
     use super::{
         ExecutableAssayMember, ExecutablePanelMember, ManifestWorkspace, ReportManifestKind,
         assay_executable_member, assay_executable_member_path, collect_analysis_manifest_tasks,
-        collect_variant_manifest_tasks, matches_analysis_path_filters,
-        matches_variant_manifest_filters, panel_executable_member, panel_executable_member_path,
-        report_assay_id, report_manifest_kind, report_manifest_schema,
-        resolve_filesystem_manifest_path, traversable_manifest_member_paths,
+        collect_variant_manifest_tasks, load_manifest_findings, load_report_manifest_context,
+        matches_analysis_path_filters, matches_variant_manifest_filters, panel_executable_member,
+        panel_executable_member_path, report_assay_id, report_manifest_kind,
+        report_manifest_metadata, report_manifest_schema, resolve_filesystem_manifest_path,
+        traversable_manifest_member_paths,
     };
 
     struct InlineWorkspace {
@@ -536,8 +538,8 @@ mod tests {
         }
     }
 
-    struct MapWorkspace {
-        files: BTreeMap<String, String>,
+    pub(super) struct MapWorkspace {
+        pub(super) files: BTreeMap<String, String>,
     }
 
     impl ManifestWorkspace for MapWorkspace {
@@ -651,6 +653,32 @@ alleles:
             report_manifest_schema(&workspace, "assay.yaml").unwrap_err(),
             "assay.yaml is missing schema"
         );
+    }
+
+    #[test]
+    fn report_manifest_metadata_collects_tags_members_and_fallback_label() {
+        let workspace = InlineWorkspace {
+            yaml: r#"
+schema: bioscript:panel:1.0
+version: "1.0"
+name: pgx-panel
+tags: [pgx, cardiology, 7]
+members:
+  - kind: variant
+    path: rs1.yaml
+    version: "1"
+  - kind: assay
+    path: assay.yaml
+  - not: a-member
+"#,
+        };
+        let metadata = report_manifest_metadata(&workspace, "panel.yaml").unwrap();
+        assert_eq!(metadata["schema"], "bioscript:panel:1.0");
+        assert_eq!(metadata["label"], "pgx-panel");
+        assert_eq!(metadata["tags"], serde_json::json!(["pgx", "cardiology"]));
+        assert_eq!(metadata["members"][0]["kind"], "variant");
+        assert_eq!(metadata["members"][0]["path"], "rs1.yaml");
+        assert_eq!(metadata["members"][0]["version"], "1");
     }
 
     #[test]
@@ -812,6 +840,82 @@ analyses:
                 .collect::<Vec<_>>(),
             vec!["rs1.yaml", "assets/APOE/rs2.yaml"]
         );
+
+        let assay_tasks =
+            collect_variant_manifest_tasks(&workspace, "assets/APOE/assay.yaml", &[]).unwrap();
+        assert_eq!(assay_tasks.len(), 1);
+        assert_eq!(assay_tasks[0].manifest_path, "assets/APOE/rs2.yaml");
+
+        let variant_tasks = collect_variant_manifest_tasks(&workspace, "rs1.yaml", &[]).unwrap();
+        assert_eq!(variant_tasks.len(), 1);
+        assert_eq!(variant_tasks[0].manifest.name, "rs1");
+    }
+
+    #[test]
+    fn manifest_context_and_findings_follow_includes_members_and_inherited_bindings() {
+        let workspace = MapWorkspace {
+            files: BTreeMap::from([
+                (
+                    "panel.yaml".to_owned(),
+                    r#"
+schema: bioscript:panel:1.0
+version: "1.0"
+name: panel
+findings:
+  - include: included.yaml
+    binding:
+      source: variant
+      variant: rs1.yaml
+      key: outcome
+      value: variant
+  - schema: bioscript:trait:1.0
+    summary: panel direct
+members:
+  - kind: variant
+    path: rs1.yaml
+"#
+                    .to_owned(),
+                ),
+                (
+                    "included.yaml".to_owned(),
+                    r#"
+schema: bioscript:pgx-findings:1.0
+version: "1.0"
+rsid: rs1
+findings:
+  - schema: bioscript:trait:1.0
+    summary: included inherited
+  - schema: bioscript:trait:1.0
+    summary: included own effects
+    effects: []
+"#
+                    .to_owned(),
+                ),
+                ("rs1.yaml".to_owned(), variant_yaml("rs1", 1, "keep")),
+            ]),
+        };
+
+        let findings = load_manifest_findings(&workspace, "panel.yaml").unwrap();
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding["summary"] == "panel direct")
+        );
+        let inherited = findings
+            .iter()
+            .find(|finding| finding["summary"] == "included inherited")
+            .unwrap();
+        assert_eq!(inherited["binding"]["variant"], "rs1.yaml");
+        let own_effects = findings
+            .iter()
+            .find(|finding| finding["summary"] == "included own effects")
+            .unwrap();
+        assert!(own_effects.get("binding").is_none());
+
+        let context = load_report_manifest_context(&workspace, "panel.yaml").unwrap();
+        assert_eq!(context.assay_id, "panel");
+        assert_eq!(context.manifest_metadata["name"], "panel");
+        assert!(!context.findings.is_empty());
     }
 
     #[test]

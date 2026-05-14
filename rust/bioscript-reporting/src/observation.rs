@@ -598,4 +598,181 @@ mod tests {
             ("0".to_owned(), "hem_ref".to_owned())
         );
     }
+
+    fn manifest(
+        kind: VariantKind,
+        chrom: &str,
+        reference: &str,
+        alternate: &str,
+    ) -> VariantManifest {
+        VariantManifest {
+            path: PathBuf::from("variants/rs1.yaml"),
+            name: "rs1".to_owned(),
+            tags: vec!["tag:test".to_owned()],
+            spec: VariantSpec {
+                rsids: vec!["rs1".to_owned()],
+                grch37: Some(bioscript_core::GenomicLocus {
+                    chrom: chrom.to_owned(),
+                    start: 10,
+                    end: 10,
+                }),
+                grch38: Some(bioscript_core::GenomicLocus {
+                    chrom: chrom.to_owned(),
+                    start: 20,
+                    end: 20,
+                }),
+                reference: Some(reference.to_owned()),
+                alternate: Some(alternate.to_owned()),
+                kind: Some(kind),
+                ..VariantSpec::default()
+            },
+        }
+    }
+
+    fn base_row() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("participant_id".to_owned(), "p1".to_owned()),
+            ("matched_rsid".to_owned(), "rs1".to_owned()),
+            ("backend".to_owned(), "text".to_owned()),
+            ("assembly".to_owned(), "grch38".to_owned()),
+            ("genotype".to_owned(), "AG".to_owned()),
+            ("ref_count".to_owned(), "8".to_owned()),
+            ("alt_count".to_owned(), "7".to_owned()),
+            ("depth".to_owned(), "15".to_owned()),
+            ("evidence".to_owned(), "fixture".to_owned()),
+        ])
+    }
+
+    #[test]
+    fn app_observation_json_covers_called_variant_fields() {
+        let row = base_row();
+        let observation = app_observation_from_manifest_row(AppObservationInput {
+            row: &row,
+            row_path: "variants/rs1.yaml",
+            assay_id: "assay",
+            manifest: manifest(VariantKind::Snp, "1", "A", "G"),
+            gene: "ABC".to_owned(),
+            source: serde_json::json!({"kind": "database"}),
+            observed_alt_alleles: Vec::new(),
+            inferred_sex: None,
+            fallback_assembly: None,
+        });
+
+        assert_eq!(observation["participant_id"], "p1");
+        assert_eq!(observation["assay_id"], "assay");
+        assert_eq!(observation["variant_key"], "rs1");
+        assert_eq!(observation["assembly"], "GRCH38");
+        assert_eq!(observation["pos_start"], 20);
+        assert_eq!(observation["genotype"], "0/1");
+        assert_eq!(observation["zygosity"], "het");
+        assert_eq!(observation["outcome"], "variant");
+        assert_eq!(observation["allele_balance"], serde_json::json!(7.0 / 15.0));
+        assert_eq!(observation["facets"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn app_observation_json_covers_no_call_not_covered_and_fallback_assembly() {
+        let mut no_call = BTreeMap::from([
+            ("participant_id".to_owned(), "p2".to_owned()),
+            ("backend".to_owned(), "text".to_owned()),
+            ("depth".to_owned(), "0".to_owned()),
+        ]);
+        let observation = app_observation_from_manifest_row(AppObservationInput {
+            row: &no_call,
+            row_path: "variants/rs1.yaml",
+            assay_id: "assay",
+            manifest: manifest(VariantKind::Snp, "1", "A", "G"),
+            gene: "ABC".to_owned(),
+            source: serde_json::Value::Null,
+            observed_alt_alleles: Vec::new(),
+            inferred_sex: None,
+            fallback_assembly: Some(Assembly::Grch37),
+        });
+        assert_eq!(observation["assembly"], "GRCH37");
+        assert_eq!(observation["pos_start"], 10);
+        assert_eq!(observation["match_status"], "not_found");
+        assert_eq!(observation["coverage_status"], "not_covered");
+        assert_eq!(observation["call_status"], "no_call");
+        assert_eq!(observation["genotype_display"], "??");
+        assert_eq!(observation["outcome"], "not_covered");
+
+        no_call.insert("depth".to_owned(), "12".to_owned());
+        let observation = app_observation_from_manifest_row(AppObservationInput {
+            row: &no_call,
+            row_path: "variants/rs1.yaml",
+            assay_id: "assay",
+            manifest: manifest(VariantKind::Snp, "1", "A", "G"),
+            gene: "ABC".to_owned(),
+            source: serde_json::Value::Null,
+            observed_alt_alleles: Vec::new(),
+            inferred_sex: None,
+            fallback_assembly: Some(Assembly::Grch38),
+        });
+        assert_eq!(observation["outcome"], "no_call");
+    }
+
+    #[test]
+    fn app_observation_json_covers_non_reportable_and_sex_evidence_paths() {
+        let inferred_sex = SexInference {
+            sex: InferredSex::Male,
+            confidence: SexDetectionConfidence::Medium,
+            method: "fixture".to_owned(),
+            evidence: vec!["signal=present".to_owned()],
+        };
+        let mut row = base_row();
+        row.insert("genotype".to_owned(), "TT".to_owned());
+        let observation = app_observation_from_manifest_row(AppObservationInput {
+            row: &row,
+            row_path: "variants/rsx.yaml",
+            assay_id: "assay",
+            manifest: manifest(VariantKind::Snp, "X", "A", "G"),
+            gene: "ABC".to_owned(),
+            source: serde_json::Value::Null,
+            observed_alt_alleles: vec!["T".to_owned()],
+            inferred_sex: Some(&inferred_sex),
+            fallback_assembly: None,
+        });
+
+        assert_eq!(observation["outcome"], "observed_alt");
+        assert_eq!(observation["call_status"], "observed_alt");
+        assert_eq!(observation["facets"], "observed_alt;known_observed_alts=T");
+        assert!(
+            observation["evidence_raw"]
+                .as_str()
+                .unwrap()
+                .contains("detected_sex=male")
+        );
+    }
+
+    #[test]
+    fn app_observation_json_covers_raw_counts_and_weak_indel_match() {
+        let mut row = BTreeMap::from([
+            ("participant_id".to_owned(), "p3".to_owned()),
+            ("matched_rsid".to_owned(), "rs1".to_owned()),
+            ("backend".to_owned(), "zip".to_owned()),
+            ("raw_counts".to_owned(), r#"{"D": 8, "I": 6}"#.to_owned()),
+            ("depth".to_owned(), "14".to_owned()),
+        ]);
+        row.insert("genotype".to_owned(), "ID".to_owned());
+        let observation = app_observation_from_manifest_row(AppObservationInput {
+            row: &row,
+            row_path: "variants/rs1.yaml",
+            assay_id: "assay",
+            manifest: manifest(VariantKind::Deletion, "22", "TTATAA", "<DEL:6>"),
+            gene: "APOL1".to_owned(),
+            source: serde_json::Value::Null,
+            observed_alt_alleles: Vec::new(),
+            inferred_sex: None,
+            fallback_assembly: Some(Assembly::Grch38),
+        });
+        assert_eq!(observation["kind"], "deletion");
+        assert_eq!(observation["genotype"], "0/1");
+        assert_eq!(observation["match_quality"], "weak");
+        assert!(
+            observation["match_notes"]
+                .as_str()
+                .unwrap()
+                .contains("insertion/deletion token")
+        );
+    }
 }

@@ -106,3 +106,101 @@ fn variant_observed_alt_alleles(path: &Path) -> Result<Vec<String>, String> {
         .map(ToOwned::to_owned)
         .collect())
 }
+
+#[cfg(test)]
+mod app_report_observation_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!(
+            "bioscript-report-observations-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_variant_yaml(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn manifest_helpers_extract_gene_alts_and_primary_source() {
+        let dir = temp_dir("variant");
+        let path = write_variant_yaml(
+            &dir,
+            "variant.yaml",
+            r"
+schema: bioscript:variant:1.0
+name: Test variant
+gene: CYP2D6
+identifiers:
+  rsids: [rs123]
+alleles:
+  observed_alts: [A, T]
+evidence:
+  references:
+    - label: Primary
+      url: https://www.ncbi.nlm.nih.gov/snp/rs123
+",
+        );
+
+        assert_eq!(variant_manifest_gene(&path).unwrap(), "CYP2D6");
+        assert_eq!(
+            variant_observed_alt_alleles(&path).unwrap(),
+            vec!["A".to_owned(), "T".to_owned()]
+        );
+        let source = variant_primary_source(&path).unwrap();
+        assert!(source["url"].as_str().unwrap().contains("rs123"));
+        assert!(source_url_contains(&source, "ncbi.nlm.nih.gov/snp"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn primary_source_falls_back_to_rsid_when_no_provenance_link_exists() {
+        let dir = temp_dir("rsid");
+        let path = write_variant_yaml(
+            &dir,
+            "variant.yaml",
+            r"
+schema: bioscript:variant:1.0
+name: Test variant
+identifiers:
+  rsids:
+    - rs4242
+",
+        );
+
+        let source = variant_primary_source(&path).unwrap();
+        assert_eq!(source["label"], "dbSNP / NCBI SNP");
+        assert_eq!(source["url"], "https://www.ncbi.nlm.nih.gov/snp/rs4242");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn yaml_helpers_report_read_and_parse_errors() {
+        let dir = temp_dir("errors");
+        let missing = dir.join("missing.yaml");
+        assert!(load_yaml_value(&missing).unwrap_err().contains("failed to read YAML"));
+
+        let bad = write_variant_yaml(&dir, "bad.yaml", "name: [unterminated");
+        assert!(load_yaml_value(&bad).unwrap_err().contains("failed to parse YAML"));
+        assert!(variant_manifest_gene(&bad)
+            .unwrap_err()
+            .contains("failed to parse variant YAML"));
+
+        let no_alts = write_variant_yaml(&dir, "no-alts.yaml", "gene: ABC\n");
+        assert!(variant_observed_alt_alleles(&no_alts).unwrap().is_empty());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

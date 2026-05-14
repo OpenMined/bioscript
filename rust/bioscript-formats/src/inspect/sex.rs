@@ -455,6 +455,23 @@ fn select_sex_detection_zip_entry<R: std::io::Read + std::io::Seek>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
+    use std::io::Write as _;
+
+    fn zip_bytes(entries: &[(&str, &str)]) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, body) in entries {
+            if name.ends_with('/') {
+                writer.add_directory(*name, options).unwrap();
+            } else {
+                writer.start_file(*name, options).unwrap();
+                writer.write_all(body.as_bytes()).unwrap();
+            }
+        }
+        writer.finish().unwrap().into_inner()
+    }
 
     #[test]
     fn y_fingerprint_detects_male_and_female_text_exports() {
@@ -625,6 +642,91 @@ mod tests {
                 .evidence
                 .iter()
                 .any(|item| item == "y_to_x_pct=30.00")
+        );
+    }
+
+    #[test]
+    fn sex_inference_bytes_and_zip_paths_cover_entry_selection_and_unsupported_kinds() {
+        let text = "rsid\tchromosome\tposition\tgenotype\nrs11575897\tY\t1\tG\n";
+        let unsupported =
+            infer_sex_from_bytes("sample.txt", text.as_bytes(), DetectedKind::ReferenceFasta)
+                .unwrap();
+        assert_eq!(unsupported.sex, InferredSex::Unknown);
+        assert_eq!(unsupported.method, "unsupported_source_type");
+
+        let result =
+            infer_sex_from_bytes("sample.txt", text.as_bytes(), DetectedKind::GenotypeText)
+                .unwrap();
+        assert_eq!(result.method, "snp_array_x_y_fingerprint");
+
+        let archive = zip_bytes(&[
+            ("__MACOSX/._sample.txt", "ignored"),
+            ("notes.md", "ignored"),
+            ("nested/sample.txt", text),
+        ]);
+        let result =
+            infer_sex_from_zip_bytes(&archive, "nested/sample.txt", DetectedKind::GenotypeText)
+                .unwrap();
+        assert_eq!(result.method, "snp_array_x_y_fingerprint");
+
+        let err = infer_sex_from_zip_bytes(&archive, "missing.txt", DetectedKind::GenotypeText)
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("failed to open zip entry missing.txt")
+        );
+
+        let bad_zip =
+            infer_sex_from_zip_bytes(b"not a zip", "sample.txt", DetectedKind::GenotypeText)
+                .unwrap_err();
+        assert!(bad_zip.to_string().contains("failed to read zip bytes"));
+
+        let mut zip = ZipArchive::new(Cursor::new(archive)).unwrap();
+        assert_eq!(
+            select_sex_detection_zip_entry(&mut zip).unwrap(),
+            "nested/sample.txt"
+        );
+
+        let unsupported_zip = zip_bytes(&[("docs/readme.md", "ignored")]);
+        let mut zip = ZipArchive::new(Cursor::new(unsupported_zip)).unwrap();
+        let err = select_sex_detection_zip_entry(&mut zip).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("does not contain a supported sex detection input")
+        );
+    }
+
+    #[test]
+    fn sex_inference_reader_probe_and_late_stream_paths_handle_vcf_edges() {
+        let mut text = String::new();
+        text.push_str("chrY\tbad\t.\tC\tT\t.\tPASS\t.\tGT\t1\n");
+        text.push_str("chrM\t1\t.\tC\tT\t.\tPASS\t.\tGT\t1\n");
+        for idx in 0..70 {
+            let gt = if idx % 2 == 0 { "0|1" } else { "0|0" };
+            let _ = writeln!(
+                text,
+                "23\t{}\t.\tC\tT\t.\tPASS\t.\tGT\t{gt}:99",
+                3_000_000 + idx
+            );
+        }
+        text.push_str("24\t1\t.\tC\tT\t.\tPASS\t.\tGT\t.\n");
+        text.push_str("chrX\t60000\t.\tC\tT\t.\tPASS\t.\tGT\t0/1\n");
+        text.push_str("chrX\t155000000\t.\tC\tT\t.\tPASS\t.\tGT\t0/1\n");
+
+        let result =
+            infer_sex_from_bytes("sample.vcf", text.as_bytes(), DetectedKind::Vcf).unwrap();
+        assert_eq!(result.sex, InferredSex::Female);
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "x_non_par_sites=70")
+        );
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "x_het_gt_sites=35")
         );
     }
 }
