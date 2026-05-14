@@ -1,6 +1,7 @@
 use super::*;
 
 impl PackageWorkspace {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn run_manifest_analyses(
         &self,
         manifest_path: &str,

@@ -1,4 +1,4 @@
-use super::helpers::*;
+use super::helpers::{html_escape, table_cell, value_str};
 use std::fmt::Write as _;
 pub(super) fn collect_report_analyses(reports: &[serde_json::Value]) -> Vec<serde_json::Value> {
     reports

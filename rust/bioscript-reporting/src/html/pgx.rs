@@ -1,4 +1,7 @@
-use super::helpers::*;
+use super::helpers::{
+    class_cell, html_escape, join_drugs, join_string_array, link_cell, render_table_end,
+    render_table_start, table_cell, value_str,
+};
 use super::observations::highlight_allele;
 use std::fmt::Write as _;
 pub(super) fn render_pgx_table(

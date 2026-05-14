@@ -112,16 +112,16 @@ fn run_interpretations_for_report(
                 observations_file.display()
             )
         })?;
-        run_bioscript_analysis_script(
-            options.runtime_root,
-            &script_path,
-            options.input_file,
-            &output_file,
-            &observations_file,
-            options.participant_id,
-            options.loader,
-            options.max_duration_ms,
-        )?;
+        run_bioscript_analysis_script(&BioscriptAnalysisScriptInput {
+            runtime_root: options.runtime_root,
+            script_path: &script_path,
+            input_file: options.input_file,
+            output_file: &output_file,
+            observations_file: &observations_file,
+            participant_id: options.participant_id,
+            loader: options.loader,
+            analysis_max_duration_ms: options.max_duration_ms,
+        })?;
         let (rows, row_headers) = parse_analysis_output(&output_file, analysis_format.format)?;
         let manifest_path_text = manifest_path
             .strip_prefix(options.runtime_root)
@@ -161,54 +161,62 @@ fn run_interpretations_for_report(
     Ok(outputs)
 }
 
-fn run_bioscript_analysis_script(
-    runtime_root: &Path,
-    script_path: &Path,
-    input_file: &Path,
-    output_file: &Path,
-    observations_file: &Path,
-    participant_id: &str,
-    loader: &GenotypeLoadOptions,
+struct BioscriptAnalysisScriptInput<'a> {
+    runtime_root: &'a Path,
+    script_path: &'a Path,
+    input_file: &'a Path,
+    output_file: &'a Path,
+    observations_file: &'a Path,
+    participant_id: &'a str,
+    loader: &'a GenotypeLoadOptions,
     analysis_max_duration_ms: u64,
-) -> Result<(), String> {
+}
+
+fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Result<(), String> {
     let limits = ResourceLimits::new()
-        .max_duration(Duration::from_millis(analysis_max_duration_ms))
+        .max_duration(Duration::from_millis(input.analysis_max_duration_ms))
         .max_memory(16 * 1024 * 1024)
         .max_allocations(400_000)
         .gc_interval(1000)
         .max_recursion_depth(Some(200));
     let runtime = BioscriptRuntime::with_config(
-        runtime_root.to_path_buf(),
+        input.runtime_root.to_path_buf(),
         RuntimeConfig {
             limits,
-            loader: loader.clone(),
+            loader: input.loader.clone(),
             ..RuntimeConfig::default()
         },
     )
     .map_err(|err| err.to_string())?;
     runtime
         .run_file(
-            script_path,
+            input.script_path,
             None,
             vec![
                 (
                     "input_file",
-                    monty::MontyObject::String(runtime_path_string(runtime_root, input_file)),
+                    monty::MontyObject::String(runtime_path_string(
+                        input.runtime_root,
+                        input.input_file,
+                    )),
                 ),
                 (
                     "output_file",
-                    monty::MontyObject::String(runtime_path_string(runtime_root, output_file)),
+                    monty::MontyObject::String(runtime_path_string(
+                        input.runtime_root,
+                        input.output_file,
+                    )),
                 ),
                 (
                     "observations_file",
                     monty::MontyObject::String(runtime_path_string(
-                        runtime_root,
-                        observations_file,
+                        input.runtime_root,
+                        input.observations_file,
                     )),
                 ),
                 (
                     "participant_id",
-                    monty::MontyObject::String(participant_id.to_owned()),
+                    monty::MontyObject::String(input.participant_id.to_owned()),
                 ),
             ],
         )

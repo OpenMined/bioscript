@@ -1,4 +1,6 @@
-use super::helpers::*;
+use super::helpers::{
+    class_cell, html_escape, json_field_as_tsv, render_table_start, table_column_class, value_str,
+};
 use std::fmt::Write as _;
 pub(super) fn render_observation_table(
     out: &mut String,

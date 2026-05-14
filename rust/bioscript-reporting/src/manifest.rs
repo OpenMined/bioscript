@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -8,6 +7,10 @@ use bioscript_schema::{
     PanelInterpretation, VariantManifest, load_assay_manifest_text, load_panel_manifest_text,
     load_variant_manifest_text,
 };
+
+mod provenance;
+
+pub use provenance::{collect_manifest_provenance_entries, load_manifest_provenance_links};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportManifestKind {
@@ -35,7 +38,6 @@ pub fn report_manifest_schema(
 
 pub trait ManifestWorkspace {
     fn load_text(&self, path: &str) -> Result<String, String>;
-
     fn load_yaml(&self, path: &str) -> Result<serde_yaml::Value, String>;
     fn resolve(&self, base: &str, relative: &str) -> Result<String, String>;
 }
@@ -348,71 +350,6 @@ pub fn load_manifest_findings(
     Ok(findings)
 }
 
-pub fn load_manifest_provenance_links(
-    workspace: &impl ManifestWorkspace,
-    path: &str,
-) -> Result<Vec<serde_json::Value>, String> {
-    let value = workspace.load_yaml(path)?;
-    let schema = yaml_string(&value, "schema").unwrap_or_default();
-    let mut links = BTreeMap::<String, serde_json::Value>::new();
-    collect_manifest_provenance_entries(&value, &mut links)?;
-
-    if manifest_supports_findings(&schema)
-        && let Some(items) = value
-            .get("findings")
-            .and_then(serde_yaml::Value::as_sequence)
-    {
-        for item in items {
-            let json_item = yaml_to_json(item.clone())?;
-            let Some(include) = json_item.get("include").and_then(serde_json::Value::as_str) else {
-                continue;
-            };
-            let include_path = workspace.resolve(path, include)?;
-            for item in load_manifest_provenance_links(workspace, &include_path)? {
-                if let Some(url) = item.get("url").and_then(serde_json::Value::as_str) {
-                    links.entry(url.to_owned()).or_insert(item);
-                }
-            }
-        }
-    }
-
-    for member_path in traversable_manifest_member_paths(&schema, &value) {
-        let resolved = workspace.resolve(path, member_path)?;
-        for item in load_manifest_provenance_links(workspace, &resolved)? {
-            if let Some(url) = item.get("url").and_then(serde_json::Value::as_str) {
-                links.entry(url.to_owned()).or_insert(item);
-            }
-        }
-    }
-
-    Ok(links.into_values().collect())
-}
-
-pub fn collect_manifest_provenance_entries(
-    value: &serde_yaml::Value,
-    links: &mut BTreeMap<String, serde_json::Value>,
-) -> Result<(), String> {
-    if let Some(sources) = value
-        .get("provenance")
-        .and_then(|provenance| provenance.get("sources"))
-        .and_then(serde_yaml::Value::as_sequence)
-    {
-        for source in sources {
-            let json = yaml_to_json(source.clone())?;
-            if let Some(url) = json.get("url").and_then(serde_json::Value::as_str) {
-                links.entry(url.to_owned()).or_insert(json);
-            }
-        }
-    }
-    if let Some(source) = value.get("source") {
-        let json = yaml_to_json(source.clone())?;
-        if let Some(url) = json.get("url").and_then(serde_json::Value::as_str) {
-            links.entry(url.to_owned()).or_insert(json);
-        }
-    }
-    Ok(())
-}
-
 pub fn matches_variant_manifest_filters(
     manifest: &VariantManifest,
     path: &str,
@@ -469,7 +406,6 @@ pub fn panel_executable_member_path<'a>(
 pub enum ExecutableAssayMember<'a> {
     Variant(&'a str),
 }
-
 pub fn assay_executable_member<'a>(
     kind: &str,
     path: Option<&'a str>,
@@ -477,7 +413,6 @@ pub fn assay_executable_member<'a>(
     let path = assay_executable_member_path(kind, path)?;
     Ok(ExecutableAssayMember::Variant(path))
 }
-
 pub fn assay_executable_member_path<'a>(
     kind: &str,
     path: Option<&'a str>,
@@ -491,7 +426,7 @@ pub fn assay_executable_member_path<'a>(
     Ok(path)
 }
 
-fn manifest_supports_findings(schema: &str) -> bool {
+pub(super) fn manifest_supports_findings(schema: &str) -> bool {
     matches!(
         schema,
         "bioscript:variant:1.0"
@@ -506,7 +441,7 @@ fn manifest_has_traversable_members(schema: &str) -> bool {
     matches!(schema, "bioscript:assay:1.0" | "bioscript:panel:1.0")
 }
 
-fn traversable_manifest_member_paths<'a>(
+pub(super) fn traversable_manifest_member_paths<'a>(
     schema: &str,
     value: &'a serde_yaml::Value,
 ) -> Vec<&'a str> {
@@ -530,11 +465,11 @@ fn traversable_manifest_member_path(member: &serde_yaml::Value) -> Option<&str> 
     member.get("path").and_then(serde_yaml::Value::as_str)
 }
 
-fn yaml_to_json(value: serde_yaml::Value) -> Result<serde_json::Value, String> {
+pub(super) fn yaml_to_json(value: serde_yaml::Value) -> Result<serde_json::Value, String> {
     serde_json::to_value(value).map_err(|err| format!("failed to convert YAML to JSON: {err}"))
 }
 
-fn yaml_string(value: &serde_yaml::Value, key: &str) -> Option<String> {
+pub(super) fn yaml_string(value: &serde_yaml::Value, key: &str) -> Option<String> {
     value
         .get(key)
         .and_then(serde_yaml::Value::as_str)
@@ -622,6 +557,69 @@ mod tests {
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new(""));
             Ok(base.join(relative).display().to_string())
+        }
+    }
+
+    const NESTED_PANEL_YAML: &str = r#"
+schema: bioscript:panel:1.0
+version: "1.0"
+name: panel
+members:
+  - kind: variant
+    path: rs1.yaml
+  - kind: assay
+    path: assets/APOE/assay.yaml
+  - kind: variant
+    path: rs3.yaml
+"#;
+
+    const NESTED_ASSAY_YAML: &str = r#"
+schema: bioscript:assay:1.0
+version: "1.0"
+name: apoe
+members:
+  - kind: variant
+    path: rs2.yaml
+"#;
+
+    fn variant_yaml(name: &str, pos: u32, tag: &str) -> String {
+        format!(
+            r#"
+schema: bioscript:variant:1.0
+version: "1.0"
+name: {name}
+tags: [{tag}]
+identifiers:
+  rsids:
+    - {name}
+coordinates:
+  grch38:
+    chrom: "1"
+    pos: {pos}
+alleles:
+  kind: snv
+  ref: A
+  alts:
+    - G
+"#
+        )
+    }
+
+    fn nested_variant_workspace() -> MapWorkspace {
+        MapWorkspace {
+            files: BTreeMap::from([
+                ("panel.yaml".to_owned(), NESTED_PANEL_YAML.to_owned()),
+                ("rs1.yaml".to_owned(), variant_yaml("rs1", 1, "keep")),
+                (
+                    "assets/APOE/assay.yaml".to_owned(),
+                    NESTED_ASSAY_YAML.to_owned(),
+                ),
+                (
+                    "assets/APOE/rs2.yaml".to_owned(),
+                    variant_yaml("rs2", 2, "keep"),
+                ),
+                ("rs3.yaml".to_owned(), variant_yaml("rs3", 3, "skip")),
+            ]),
         }
     }
 
@@ -793,104 +791,7 @@ analyses:
 
     #[test]
     fn collect_variant_manifest_tasks_preserves_nested_member_order_and_filters() {
-        let workspace = MapWorkspace {
-            files: BTreeMap::from([
-                (
-                    "panel.yaml".to_owned(),
-                    r#"
-schema: bioscript:panel:1.0
-version: "1.0"
-name: panel
-members:
-  - kind: variant
-    path: rs1.yaml
-  - kind: assay
-    path: assets/APOE/assay.yaml
-  - kind: variant
-    path: rs3.yaml
-"#
-                    .to_owned(),
-                ),
-                (
-                    "rs1.yaml".to_owned(),
-                    r#"
-schema: bioscript:variant:1.0
-version: "1.0"
-name: rs1
-tags: [keep]
-identifiers:
-  rsids:
-    - rs1
-coordinates:
-  grch38:
-    chrom: "1"
-    pos: 1
-alleles:
-  kind: snv
-  ref: A
-  alts:
-    - G
-"#
-                    .to_owned(),
-                ),
-                (
-                    "assets/APOE/assay.yaml".to_owned(),
-                    r#"
-schema: bioscript:assay:1.0
-version: "1.0"
-name: apoe
-members:
-  - kind: variant
-    path: rs2.yaml
-"#
-                    .to_owned(),
-                ),
-                (
-                    "assets/APOE/rs2.yaml".to_owned(),
-                    r#"
-schema: bioscript:variant:1.0
-version: "1.0"
-name: rs2
-tags: [keep]
-identifiers:
-  rsids:
-    - rs2
-coordinates:
-  grch38:
-    chrom: "1"
-    pos: 2
-alleles:
-  kind: snv
-  ref: A
-  alts:
-    - G
-"#
-                    .to_owned(),
-                ),
-                (
-                    "rs3.yaml".to_owned(),
-                    r#"
-schema: bioscript:variant:1.0
-version: "1.0"
-name: rs3
-tags: [skip]
-identifiers:
-  rsids:
-    - rs3
-coordinates:
-  grch38:
-    chrom: "1"
-    pos: 3
-alleles:
-  kind: snv
-  ref: A
-  alts:
-    - G
-"#
-                    .to_owned(),
-                ),
-            ]),
-        };
+        let workspace = nested_variant_workspace();
 
         let tasks = collect_variant_manifest_tasks(&workspace, "panel.yaml", &[]).unwrap();
         assert_eq!(
@@ -961,7 +862,7 @@ alleles:
     #[test]
     fn traversable_manifest_members_keep_metadata_traversal_semantics() {
         let value: serde_yaml::Value = serde_yaml::from_str(
-            r#"
+            r"
 schema: bioscript:panel:1.0
 members:
   - kind: variant
@@ -972,7 +873,7 @@ members:
     path: remote.yaml
   - kind: variant
   - path: missing-kind.yaml
-"#,
+",
         )
         .unwrap();
 
@@ -996,7 +897,7 @@ members:
         let assay_dir = root.join("assay");
         let outside = root
             .parent()
-            .unwrap_or_else(|| root.as_path())
+            .unwrap_or(root.as_path())
             .join(format!("bioscript-reporting-outside-{unique}"));
         fs::create_dir_all(&assay_dir).unwrap();
         fs::create_dir_all(&outside).unwrap();

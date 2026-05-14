@@ -57,12 +57,17 @@ impl RsidMapBackend {
             });
         }
 
-        Ok(VariantObservation {
-            backend: self.backend_name().to_owned(),
-            evidence: vec![format!(
+        let evidence = if variant.has_coordinates() {
+            format!(
                 "no matching rsid or locus found for {}",
                 describe_query(variant)
-            )],
+            )
+        } else {
+            "no matching rsid found".to_owned()
+        };
+        Ok(VariantObservation {
+            backend: self.backend_name().to_owned(),
+            evidence: vec![evidence],
             ..VariantObservation::default()
         })
     }

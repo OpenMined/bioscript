@@ -1,4 +1,7 @@
-use super::helpers::*;
+use super::helpers::{
+    html_escape, json_field_as_tsv, render_table_end, render_table_start, table_cell,
+    table_header_label, value_str,
+};
 use std::fmt::Write as _;
 pub(super) fn render_analysis_tables(
     out: &mut String,

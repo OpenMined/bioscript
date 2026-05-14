@@ -17,6 +17,8 @@ use monty::{MontyObject, ResourceLimits};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+#[path = "report_api/analysis_cache.rs"]
+mod analysis_cache;
 #[path = "report_helpers.rs"]
 mod report_helpers;
 #[path = "report_input_inspection.rs"]
@@ -26,6 +28,7 @@ mod report_lookup;
 #[path = "report_workspace.rs"]
 mod report_workspace;
 
+use analysis_cache::analysis_cache_observations;
 use report_helpers::*;
 use report_input_inspection::{
     decompress_vcf_head_lines, explicit_sex_from_options, inspect_head_via_js_reader,
@@ -59,40 +62,6 @@ pub(super) struct ReportOptionsInput {
     /// `method=explicit_sample_sex` like the CLI.
     #[serde(default)]
     sample_sex: Option<String>,
-}
-
-fn analysis_cache_observations(
-    manifest_observations: &[VariantObservation],
-    app_observations: &[serde_json::Value],
-) -> Vec<VariantObservation> {
-    manifest_observations
-        .iter()
-        .map(|observation| {
-            let mut observation = observation.clone();
-            if let Some(app_observation) = matching_app_observation(&observation, app_observations)
-                && let Some(genotype_display) = app_observation
-                    .get("genotype_display")
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|value| !value.is_empty() && *value != "??")
-            {
-                observation.genotype = Some(genotype_display.to_owned());
-            }
-            observation
-        })
-        .collect()
-}
-
-fn matching_app_observation<'a>(
-    observation: &VariantObservation,
-    app_observations: &'a [serde_json::Value],
-) -> Option<&'a serde_json::Value> {
-    let matched_rsid = observation.matched_rsid.as_deref()?;
-    app_observations.iter().find(|app_observation| {
-        app_observation
-            .get("rsid")
-            .and_then(serde_json::Value::as_str)
-            == Some(matched_rsid)
-    })
 }
 
 #[derive(Serialize)]
@@ -139,12 +108,14 @@ pub fn run_package_report_bytes(
     };
     let input_inspection = inspect_bytes_rs(input_name, input_bytes, &inspect_options)
         .map_err(|err| JsError::new(&format!("inspect input failed: {err:?}")))?;
-    let mut loader = GenotypeLoadOptions::default();
-    loader.assembly = input_inspection.assembly;
-    loader.inferred_sex = input_inspection
-        .inferred_sex
-        .as_ref()
-        .map(|inference| inference.sex);
+    let loader = GenotypeLoadOptions {
+        assembly: input_inspection.assembly,
+        inferred_sex: input_inspection
+            .inferred_sex
+            .as_ref()
+            .map(|inference| inference.sex),
+        ..Default::default()
+    };
     let store = GenotypeStore::from_bytes(input_name, input_bytes)
         .map_err(|err| JsError::new(&format!("load genotypes failed: {err:?}")))?;
     let manifest_output =
@@ -273,9 +244,11 @@ pub fn run_package_report_from_cram(
         }
     }
 
-    let mut loader = GenotypeLoadOptions::default();
-    loader.format = Some(bioscript_formats::GenotypeSourceFormat::Cram);
-    loader.allow_reference_md5_mismatch = true;
+    let loader = GenotypeLoadOptions {
+        format: Some(bioscript_formats::GenotypeSourceFormat::Cram),
+        allow_reference_md5_mismatch: true,
+        ..Default::default()
+    };
     let manifest_output =
         workspace.run_manifest_rows(manifest_path, &lookup, &participant_id, &options.filters)?;
     let observations = manifest_output
@@ -364,8 +337,10 @@ pub fn run_package_report_from_bam(
         head_inspection.inferred_sex = Some(explicit);
     }
 
-    let mut loader = GenotypeLoadOptions::default();
-    loader.format = Some(bioscript_formats::GenotypeSourceFormat::Bam);
+    let loader = GenotypeLoadOptions {
+        format: Some(bioscript_formats::GenotypeSourceFormat::Bam),
+        ..Default::default()
+    };
     let manifest_output =
         workspace.run_manifest_rows(manifest_path, &lookup, &participant_id, &options.filters)?;
     let observations = manifest_output
@@ -460,8 +435,10 @@ pub fn run_package_report_from_vcf(
         }
     }
 
-    let mut loader = GenotypeLoadOptions::default();
-    loader.format = Some(bioscript_formats::GenotypeSourceFormat::Vcf);
+    let loader = GenotypeLoadOptions {
+        format: Some(bioscript_formats::GenotypeSourceFormat::Vcf),
+        ..Default::default()
+    };
     let manifest_output =
         workspace.run_manifest_rows(manifest_path, &lookup, &participant_id, &options.filters)?;
     let observations = manifest_output

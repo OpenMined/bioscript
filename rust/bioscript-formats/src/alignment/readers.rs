@@ -315,11 +315,10 @@ where
     let header = reader
         .read_header()
         .map_err(|err| RuntimeError::Io(format!("failed to read BAM header: {err}")))?;
-    if !header
+    if header
         .header()
         .and_then(|hdr| hdr.other_fields().get(&SORT_ORDER))
-        .map(|sort_order| sort_order == COORDINATE)
-        .unwrap_or_default()
+        .is_none_or(|sort_order| sort_order != COORDINATE)
     {
         return Err(RuntimeError::Io(
             "BAM must be coordinate-sorted (SO:coordinate) before indexing".to_owned(),

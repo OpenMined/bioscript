@@ -1,4 +1,4 @@
-use super::helpers::*;
+use super::helpers::html_escape;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 pub(super) fn render_provenance_links(out: &mut String, reports: &[serde_json::Value]) {

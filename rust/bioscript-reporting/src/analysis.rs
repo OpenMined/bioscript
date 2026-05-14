@@ -142,36 +142,49 @@ pub struct AnalysisOutputJsonInput<'a> {
 }
 
 pub fn analysis_output_json(input: AnalysisOutputJsonInput<'_>) -> serde_json::Value {
+    let AnalysisOutputJsonInput {
+        participant_id,
+        assay_id,
+        interpretation,
+        output_format,
+        manifest_path,
+        script_path,
+        output_file,
+        observations_file,
+        row_headers,
+        rows,
+    } = input;
+
     serde_json::json!({
         "schema": "bioscript:analysis-output:1.0",
         "version": "1.0",
-        "participant_id": input.participant_id,
-        "assay_id": input.assay_id,
-        "analysis_id": input.interpretation.id,
-        "analysis_label": input.interpretation.label,
-        "kind": input.interpretation.kind,
-        "output_format": input.output_format,
-        "manifest_path": input.manifest_path,
-        "script_path": input.script_path,
-        "output_file": input.output_file,
-        "observations_file": input.observations_file,
-        "derived_from": input.interpretation.derived_from,
+        "participant_id": participant_id,
+        "assay_id": assay_id,
+        "analysis_id": interpretation.id,
+        "analysis_label": interpretation.label,
+        "kind": interpretation.kind,
+        "output_format": output_format,
+        "manifest_path": manifest_path,
+        "script_path": script_path,
+        "output_file": output_file,
+        "observations_file": observations_file,
+        "derived_from": interpretation.derived_from,
         "assets": [],
-        "emits": input.interpretation.emits.iter().map(|emit| serde_json::json!({
+        "emits": interpretation.emits.iter().map(|emit| serde_json::json!({
             "key": emit.key,
             "label": emit.label,
             "value_type": emit.value_type,
             "format": emit.format,
         })).collect::<Vec<_>>(),
-        "logic": input.interpretation.logic.as_ref().map(|logic| serde_json::json!({
+        "logic": interpretation.logic.as_ref().map(|logic| serde_json::json!({
             "description": logic.description,
             "source": logic.source.as_ref().map(|source| serde_json::json!({
                 "name": source.name,
                 "url": source.url,
             })),
         })),
-        "row_headers": input.row_headers,
-        "rows": input.rows,
+        "row_headers": row_headers,
+        "rows": rows,
     })
 }
 

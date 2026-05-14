@@ -4,6 +4,13 @@ use bioscript_core::{Assembly, GenomicLocus, VariantKind};
 use bioscript_formats::{InferredSex, SexDetectionConfidence, SexInference};
 use bioscript_schema::VariantManifest;
 
+mod facets;
+
+use facets::{
+    classify_non_reportable_alleles, is_weak_delimited_indel_match, observation_facets,
+    parse_optional_u32,
+};
+
 pub struct AppObservationInput<'a> {
     pub row: &'a BTreeMap<String, String>,
     pub row_path: &'a str,
@@ -462,83 +469,6 @@ fn genotype_display_from_raw_counts(raw_counts: &str) -> Option<String> {
         return Some(format!("{top_base}{top_base}"));
     }
     Some(format!("{}{}", top_base, items[1].0))
-}
-
-fn classify_non_reportable_alleles(
-    display: &str,
-    ref_allele: &str,
-    reportable_alt: &str,
-    observed_alts: &[String],
-) -> Option<&'static str> {
-    if display.is_empty() || ref_allele.len() != 1 || reportable_alt.len() != 1 {
-        return None;
-    }
-    let ref_ch = ref_allele.chars().next()?.to_ascii_uppercase();
-    let alt_ch = reportable_alt.chars().next()?.to_ascii_uppercase();
-    let non_reportable = display
-        .chars()
-        .filter(char::is_ascii_alphabetic)
-        .map(|ch| ch.to_ascii_uppercase())
-        .filter(|ch| *ch != ref_ch && *ch != alt_ch)
-        .collect::<Vec<_>>();
-    if non_reportable.is_empty() {
-        return None;
-    }
-    if non_reportable.iter().all(|ch| {
-        observed_alts.iter().any(|alt| {
-            alt.len() == 1
-                && alt
-                    .chars()
-                    .next()
-                    .is_some_and(|alt_ch| alt_ch.to_ascii_uppercase() == *ch)
-        })
-    }) {
-        Some("observed_alt")
-    } else {
-        Some("unknown_alt")
-    }
-}
-
-fn is_weak_delimited_indel_match(
-    row: &BTreeMap<String, String>,
-    manifest: &VariantManifest,
-    genotype_display: &str,
-) -> bool {
-    if !matches!(manifest.spec.kind, Some(VariantKind::Deletion)) {
-        return false;
-    }
-    if !matches!(row.get("backend").map(String::as_str), Some("text" | "zip")) {
-        return false;
-    }
-    if manifest.spec.reference.as_deref().unwrap_or_default().len() <= 1 {
-        return false;
-    }
-    genotype_display
-        .chars()
-        .filter(char::is_ascii_alphabetic)
-        .all(|allele| matches!(allele.to_ascii_uppercase(), 'I' | 'D'))
-}
-
-fn observation_facets(
-    non_reportable_status: Option<&str>,
-    observed_alts: &[String],
-) -> serde_json::Value {
-    let mut facets = Vec::new();
-    if let Some(status) = non_reportable_status {
-        facets.push(status.to_owned());
-        if status == "observed_alt" && !observed_alts.is_empty() {
-            facets.push(format!("known_observed_alts={}", observed_alts.join(",")));
-        }
-    }
-    if facets.is_empty() {
-        serde_json::Value::Null
-    } else {
-        serde_json::Value::String(facets.join(";"))
-    }
-}
-
-fn parse_optional_u32(value: Option<&String>) -> Option<u32> {
-    value.and_then(|value| value.parse::<u32>().ok())
 }
 
 #[cfg(test)]
