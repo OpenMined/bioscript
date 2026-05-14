@@ -483,7 +483,11 @@ This is not just a facade spike. The finish line is:
       `KESTREL_VNTYPER_MAX_ALIGNER_STATES` overrides. Defaults stay bounded at
       `2/2` for runnable diagnostics; upstream VNtyper's Java config is
       `40/40`, so exact upstream-limit reruns should use both overrides when
-      the Rust engine is fast enough.
+      the Rust engine is fast enough. A capped 2026-05-14 negative-fixture run
+      with `40/40` and `KESTREL_VNTYPER_PARITY_OUT=/tmp/kestrel-vntyper-parity-40`
+      timed out after 180s with only decompressed FASTQs and an empty Rust VCF,
+      so upstream-limit performance is still a blocker before full parity can
+      be evaluated.
       Rechecked after adding vendor failure-context diagnostics: the negative
       fixture still fails after 110.51s with Rust record count 2322 vs Java
       expected 4897. Missing examples include `1-2:43 T>C GDP=5 DP=901`,
