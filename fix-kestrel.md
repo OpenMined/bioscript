@@ -791,3 +791,101 @@ Next session pursue (3) — instrument Rust to log
 `matrix_col_align_next[ref_length - 1]` per iter, run with
 `KESTREL_TRACE_REGION=J-R:4-119`, and check the FIRST iter where Rust's
 bottom-row is `Some` while Java's would be ZERO_NODE.
+
+## 2026-05-15: Cycle confirmation in Rust outer iters
+
+Extended `KESTREL_TRACE_ITER_MAX=50` and dumped iter-end stats for J-R:4-119:
+
+```
+iter=1  consensus_len=80  max_align_score=536.0  stack_size=10  min_depth=17943
+iter=2  consensus_len=117 max_align_score=940.0  stack_size=10  min_depth=1526
+iter=3  consensus_len=100 max_align_score=728.0  stack_size=10  min_depth=21
+iter=4  consensus_len=117 max_align_score=980.0  stack_size=10  min_depth=21
+iter=5  consensus_len=117 max_align_score=960.0  stack_size=10  min_depth=18
+iter=6  consensus_len=115 max_align_score=886.0  stack_size=9   min_depth=7
+iter=7  consensus_len=100 max_align_score=728.0  stack_size=10  min_depth=1600
+iter=8  consensus_len=117 max_align_score=980.0  stack_size=10  min_depth=562
+iter=9  consensus_len=117 max_align_score=960.0  stack_size=10  min_depth=80
+iter=10 consensus_len=117 max_align_score=940.0  stack_size=10  min_depth=22
+iter=11 consensus_len=117 max_align_score=920.0  stack_size=9   min_depth=6
+iter=12 consensus_len=108 max_align_score=814.0  stack_size=10  min_depth=222
+iter=13 consensus_len=117 max_align_score=960.0  stack_size=10  min_depth=127
+iter=14 consensus_len=117 max_align_score=940.0  stack_size=10  min_depth=100
+iter=15 consensus_len=118 max_align_score=940.0  stack_size=9   min_depth=17
+...
+iter=24 consensus_len=107 max_align_score=774.0  stack_size=8   min_depth=6
+iter=25 consensus_len=80  max_align_score=536.0  stack_size=10  min_depth=988
+iter=26 consensus_len=117 max_align_score=940.0  stack_size=10  min_depth=988
+iter=27 consensus_len=100 max_align_score=728.0  stack_size=10  min_depth=21
+iter=28 consensus_len=117 max_align_score=980.0  stack_size=10  min_depth=21
+iter=29 consensus_len=117 max_align_score=960.0  stack_size=10  min_depth=18
+iter=30 consensus_len=115 max_align_score=886.0  stack_size=9   min_depth=7
+iter=31 consensus_len=100 max_align_score=728.0  stack_size=10  min_depth=988
+iter=32 consensus_len=117 max_align_score=980.0  stack_size=10  min_depth=562
+iter=33 consensus_len=117 max_align_score=960.0  stack_size=10  min_depth=80
+iter=34 consensus_len=117 max_align_score=940.0  stack_size=10  min_depth=22
+iter=35 consensus_len=117 max_align_score=920.0  stack_size=9   min_depth=6
+iter=36 consensus_len=108 max_align_score=814.0  stack_size=10  min_depth=222
+iter=37 consensus_len=117 max_align_score=960.0  stack_size=10  min_depth=127
+iter=38 consensus_len=117 max_align_score=940.0  stack_size=10  min_depth=100
+iter=39 consensus_len=118 max_align_score=940.0  stack_size=9   min_depth=17
+iter=40 consensus_len=117 max_align_score=960.0  stack_size=10  min_depth=43
+```
+
+**Iters 25-40 are a near-perfect structural mirror of iters 1-16**:
+
+| Iter A | Iter B | consensus_len | max_align_score | stack_size |
+| ------ | ------ | ------------- | --------------- | ---------- |
+| 1      | 25     | 80            | 536.0           | 10         |
+| 2      | 26     | 117           | 940.0           | 10         |
+| 3      | 27     | 100           | 728.0           | 10         |
+| 4      | 28     | 117           | 980.0           | 10         |
+| 5      | 29     | 117           | 960.0           | 10         |
+| 6      | 30     | 115           | 886.0           | 9          |
+| 7      | 31     | 100           | 728.0           | 10         |
+| 8      | 32     | 117           | 980.0           | 10         |
+| 9      | 33     | 117           | 960.0           | 10         |
+| 10     | 34     | 117           | 940.0           | 10         |
+| 11     | 35     | 117           | 920.0           | 9          |
+| 12     | 36     | 108           | 814.0           | 10         |
+| 13     | 37     | 117           | 960.0           | 10         |
+| 14     | 38     | 117           | 940.0           | 10         |
+| 15     | 39     | 118           | 940.0           | 9          |
+
+Only `min_depth` differs between corresponding rows. Everything else matches.
+
+This is conclusive evidence that **Rust's saved-state stack is recycling
+the same kmer/consensus configurations**, leading to the same chain
+shapes being rebuilt across cycles. Java's stack drains after 38 iters
+because its saves saturate (no more new save opportunities); Rust's saves
+keep refilling because each "cycle" of 15-16 iters produces enough new
+saves to keep the stack at ~10.
+
+The MUC1 reference is highly repetitive, so different alt-branch kmers
+do converge to the same chain shapes. Java's algorithm avoids this somehow
+— either by saving fewer alt branches or by skipping branches that lead
+to already-explored configurations.
+
+### Hypothesis for the root cause
+
+Rust's `KmerHashSet` cycle detection works per-outer-iter (each restore
+gets a fresh clone of kmer_hash from save time). So within a single outer
+iter, repeated kmers are caught. But across outer iters, the cycle
+detection doesn't apply — iter 25's path can re-traverse kmers visited
+by iter 1.
+
+Java's algorithm somehow doesn't have this property — maybe Java's
+saveState stores fewer alt branches, or Java's chain-extension semantics
+differ on score ties.
+
+Concrete next-session experiment: **Force Rust's `saved_states` HashSet
+dedup to be per-outer-iter** (clear at start of each outer iter or hash
+by chain-shape rather than kmer/consensus). Currently the HashSet
+persists for the entire build but only keys by (kmer, next_base,
+consensus) — it doesn't catch alt branches that lead to the same chain
+shape via different intermediate kmers.
+
+Alternatively, **add a chain-shape dedup at the haplotype emission
+level**: when emit produces a haplotype whose final (chain_length,
+chain_score, end_kmer) matches a previous emission's, skip it. This
+would catch the cycle without requiring deeper algorithm changes.
