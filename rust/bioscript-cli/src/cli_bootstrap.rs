@@ -383,6 +383,14 @@ fn run_cli_script(
     if let Some(participant_id) = options.participant_id {
         inputs.push(("participant_id", monty::MontyObject::String(participant_id)));
     }
+    let script_filters = options
+        .filters
+        .iter()
+        .map(|filter| parse_script_global_filter(filter))
+        .collect::<Result<Vec<_>, _>>()?;
+    for (key, value) in script_filters {
+        inputs.push((key, value));
+    }
 
     runtime
         .run_file(script_path, options.trace_report.as_deref(), inputs)
@@ -393,6 +401,21 @@ fn run_cli_script(
         write_timing_report(&timing_path, &all_timings)?;
     }
     Ok(())
+}
+
+fn parse_script_global_filter(
+    filter: &str,
+) -> Result<(&str, monty::MontyObject), String> {
+    let Some((key, value)) = filter.split_once('=') else {
+        return Err("--filter requires key=value".to_owned());
+    };
+    if key.is_empty() {
+        return Err("--filter requires a non-empty key".to_owned());
+    }
+    if let Ok(value) = value.parse::<i64>() {
+        return Ok((key, monty::MontyObject::Int(value)));
+    }
+    Ok((key, monty::MontyObject::String(value.to_owned())))
 }
 
 fn write_timing_report(path: &PathBuf, timings: &[StageTiming]) -> Result<(), String> {

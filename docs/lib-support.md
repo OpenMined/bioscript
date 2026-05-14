@@ -271,15 +271,21 @@ from bioscript import bcftools
   -> bioscript-runtime BcftoolsModule or python/bioscript/bcftools.py
   -> rust/bioscript-libs::bcftools
   -> vendor/rust/bcftools-rs/crates/bcftools-rs
-  -> vendor/rust/bcftools-rs/htslib-rs
+  -> vendor/rust/htslib-rs/crates/htslib-rs
 
 from bioscript import pysam / samtools / pyfaidx
   -> bioscript-runtime module binding or python/bioscript module
   -> rust/bioscript-libs facade
   -> vendor/rust/samtools-rs for samtools operations
-  -> vendor/rust/bcftools-rs/htslib-rs for shared HTS-backed primitives
+  -> vendor/rust/htslib-rs/crates/htslib-rs for shared HTS-backed primitives
   -> bioscript-formats and noodles where BioScript owns the domain helper
 ```
+
+The Rust workspace pins `htslib-rs` and the patched `noodles` crates through
+`rust/Cargo.toml` `[patch.crates-io]` entries so `bioscript-libs`,
+`bcftools-rs`, and `samtools-rs` compile against one canonical local
+`vendor/rust/htslib-rs` path while the engine repositories remain usable as
+standalone upstream checkouts.
 
 Python authors can call low-level `kestrel.call_*_native(...)` helpers when
 they need VCF text, or `kestrel.run_native(reference_fasta, fastq_paths,

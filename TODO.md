@@ -16,8 +16,37 @@ This is not just a facade spike. The finish line is:
 - VNtyper parity tests cover representative positive and negative samples,
   FASTQ and BAM entry points, report JSON, TSV calls, and HTML report structure.
 - Any remaining gap against upstream VNtyper is documented with a concrete owner:
-  BioScript runtime, `bioscript-libs`, `samtools-rs`, `bcftools-rs`,
-  `kestrel-rs`, or VNtyper-port logic.
+  BioScript runtime, `bioscript-libs`, `noodles`, `htslib-rs`, `samtools-rs`,
+  `bcftools-rs`, `kestrel-rs`, or VNtyper-port logic.
+
+## Work Rule: Keep Porting Until Only Blockers Remain
+
+The primary task is to port VNtyper to BioScript. While doing that work, do not
+stop the port just because one dependency needs deeper changes.
+
+If a task exposes an issue that requires changes in one of these layers:
+
+- BioScript syntax/runtime
+- `bioscript-libs`
+- `noodles`
+- `htslib-rs`
+- `samtools-rs`
+- `bcftools-rs`
+- `kestrel-rs`
+
+then move that issue to the **Blockers To Escalate** section at the end of this
+file with:
+
+- the owning repo or layer,
+- the exact command/test that proves the issue,
+- the smallest missing API or behavior,
+- the impact on the VNtyper port,
+- the next unblock action.
+
+After recording the blocker, keep working on any non-blocking VNtyper port,
+test, documentation, wrapper, fixture, or integration task. Stop and discuss
+with the user only when every remaining TODO item is blocked by one of those
+recorded dependency/runtime issues.
 
 ## Current Baseline
 
@@ -236,6 +265,9 @@ This is not just a facade spike. The finish line is:
       `vntyper_bioscript_program_runs_through_runtime` runs
       `ports/vntyper/bioscript/vntyper.bs` with a tiny indexed BAM fixture and
       verifies generated native BAM/FASTQ/VCF/TSV/report artifacts.
+      `vntyper_bioscript_program_runs_via_cli_and_writes_command_plan` now runs
+      the same native BAM BioScript program through the CLI with explicit
+      script globals supplied by `--filter key=value`.
 - [x] Add one CLI/runtime command that runs the BioScript VNtyper program against
       a FASTQ fixture pair.
       Added `ports/vntyper/bioscript/vntyper-fastq.bs` and runtime coverage in
@@ -280,34 +312,24 @@ This is not just a facade spike. The finish line is:
       Added `test_native_fastq_pipeline_gate.py`, gated by
       `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1`.
 - [ ] Compare generated `kestrel_result.tsv` to expected fixture output.
-      Partial 2026-05-14: `vntyper-fastq.bs` now writes
-      `kestrel_result.tsv` from `vcf.read_vntyper_kestrel(...)` rows, and
+      `vntyper-fastq.bs` writes `kestrel_result.tsv` from
+      `vcf.read_vntyper_kestrel(...)` rows, and
       `rust/bioscript-libs/tests/vntyper_vcf.rs` compares the tiny fixture row
       fields against `ports/vntyper/tests/fixtures/kestrel_minimal_expected.tsv`.
       The opt-in native FASTQ and BAM output parity gates now compare
-      normalized TSV fingerprints over stable columns. Current native FASTQ status:
-      `positive` classification matches but TSV fingerprint differs
-      (`2417` Rust rows vs `3737` Java expected rows);
-      `negative` differs in both TSV fingerprint and classification
-      (`2322` Rust rows vs `4897` Java expected rows). Keep open until
-      `kestrel-rs` output parity is fixed or accepted.
+      normalized TSV fingerprints over stable columns. Strict parity remains
+      blocked by `kestrel-rs` output differences; see **Blockers To Escalate**.
 - [ ] Compare generated `report.json` to expected fixture output, with explicit
       allowances for paths, timestamps, and tool-version metadata.
-      Partial 2026-05-14: `vcf.build_vntyper_report_json(...)` now accepts
-      optional metadata and coverage dictionaries. The FASTQ and native BAM
-      runtime slices pass pipeline metadata; the BAM slice also passes
-      `samtools.depth_native(...)` coverage into report JSON. Large-data report
-      parity remains blocked by Kestrel output row-count differences.
-      Current all-native BAM status after the samtools singleton fix:
-      classification and `screening_summary` match expected reports, but
-      `kestrel_result.tsv` row counts still differ from expected fixtures
-      (`positive`: 2733 actual vs 3737 expected; `negative`: 2310 actual vs
-      4897 expected). Added
+      `vcf.build_vntyper_report_json(...)` accepts optional metadata and
+      coverage dictionaries. The FASTQ and native BAM runtime slices pass
+      pipeline metadata; the BAM slice also passes `samtools.depth_native(...)`
+      coverage into report JSON. Added
       `BIOSCRIPT_RUN_NATIVE_BAM_OUTPUT_PARITY=1` as a separate strict gate for
       normalized TSV/report output fingerprints, while the broader native BAM
-      gate continues to verify classification/report-shape parity. Keep this
-      open until Kestrel/report-output parity is normalized or the differences
-      are accepted with explicit field-level allowances.
+      gate continues to verify classification/report-shape parity. Strict
+      JSON/TSV output parity remains blocked by `kestrel-rs` output differences;
+      see **Blockers To Escalate**.
 - [x] Compare generated HTML report structure against expected report content:
       summary, coverage QC, variant table, flags, pipeline log, and optional IGV
       configuration.
@@ -351,9 +373,34 @@ This is not just a facade spike. The finish line is:
       `KESTREL_RUN_VNTYPER_FASTQ_PARITY=1`. It runs the representative
       positive and negative VNtyper FASTQ fixtures through `kestrel-rs`
       directly and compares VCF records with the Java-generated expected VCFs.
-      Current expected failures:
-      `positive` has 2417 Rust records vs 3737 expected Java records;
-      `negative` has 2322 Rust records vs 4897 expected Java records.
+      Reduced 2026-05-14 on branch `fix/vntyper-fastq-parity`: the original
+      port missed Java's active-region right-scan peak/valley fallback for
+      repetitive profiles. The new regression
+      `active_region_detector_splits_repetitive_peaks_at_last_stable_valley`
+      covers the VNtyper `N-S`-like profile that used to merge two Java regions
+      into one Rust region. After the active-region fix, the opt-in vendor gate
+      still failed with `positive` at 1780 Rust records vs 3737 expected Java
+      records and `negative` at 1911 Rust records vs 4897 expected Java records.
+      After saved-state deduplication, the current gate still fails but improves
+      to `positive` at 1804 Rust records vs 3737 expected Java records and
+      `negative` at 2217 Rust records vs 4897 expected Java records.
+      A single-reference `N-S` comparison now points at remaining
+      haplotype/state traversal differences: Java emits seven haplotypes at
+      bounded `2/2` settings while Rust emits four, missing the Java low-depth
+      and insertion branches. Java's runner also appears to reset effective
+      aligner/haplotype caps to builder defaults by calling
+      `setMaxRepeatCount` after `setMaxAlignerState` and `setMaxHaplotypes`;
+      forcing Rust to use those effective defaults made the reduced `N-S` case
+      exceed ten minutes, so the next fix has both semantic and performance
+      dimensions. A smaller Rust probe with `--maxalignstates 4
+      --maxhapstates 15` also exceeded five minutes on the single-reference
+      `N-S` case before saved-state deduplication. After deduplication, the
+      `4/15` probe completes and recovers the Java low-depth branch at
+      `N-S:85`, but still misses the Java insertion branch at `N-S:86` and
+      emits extra first-region low-depth branches. The Java-effective `10/15`
+      probe still exceeded ten minutes and was stopped. A narrower attempt to
+      save repeated candidate branch states without following them also
+      exceeded five minutes on the reduced `N-S` `4/15` probe and was not kept.
       Note: upstream Java VNtyper config uses `max_align_states=40` and
       `max_hap_states=40`. The current native BioScript parity gate uses the
       bounded native settings `max_haplotypes=2` and `max_saved_states=2`.
@@ -365,7 +412,12 @@ This is not just a facade spike. The finish line is:
       Confirmed for tiny Kestrel-generated VCFs in
       `rust/bioscript-libs/tests/vntyper_facades.rs` and existing BCFtools
       adapter tests. Large-data generated VCF coverage remains part of the
-      opt-in VNtyper parity gates.
+      opt-in VNtyper parity gates. Resolved 2026-05-14 by synced
+      `bcftools-rs` main commit `b821b3c`, which accepts and normalizes raw
+      Java-compatible Kestrel headers (`##fileformat=VCF4.2`). Verified with
+      `CC=cc AR=ar cargo test -p bcftools-rs --test sort sort_accepts_kestrel -- --nocapture`
+      from `vendor/rust/bcftools-rs`: 2 tests passed, including `-W -O z`
+      compressed/indexed output.
 - [x] `bcftools-rs`: only implement native `view -i/-e` filtering if the
       BioScript VNtyper port actually needs it.
       Confirmed the current VNtyper native path only calls
@@ -443,83 +495,48 @@ This is not just a facade spike. The finish line is:
 ## Completion Criteria
 
 - [x] Old BioScript Rust test gate passes.
-      Verified 2026-05-14 with `CC=cc AR=ar cargo test --workspace`.
+      Verified in the current synced dependency state on 2026-05-14 with
+      `CC=cc AR=ar cargo test --workspace` from `rust/`. This includes CLI,
+      APOL1 real-file tests, facade/runtime tests, wasm tests, and the
+      first-party Rust source-size guard.
 - [x] Old BioScript Python test gate passes.
-      Verified 2026-05-14 with
-      `PYTHONPATH=python python -m unittest discover -s python/tests -p 'test_*.py'`.
+      Verified in the current synced dependency state with
+      `PYTHONPATH=python python -m unittest discover -s python/tests -p 'test_*.py'`:
+      31 tests, 2 skipped.
 - [x] Native facade Rust/Python tests pass.
-      Verified 2026-05-14 with
+      Verified in the current synced dependency state on 2026-05-14.
+      Python wrapper tests:
+      `PYTHONPATH=python python -m unittest discover -s python/tests -p 'test_*.py'`
+      ran 31 tests with 2 skips. Rust facade/runtime gate:
       `CC=cc AR=ar cargo test -p bioscript-libs -p bioscript-python -p bioscript-runtime`
-      and Python wrapper tests.
+      passes, including native BCFtools sort/index coverage, BioScript runtime
+      dispatch coverage, and VNtyper runtime program tests.
 - [x] VNtyper small fixture tests pass without external Java/samtools/bcftools.
-      Verified 2026-05-14 with
-      `PYTHONPATH=python:ports/vntyper/bioscript python -m unittest discover -s ports/vntyper/tests -p 'test_*.py'`.
+      Verified in the current synced dependency state with
+      `PYTHONPATH=python:ports/vntyper/bioscript python -m unittest discover -s ports/vntyper/tests -p 'test_*.py'`:
+      75 tests, 9 skipped.
 - [x] VNtyper BAM positive/negative native parity gate passes.
       Verified 2026-05-14:
       `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate.VntyperNativeBamPipelineGateTests.test_native_bam_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification`
       passed in 91.426s.
 - [ ] VNtyper FASTQ positive/negative native parity gate passes.
-      Current status 2026-05-14: gate runs but fails negative-fixture parity.
-      Rechecked with
-      `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_fastq_pipeline_gate.VntyperNativeFastqPipelineGateTests.test_native_fastq_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification`;
-      the negative fixture reports `High_Precision` vs expected `negative`
-      after 87.777s. Keep open as a `kestrel-rs` output-parity blocker.
-      Engine-level confirmation:
-      `KESTREL_RUN_VNTYPER_FASTQ_PARITY=1 CC=cc AR=ar cargo test -p kestrel --test vntyper_fastq_parity vntyper_negative_fastq_matches_java_expected_vcf -- --nocapture`
-      fails in `vendor/rust/kestrel-rs` with Rust VCF record count 2322 vs
-      Java expected 4897 after 110.39s.
-      The vendor gate now also accepts `KESTREL_VNTYPER_PARITY_OUT=/tmp/path`
-      to retain the generated Rust VCF, decompressed FASTQs, and copied Java
-      expected VCF for direct record-level comparison.
-      It also reports summary counts in the failure message. Current negative
-      fixture summary: 1887 shared record keys, 3010 missing Java record keys,
-      435 Rust-only record keys, only 847 shared records with matching GDP, and
-      only 186 shared records with matching DP. Java expected VCF has many more
-      SNPs and insertions (`4432` SNP, `390` insertion, `75` deletion) than the
-      Rust output (`2189` SNP, `69` insertion, `64` deletion), reinforcing that
-      this is Kestrel engine assembly/depth parity rather than VNtyper
-      post-processing.
-      The same vendor gate accepts `KESTREL_VNTYPER_MAX_HAPLOTYPES` and
-      `KESTREL_VNTYPER_MAX_ALIGNER_STATES` overrides. Defaults stay bounded at
-      `2/2` for runnable diagnostics; upstream VNtyper's Java config is
-      `40/40`, so exact upstream-limit reruns should use both overrides when
-      the Rust engine is fast enough. A capped 2026-05-14 negative-fixture run
-      with `40/40` and `KESTREL_VNTYPER_PARITY_OUT=/tmp/kestrel-vntyper-parity-40`
-      timed out after 180s with only decompressed FASTQs and an empty Rust VCF,
-      so upstream-limit performance is still a blocker before full parity can
-      be evaluated.
-      Rechecked after adding vendor failure-context diagnostics: the negative
-      fixture still fails after 110.51s with Rust record count 2322 vs Java
-      expected 4897. Missing examples include `1-2:43 T>C GDP=5 DP=901`,
-      `1-2:58 A>G GDP=5 DP=901`, and `3-4:33 T>G GDP=15 DP=1162`; extra
-      examples include lower-depth calls such as `1-2:54 T>C GDP=3 DP=894`,
-      `3-4:33 T>G GDP=1 DP=1148`, and `3-4:35 A>G GDP=1 DP=1148`.
-      Current implementation note: Java Kestrel's
-      `KmerAlignmentBuilder.java` walks the k-mer count graph with saved
-      alignment states and keeps the best haplotypes through
-      `HaplotypeContainer`; the current Rust runner still uses
-      `read_backed_haplotypes(...)` to derive candidate consensus sequences
-      from reads before alignment. That algorithmic gap is the next likely
-      source of the remaining VCF depth/record differences. An experimental
-      forward graph traversal in the Rust runner passed the normal Kestrel
-      crate tests but was not kept because the VNtyper negative fixture still
-      failed and regressed the direct parity count to 1656 Rust records vs 4897
-      Java records after about 80s.
-      Diagnostic re-run of the native negative FASTQ output found 42 rows with
-      `passes_vntyper_filters=True`; the highest-depth false positives are
-      absent from the Java expected TSV, e.g. `5C-M:61 T>TG` and `B-M:59 G>GT`
-      at depth score `0.026635564717370077`. The Java expected negative TSV has
-      4897 rows, zero passing rows, and zero non-negative-confidence rows.
+      The BioScript FASTQ gate is blocked by the engine-level `kestrel-rs`
+      VNtyper FASTQ parity failure. Keep this item in the main completion
+      criteria so it is visible, but track the actionable dependency work in
+      **Blockers To Escalate**. Rechecked 2026-05-14 with
+      `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_fastq_pipeline_gate.VntyperNativeFastqPipelineGateTests.test_native_fastq_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification`:
+      the positive case still fails strict TSV/report fingerprint parity
+      (`2417` native rows vs `3737` expected rows), and the negative case still
+      reports native Kestrel classification `High_Precision` vs expected
+      `negative`.
 - [ ] VNtyper report JSON and TSV outputs match expected fixtures with explicit
       normalized fields.
       `ports/vntyper/tests/test_native_fastq_pipeline_gate.py` now records
       normalized TSV fingerprints and report summaries in failure context.
       `ports/vntyper/tests/test_native_bam_pipeline_gate.py` has a separate
       `BIOSCRIPT_RUN_NATIVE_BAM_OUTPUT_PARITY=1` check for normalized BAM TSV
-      and report output fingerprints. FASTQ output parity currently fails for
-      both representative samples because `kestrel-rs` emits different rows
-      than Java Kestrel; BAM output parity is also still stricter than the
-      currently passing BAM classification gate.
+      and report output fingerprints. Strict output parity is blocked by
+      `kestrel-rs` row/depth differences; see **Blockers To Escalate**.
 - [x] VNtyper HTML report structure test passes.
       Covered by `ports/vntyper/tests/test_vntyper_report.py`, which passes in
       the small VNtyper suite and checks the rendered report summary, coverage
@@ -537,3 +554,105 @@ This is not just a facade spike. The finish line is:
       and direct TODO review. Remaining "Partial"/"Keep open" language is only
       attached to unchecked parity blockers. Completed items point to concrete
       files, test names, commands, or documented decisions.
+
+## Blockers To Escalate
+
+Use this section for dependency/runtime issues discovered while porting VNtyper.
+Do not leave blockers inline in the main work plan if other VNtyper tasks can
+continue. Move them here, keep the main task moving, and return to this section
+only when no non-blocking VNtyper work remains.
+
+Template for new blockers:
+
+```text
+Owner: <BioScript runtime | bioscript-libs | noodles | htslib-rs | samtools-rs | bcftools-rs | kestrel-rs>
+      Evidence: `<exact command/test>` fails with `<short failure>`.
+      Missing behavior: <smallest API/semantic gap>.
+      VNtyper impact: <what cannot be completed until fixed>.
+      Next unblock action: <PR/test/reduced fixture/discussion needed>.
+```
+
+Current blockers:
+
+- [ ] Owner: `kestrel-rs`
+      Evidence:
+      `KESTREL_RUN_VNTYPER_FASTQ_PARITY=1 CC=cc AR=ar cargo test -p kestrel --test vntyper_fastq_parity -- --nocapture`
+      was rerun from `vendor/rust/kestrel-rs` on branch
+      `fix/vntyper-fastq-parity` after porting Java's right-scan peak/valley
+      fallback and saved-state deduplication. Current retained-artifact run
+      under `/tmp/kestrel-vntyper-parity-current`: positive Rust VCF record
+      count `1804` vs Java expected `3737` with shared `1770`, missing `1967`,
+      extra `34`; negative Rust VCF record count `2217` vs Java expected `4897`
+      with shared `2135`, missing `2762`, extra `82`.
+      Missing behavior: Rust Kestrel now detects the reduced VNtyper `N-S`
+      active regions like Java, but still does not generate the same
+      haplotype candidates. A single-reference `N-S` run at VNtyper's bounded
+      `--maxalignstates 2 --maxhapstates 2` shows Java emits seven haplotypes
+      and Rust emits four, missing Java's low-depth branches at positions 25/85
+      and the insertion branch at 86. Java's setter order likely resets the CLI
+      path's effective builder caps to defaults after `setMaxRepeatCount`;
+      forcing Rust to those defaults made the reduced `N-S` case exceed ten
+      minutes, and a smaller `--maxalignstates 4 --maxhapstates 15` probe also
+      exceeded five minutes before saved-state deduplication. After dedup, the
+      `4/15` probe finishes and recovers one Java low-depth branch, but `10/15`
+      still exceeded ten minutes and the Java insertion branch remains missing,
+      so a direct cap change is not a complete fix. Repeated-branch-state
+      saving also still needs a more targeted design; a broad save-without-
+      following experiment was too slow on the reduced `N-S` case.
+      VNtyper impact: strict native FASTQ TSV/report parity remains blocked if
+      Rust Kestrel emits different rows or depths from Java Kestrel.
+      Next unblock action: pause broad parity reruns and finish one reduced
+      `N-S` haplotype-traversal fix first. The next concrete work is:
+      1. Keep the reduced single-reference `N-S` fixture as the primary loop:
+         Java emits the insertion haplotype
+         `sample-N-S-61-72` with CIGAR `20=1X6=18I4=1X1=1X20` and VCF
+         `N-S:86 G>GGGTGGAGCCCGGGGCCGG`; Rust must emit that before rerunning
+         full FASTQ parity.
+      2. Avoid long uncapped exploratory runs. Use bounded runs such as
+         `--maxalignstates 4 --maxhapstates 15` with retained SAM/VCF output,
+         and stop if they exceed a few minutes.
+      3. Do not repeat broad `region_sequence_limit(...)` widening as the next
+         fix. Full-reference, `2*k`, and `1.5*k` guard widenings were tried on
+         the reduced `N-S` `4/15` probe; each hit the bounded timeout without
+         producing the Java insertion and was reverted. The remaining work is
+         more likely in branch-state selection/pruning or exact
+         `KmerAlignmentBuilder` parity than in a simple length cap.
+      4. Once the reduced Java/Rust `N-S` haplotypes match, rerun the vendor
+         opt-in FASTQ gate with `KESTREL_VNTYPER_PARITY_OUT=/tmp/path`.
+      5. Only after the vendor gate improves enough, rerun the BioScript native
+         FASTQ gate and TSV/report parity checks.
+
+Resolved blockers:
+
+- [x] Owner: `bcftools-rs`
+      Evidence:
+      Previously, real `bcftools 1.23.1` accepted a VCF whose first line is
+      `##fileformat=VCF4.2`, while vendored `bcftools-rs sort` failed with
+      `[E::main_vcfsort] invalid record`.
+      Resolution: synced `bcftools-rs` main commit `b821b3c` includes
+      `crates/bcftools-rs/src/vcf_compat.rs` and reduced `sort`, `view`, and
+      `head` tests for non-canonical Kestrel VCF headers.
+      Verification:
+      `CC=cc AR=ar cargo test -p bcftools-rs --test sort sort_accepts_kestrel -- --nocapture`
+      from `vendor/rust/bcftools-rs` passed 2 tests on 2026-05-14.
+      VNtyper impact: BioScript native VNtyper can rely on vendored
+      `bcftools-rs` sort/compress/index behavior for raw Kestrel
+      `##fileformat=VCF4.2` VCF text.
+
+- [x] Owner: BioScript dependency integration
+      Evidence:
+      The previous Cargo lockfile package collision between
+      `vendor/rust/bcftools-rs/htslib-rs/crates/htslib-rs` and
+      `vendor/rust/samtools-rs/htslib-rs/crates/htslib-rs` is resolved in the
+      current synced state. `rust/Cargo.toml` pins canonical local
+      `htslib-rs` and patched `noodles` crates through `[patch.crates-io]`;
+      `rust/bioscript-libs/Cargo.toml`, `vendor/rust/bcftools-rs/Cargo.toml`,
+      and `vendor/rust/samtools-rs/Cargo.toml` all route through the shared
+      `vendor/rust/htslib-rs` path.
+      Verification:
+      `CC=cc AR=ar cargo test -p bioscript-libs -p bioscript-python -p bioscript-runtime`
+      and `CC=cc AR=ar cargo test --workspace` passed from `rust/` on
+      2026-05-14.
+      Documentation:
+      `docs/lib-support.md` "Current Dependency Graph" documents the shared
+      `vendor/rust/htslib-rs/crates/htslib-rs` path and workspace patch policy.
