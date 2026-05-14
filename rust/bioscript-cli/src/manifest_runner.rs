@@ -43,6 +43,43 @@ fn run_manifest(
             )?;
             Ok(())
         }
+        bioscript_reporting::ReportManifestKind::VariantCatalogue => {
+            let input_file = resolved_input
+                .as_deref()
+                .ok_or("manifest execution requires --input-file")?;
+            let store = GenotypeStore::from_file_with_options(Path::new(input_file), options.loader)
+                .map_err(|err| err.to_string())?;
+            let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(runtime_root);
+            let tasks = bioscript_reporting::collect_variant_manifest_tasks(
+                &workspace,
+                &manifest_path.display().to_string(),
+                options.filters,
+            )?;
+            let observations = store
+                .lookup_variants(
+                    &tasks
+                        .iter()
+                        .map(|task| task.manifest.spec.clone())
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|err| err.to_string())?;
+            let rows = tasks
+                .into_iter()
+                .zip(observations)
+                .map(|(task, observation)| {
+                    variant_row(
+                        runtime_root,
+                        Path::new(&task.manifest_path),
+                        &task.manifest.name,
+                        &task.manifest.tags,
+                        &observation,
+                        options.participant_id,
+                    )
+                })
+                .collect::<Vec<_>>();
+            write_manifest_outputs(&rows, resolved_output.as_deref(), resolved_trace.as_deref())?;
+            Ok(())
+        }
         bioscript_reporting::ReportManifestKind::Panel => {
             let manifest = load_panel_manifest(manifest_path)?;
             let rows = run_panel_manifest(
@@ -138,6 +175,22 @@ fn run_panel_manifest_with_store(
                 }
                 variant_entries.push((member_index, resolved, manifest));
             }
+            bioscript_reporting::ExecutablePanelMember::VariantCatalogue(path) => {
+                let resolved = resolve_manifest_path(runtime_root, &panel.path, path)?;
+                let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(runtime_root);
+                let tasks = bioscript_reporting::collect_variant_manifest_tasks(
+                    &workspace,
+                    &resolved.display().to_string(),
+                    filters,
+                )?;
+                for task in tasks {
+                    variant_entries.push((
+                        member_index,
+                        PathBuf::from(&task.manifest_path),
+                        task.manifest,
+                    ));
+                }
+            }
             bioscript_reporting::ExecutablePanelMember::Assay(path) => {
                 let resolved = resolve_manifest_path(runtime_root, &panel.path, path)?;
                 let assay = load_assay_manifest(&resolved)?;
@@ -210,6 +263,18 @@ fn run_assay_manifest_with_store(
                     continue;
                 }
                 entries.push((resolved, manifest));
+            }
+            bioscript_reporting::ExecutableAssayMember::VariantCatalogue(path) => {
+                let resolved = resolve_manifest_path(runtime_root, &assay.path, path)?;
+                let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(runtime_root);
+                let tasks = bioscript_reporting::collect_variant_manifest_tasks(
+                    &workspace,
+                    &resolved.display().to_string(),
+                    filters,
+                )?;
+                for task in tasks {
+                    entries.push((PathBuf::from(&task.manifest_path), task.manifest));
+                }
             }
         }
     }

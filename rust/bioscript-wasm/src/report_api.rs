@@ -12,7 +12,7 @@ use bioscript_formats::{
     inspect_bytes as inspect_bytes_rs,
 };
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig};
-use bioscript_schema::{PanelInterpretation, VariantManifest, load_variant_manifest_text};
+use bioscript_schema::PanelInterpretation;
 use monty::{MontyObject, ResourceLimits};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;

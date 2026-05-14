@@ -65,11 +65,6 @@ impl PackageWorkspace {
         normalize_package_path(&base.join(relative).display().to_string())
     }
 
-    pub(super) fn load_variant(&self, path: &str) -> Result<VariantManifest, JsError> {
-        load_variant_manifest_text(path, self.text(path)?)
-            .map_err(|err| JsError::new(&format!("load variant {path}: {err}")))
-    }
-
     pub(super) fn run_manifest_rows(
         &self,
         manifest_path: &str,
@@ -114,9 +109,19 @@ impl PackageWorkspace {
         fallback_assembly: Option<Assembly>,
     ) -> Result<serde_json::Value, JsError> {
         let row_path = row.get("path").cloned().unwrap_or_default();
-        let manifest = self.load_variant(&row_path)?;
-        let value = self.yaml(&row_path)?;
-        let gene = yaml_string(&value, "gene").unwrap_or_default();
+        let task = bioscript_reporting::load_variant_manifest_task_by_path(self, &row_path)
+            .map_err(|err| JsError::new(&err))?;
+        let manifest = task.manifest;
+        let (gene, source, observed_alt_alleles) = if row_path.contains('#') {
+            (String::new(), serde_json::Value::Null, Vec::new())
+        } else {
+            let value = self.yaml(&row_path)?;
+            (
+                yaml_string(&value, "gene").unwrap_or_default(),
+                variant_primary_source_from_yaml(&value),
+                variant_observed_alt_alleles_from_yaml(&value),
+            )
+        };
         Ok(bioscript_reporting::app_observation_from_manifest_row(
             bioscript_reporting::AppObservationInput {
                 row,
@@ -124,8 +129,8 @@ impl PackageWorkspace {
                 assay_id,
                 manifest,
                 gene,
-                source: variant_primary_source_from_yaml(&value),
-                observed_alt_alleles: variant_observed_alt_alleles_from_yaml(&value),
+                source,
+                observed_alt_alleles,
                 inferred_sex,
                 fallback_assembly,
             },

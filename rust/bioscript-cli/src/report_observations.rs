@@ -11,10 +11,21 @@ fn app_observation_from_manifest_row(
     } else {
         runtime_root.join(&row_path)
     };
-    let manifest = load_variant_manifest(&manifest_path)?;
-    let gene = variant_manifest_gene(&manifest_path)?;
-    let observed_alt_alleles = variant_observed_alt_alleles(&manifest_path)?;
-    let source = variant_primary_source(&manifest_path)?;
+    let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(runtime_root);
+    let task = bioscript_reporting::load_variant_manifest_task_by_path(
+        &workspace,
+        &manifest_path.display().to_string(),
+    )?;
+    let manifest = task.manifest;
+    let (gene, observed_alt_alleles, source) = if row_path.contains('#') {
+        (String::new(), Vec::new(), serde_json::Value::Null)
+    } else {
+        (
+            variant_manifest_gene(&manifest_path)?,
+            variant_observed_alt_alleles(&manifest_path)?,
+            variant_primary_source(&manifest_path)?,
+        )
+    };
     Ok(bioscript_reporting::app_observation_from_manifest_row(
         bioscript_reporting::AppObservationInput {
             row,

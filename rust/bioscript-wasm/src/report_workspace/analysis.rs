@@ -41,7 +41,7 @@ impl PackageWorkspace {
         manifest_path: &str,
         manifest_name: &str,
         interpretations: &[PanelInterpretation],
-        input_name: &str,
+        _input_name: &str,
         input_bytes: &[u8],
         preloaded_observations: &[VariantObservation],
         participant_id: &str,
@@ -72,19 +72,46 @@ impl PackageWorkspace {
                 participant_id,
                 &interpretation.id,
             );
-            let observations_file = options
+            let _observations_file = options
                 .output_dir
                 .as_deref()
                 .filter(|dir| !dir.is_empty())
                 .map(|dir| format!("{}/{}", dir.trim_end_matches('/'), observations_output_file))
                 .unwrap_or(observations_output_file);
-            let mut virtual_text_files = self.files.clone();
+            let output_extension = Path::new(&output_file)
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or(analysis_format.extension);
+            let virtual_input_file = "/input/genotypes".to_owned();
+            let virtual_output_file = format!("/output/results.{output_extension}");
+            let virtual_observations_file = "/work/observations.tsv".to_owned();
+            let script_virtual_path = virtual_pipeline_path(&script_path, "analysis.py");
+            let manifest_virtual_path = virtual_pipeline_path(manifest_path, "manifest.yaml");
+            let mut virtual_text_files = BTreeMap::new();
             virtual_text_files.insert(
-                observations_file.clone(),
+                script_virtual_path.clone(),
+                self.text(&script_path)?.to_owned(),
+            );
+            virtual_text_files.insert(
+                manifest_virtual_path.clone(),
+                self.text(manifest_path)?.to_owned(),
+            );
+            virtual_text_files.insert(
+                virtual_observations_file.clone(),
                 bioscript_reporting::render_analysis_observations_tsv(preloaded_observations),
             );
+            let mut asset_paths = BTreeMap::new();
+            for asset in &interpretation.assets {
+                let asset_path = self.resolve(manifest_path, &asset.path)?;
+                let virtual_asset_path = virtual_pipeline_path(&asset_path, &asset.path);
+                virtual_text_files.insert(
+                    virtual_asset_path.clone(),
+                    self.text(&asset_path)?.to_owned(),
+                );
+                asset_paths.insert(asset.id.clone(), virtual_asset_path);
+            }
             let mut virtual_binary_files = BTreeMap::new();
-            virtual_binary_files.insert(input_name.to_owned(), input_bytes.to_vec());
+            virtual_binary_files.insert(virtual_input_file.clone(), input_bytes.to_vec());
             let limits = ResourceLimits::new()
                 .max_duration(Duration::from_millis(options.analysis_max_duration_ms))
                 .max_memory(16 * 1024 * 1024)
@@ -96,24 +123,39 @@ impl PackageWorkspace {
                 RuntimeConfig {
                     limits,
                     loader: loader.clone(),
-                    context: BTreeMap::new(),
+                    context: analysis_context(
+                        participant_id,
+                        &virtual_input_file,
+                        &script_virtual_path,
+                        &manifest_virtual_path,
+                        &asset_paths,
+                        &virtual_observations_file,
+                        &virtual_output_file,
+                    ),
                     virtual_binary_files,
-                    virtual_text_files: std::mem::take(&mut virtual_text_files),
+                    virtual_text_files,
                     preloaded_observations: preloaded_observations.to_vec(),
                 },
             )
             .map_err(|err| JsError::new(&format!("create analysis runtime failed: {err:?}")))?;
             runtime
                 .run_file(
-                    &script_path,
+                    &script_virtual_path,
                     None,
                     vec![
-                        ("input_file", MontyObject::String(input_name.to_owned())),
-                        ("output_file", MontyObject::String(output_file.clone())),
+                        (
+                            "input_file",
+                            MontyObject::String(virtual_input_file.clone()),
+                        ),
+                        (
+                            "output_file",
+                            MontyObject::String(virtual_output_file.clone()),
+                        ),
                         (
                             "observations_file",
-                            MontyObject::String(observations_file.clone()),
+                            MontyObject::String(virtual_observations_file.clone()),
                         ),
+                        ("asset_paths", monty_string_dict(&asset_paths)),
                         (
                             "participant_id",
                             MontyObject::String(participant_id.to_owned()),
@@ -124,9 +166,9 @@ impl PackageWorkspace {
                     JsError::new(&format!("analysis {} failed: {err:?}", interpretation.id))
                 })?;
             let written = runtime.virtual_written_text_files();
-            let text = written.get(&output_file).ok_or_else(|| {
+            let text = written.get(&virtual_output_file).ok_or_else(|| {
                 JsError::new(&format!(
-                    "analysis {} did not write {output_file}",
+                    "analysis {} did not write {virtual_output_file}",
                     interpretation.id
                 ))
             })?;
@@ -140,7 +182,7 @@ impl PackageWorkspace {
                     manifest_path,
                     script_path: &script_path,
                     output_file: &output_file,
-                    observations_file: Some(&observations_file),
+                    observations_file: Some(&virtual_observations_file),
                     row_headers,
                     rows,
                 },
@@ -148,4 +190,66 @@ impl PackageWorkspace {
         }
         Ok(outputs)
     }
+}
+
+fn virtual_pipeline_path(path: &str, fallback: &str) -> String {
+    let name = Path::new(path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(fallback);
+    format!("/input/pipeline/{name}")
+}
+
+fn analysis_context(
+    participant_id: &str,
+    input_file: &str,
+    script_path: &str,
+    manifest_path: &str,
+    asset_paths: &BTreeMap<String, String>,
+    observations_file: &str,
+    output_file: &str,
+) -> BTreeMap<String, MontyObject> {
+    BTreeMap::from([
+        (
+            "participant_id".to_owned(),
+            MontyObject::String(participant_id.to_owned()),
+        ),
+        (
+            "input_files".to_owned(),
+            monty_string_dict(&BTreeMap::from([(
+                "genotypes".to_owned(),
+                input_file.to_owned(),
+            )])),
+        ),
+        (
+            "pipeline_files".to_owned(),
+            monty_string_dict(&BTreeMap::from([
+                ("manifest".to_owned(), manifest_path.to_owned()),
+                ("analysis".to_owned(), script_path.to_owned()),
+            ])),
+        ),
+        ("assets".to_owned(), monty_string_dict(asset_paths)),
+        (
+            "observations_file".to_owned(),
+            MontyObject::String(observations_file.to_owned()),
+        ),
+        (
+            "output_file".to_owned(),
+            MontyObject::String(output_file.to_owned()),
+        ),
+    ])
+}
+
+fn monty_string_dict(values: &BTreeMap<String, String>) -> MontyObject {
+    MontyObject::Dict(
+        values
+            .iter()
+            .map(|(key, value)| {
+                (
+                    MontyObject::String(key.clone()),
+                    MontyObject::String(value.clone()),
+                )
+            })
+            .collect(),
+    )
 }

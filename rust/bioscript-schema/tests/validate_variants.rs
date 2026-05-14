@@ -321,6 +321,9 @@ members:
   - kind: "variant"
     path: "g1-site-1.yaml"
     version: "1.0"
+  - kind: "variant-catalogue"
+    path: "catalogue/variants.yaml"
+    version: "1.0"
 interpretations:
   - id: "apol1_status"
     kind: "bioscript"

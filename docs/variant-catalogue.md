@@ -6,9 +6,9 @@ curated source stays as plain text TSV plus a small YAML manifest. Build tools
 can still expand the catalogue into normal `bioscript:variant:1.0` YAML files
 when a package or older runtime path needs per-variant manifests.
 
-This is a design note for the intended BioScript flow. The catalogue manifest
-schema already exists as `bioscript:variant-catalogue:1.0`; direct assay member
-support for catalogues is the next BioScript schema/runtime change.
+This is the BioScript flow for TSV-backed variant catalogues. The catalogue
+manifest schema is `bioscript:variant-catalogue:1.0`, and assay/panel members
+can point at catalogue manifests directly.
 
 ## Why This Exists
 
@@ -50,11 +50,9 @@ members:
     version: "1.0"
 ```
 
-Today, `bioscript:assay:1.0` assay members accept `kind: "variant"` only, so the
-direct member above is the required next schema change. The member should point
-to the catalogue YAML manifest, not directly to `variants.tsv`, because the YAML
-manifest holds schema identity, version, table locations, keys, and shared
-provenance.
+The member should point to the catalogue YAML manifest, not directly to
+`variants.tsv`, because the YAML manifest holds schema identity, version, table
+locations, keys, and shared provenance.
 
 The catalogue manifest shape is:
 
@@ -370,9 +368,6 @@ files work, but the real thalassemia logic needs proper allele, phase, gene, and
 evidence handling.
 
 ```python
-import bioscript
-
-
 observations = bioscript.read_tsv(bioscript.context["observations_file"])
 variants = bioscript.read_tsv(bioscript.context["assets"]["variants"])
 findings = bioscript.read_tsv(bioscript.context["assets"]["findings"])
