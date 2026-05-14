@@ -7,8 +7,6 @@ use std::{
 
 use zip::ZipArchive;
 
-#[cfg(test)]
-use bioscript_core::{Assembly, GenomicLocus, VariantKind};
 use bioscript_core::{RuntimeError, VariantObservation, VariantSpec};
 
 mod backends;
@@ -21,33 +19,14 @@ mod types;
 mod vcf;
 mod vcf_tokens;
 
-#[cfg(test)]
-use common::chrom_sort_key;
 pub(crate) use common::{describe_query, normalize_genotype, variant_sort_key};
-#[cfg(test)]
-use cram_backend::{
-    SnpPileupCounts, anchor_window, choose_variant_locus, classify_expected_indel,
-    describe_copy_number_decision_rule, describe_locus, describe_snp_decision_rule,
-    detect_reference_assembly, first_base, indel_at_anchor, infer_copy_number_genotype,
-    infer_snp_genotype, len_as_i64, normalize_pileup_base, record_overlaps_locus, spans_position,
-};
 pub use cram_backend::{
-    observe_cram_deletion_with_reader, observe_cram_indel_with_reader,
-    observe_cram_snp_with_reader,
+    observe_cram_deletion_with_reader, observe_cram_indel_with_reader, observe_cram_snp_with_reader,
 };
 pub(crate) use delimited::{
     COMMENT_PREFIXES, DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row,
 };
-#[cfg(test)]
-use delimited::{GENOTYPE_ALIASES, split_csv_line, strip_bom, strip_inline_comment};
 use delimited::{RowParser, scan_delimited_variants};
-#[cfg(test)]
-use delimited::{
-    build_column_indexes, default_column_indexes, find_header_index, looks_like_header_fields,
-    normalize_name,
-};
-#[cfg(test)]
-use io::looks_like_vcf_lines;
 use io::{detect_source_format, is_bgzf_path, read_lines_from_reader, select_zip_entry};
 pub use types::{
     BackendCapabilities, GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind,
@@ -57,17 +36,8 @@ pub use vcf::{
     choose_variant_locus_for_assembly, imputed_reference_observation, observe_vcf_snp_with_reader,
     observe_vcf_variant_with_reader,
 };
-#[cfg(test)]
-use vcf::{
-    detect_vcf_assembly, extract_vcf_sample_genotype, normalize_chromosome_name, parse_vcf_record,
-    vcf_row_matches_variant,
-};
 use vcf::{lookup_indexed_vcf_variants, scan_vcf_variants};
 pub(crate) use vcf_tokens::genotype_from_vcf_gt;
-#[cfg(test)]
-use vcf_tokens::{
-    is_symbolic_vcf_alt, normalize_sequence_token, vcf_alt_token, vcf_reference_token,
-};
 
 impl GenotypeStore {
     pub fn from_file(path: &Path) -> Result<Self, RuntimeError> {
@@ -525,12 +495,35 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use bioscript_core::{Assembly, GenomicLocus, VariantKind};
     use noodles::bgzf;
     use noodles::csi;
     use zip::write::SimpleFileOptions;
 
     use crate::alignment::{AlignmentOp, AlignmentOpKind, AlignmentRecord};
-    use crate::genotype::{io::read_plain_lines, vcf::detect_vcf_assembly_from_path};
+    use crate::genotype::{
+        common::chrom_sort_key,
+        cram_backend::{
+            SnpPileupCounts, anchor_window, choose_variant_locus, classify_expected_indel,
+            describe_copy_number_decision_rule, describe_locus, describe_snp_decision_rule,
+            detect_reference_assembly, first_base, indel_at_anchor, infer_copy_number_genotype,
+            infer_snp_genotype, len_as_i64, normalize_pileup_base, record_overlaps_locus,
+            spans_position,
+        },
+        delimited::{
+            GENOTYPE_ALIASES, build_column_indexes, default_column_indexes, find_header_index,
+            looks_like_header_fields, normalize_name, split_csv_line, strip_bom,
+            strip_inline_comment,
+        },
+        io::{looks_like_vcf_lines, read_plain_lines},
+        vcf::{
+            detect_vcf_assembly, detect_vcf_assembly_from_path, extract_vcf_sample_genotype,
+            normalize_chromosome_name, parse_vcf_record, vcf_row_matches_variant,
+        },
+        vcf_tokens::{
+            is_symbolic_vcf_alt, normalize_sequence_token, vcf_alt_token, vcf_reference_token,
+        },
+    };
 
     fn temp_dir(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -680,9 +673,7 @@ mod tests {
             matched_rsid: None,
             assembly: Some(Assembly::Grch38),
             genotype: Some("TT".to_owned()),
-            evidence: vec![
-                "observed SNP pileup at 22:36265988-36265988 ref=T alt=G".to_owned(),
-            ],
+            evidence: vec!["observed SNP pileup at 22:36265988-36265988 ref=T alt=G".to_owned()],
             ..VariantObservation::default()
         }];
 

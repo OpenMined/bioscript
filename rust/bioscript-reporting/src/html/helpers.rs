@@ -1,4 +1,5 @@
-fn render_table_start(out: &mut String, table_id: &str, headers: &[&str]) {
+use std::fmt::Write as _;
+pub(super) fn render_table_start(out: &mut String, table_id: &str, headers: &[&str]) {
     let escaped_id = html_escape(table_id);
     let _ = write!(
         out,
@@ -17,7 +18,7 @@ fn render_table_start(out: &mut String, table_id: &str, headers: &[&str]) {
     out.push_str("</tr></thead><tbody>");
 }
 
-fn table_column_class(header: &str) -> &'static str {
+pub(super) fn table_column_class(header: &str) -> &'static str {
     if is_debug_column(header) {
         "debug-col"
     } else {
@@ -25,7 +26,7 @@ fn table_column_class(header: &str) -> &'static str {
     }
 }
 
-fn is_debug_column(header: &str) -> bool {
+pub(super) fn is_debug_column(header: &str) -> bool {
     matches!(
         header,
         "allele_balance"
@@ -43,7 +44,7 @@ fn is_debug_column(header: &str) -> bool {
     )
 }
 
-fn table_header_label(header: &str) -> String {
+pub(super) fn table_header_label(header: &str) -> String {
     match header {
         "participant_id" => "Participant ID".to_owned(),
         "rsid" => "RSID".to_owned(),
@@ -81,15 +82,15 @@ fn table_header_label(header: &str) -> String {
     }
 }
 
-fn render_table_end(out: &mut String) {
+pub(super) fn render_table_end(out: &mut String) {
     out.push_str("</tbody></table></div>");
 }
 
-fn table_cell(out: &mut String, value: &str) {
+pub(super) fn table_cell(out: &mut String, value: &str) {
     class_cell(out, value, "");
 }
 
-fn class_cell(out: &mut String, value: &str, class_name: &str) {
+pub(super) fn class_cell(out: &mut String, value: &str, class_name: &str) {
     if class_name.is_empty() {
         let _ = write!(out, "<td>{}</td>", html_escape(value));
     } else {
@@ -102,7 +103,7 @@ fn class_cell(out: &mut String, value: &str, class_name: &str) {
     }
 }
 
-fn link_cell(out: &mut String, url: &str) {
+pub(super) fn link_cell(out: &mut String, url: &str) {
     if url.is_empty() {
         out.push_str("<td></td>");
     } else {
@@ -114,14 +115,14 @@ fn link_cell(out: &mut String, url: &str) {
     }
 }
 
-fn value_str<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
+pub(super) fn value_str<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
     value
         .get(key)
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
 }
 
-fn join_string_array(value: Option<&serde_json::Value>) -> String {
+pub(super) fn join_string_array(value: Option<&serde_json::Value>) -> String {
     value
         .and_then(serde_json::Value::as_array)
         .map(|items| {
@@ -134,7 +135,7 @@ fn join_string_array(value: Option<&serde_json::Value>) -> String {
         .unwrap_or_default()
 }
 
-fn join_drugs(finding: &serde_json::Value) -> String {
+pub(super) fn join_drugs(finding: &serde_json::Value) -> String {
     finding
         .get("drugs")
         .and_then(serde_json::Value::as_array)
@@ -148,7 +149,15 @@ fn join_drugs(finding: &serde_json::Value) -> String {
         .unwrap_or_default()
 }
 
-fn html_escape(value: &str) -> String {
+pub(super) fn json_field_as_tsv(value: Option<&serde_json::Value>) -> String {
+    match value {
+        Some(serde_json::Value::Null) | None => String::new(),
+        Some(serde_json::Value::String(value)) => value.replace(['\t', '\n'], " "),
+        Some(value) => value.to_string().replace(['\t', '\n'], " "),
+    }
+}
+
+pub(super) fn html_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")

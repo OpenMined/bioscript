@@ -235,10 +235,10 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
         )
     })?;
 
-    let assay_id = app_assay_id(&options.manifest_path)?;
-    let manifest_metadata = report_manifest_metadata(&options.manifest_path)?;
-    let findings = load_manifest_findings(&options.root, &options.manifest_path)?;
-    let provenance = load_manifest_provenance_links(&options.root, &options.manifest_path)?;
+    let manifest_workspace = bioscript_reporting::FilesystemManifestWorkspace::new(&options.root);
+    let manifest_path = options.manifest_path.display().to_string();
+    let manifest_context =
+        bioscript_reporting::load_report_manifest_context(&manifest_workspace, &manifest_path)?;
     let mut observations = Vec::new();
     let mut analyses = Vec::new();
     let mut reports = Vec::new();
@@ -271,7 +271,7 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
                 app_observation_from_manifest_row(
                     &options.root,
                     row,
-                    &assay_id,
+                    &manifest_context.assay_id,
                     input_inspection.inferred_sex.as_ref(),
                     input_inspection.assembly,
                 )
@@ -284,24 +284,32 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
             participant_id: &participant_id,
             loader: &input_loader,
             output_dir: &options.output_dir,
+            observation_rows: &rows,
             filters: &options.filters,
             max_duration_ms: options.analysis_max_duration_ms,
         };
         let input_analyses =
             run_manifest_analyses_for_report(&options.manifest_path, &analysis_options)?;
         analyses.extend(input_analyses.clone());
-        let matched_findings = match_app_findings(&findings, &input_observations, &input_analyses);
-        reports.push(app_report_json(AppReportJsonInput {
-            assay_id: &assay_id,
+        let input_file_name = input_file
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let input_file_path = input_file.display().to_string();
+        reports.push(bioscript_reporting::app_input_report_json(
+            bioscript_reporting::AppInputReportInput {
+            assay_id: &manifest_context.assay_id,
             participant_id: &participant_id,
-            input_file,
+            input_file_name,
+            input_file_path: &input_file_path,
             observations: &input_observations,
             analyses: &input_analyses,
-            findings: &matched_findings,
-            provenance: &provenance,
+            findings: &manifest_context.findings,
+            provenance: &manifest_context.provenance,
             input_inspection: Some(&input_inspection),
-            manifest_metadata: &manifest_metadata,
-        }));
+            manifest_metadata: &manifest_context.manifest_metadata,
+            },
+        ));
     }
 
     write_app_observations(

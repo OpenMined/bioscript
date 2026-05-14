@@ -1,4 +1,9 @@
-fn render_analysis_tables(
+use super::helpers::{
+    html_escape, json_field_as_tsv, render_table_end, render_table_start, table_cell,
+    table_header_label, value_str,
+};
+use std::fmt::Write as _;
+pub(super) fn render_analysis_tables(
     out: &mut String,
     analyses: &[serde_json::Value],
     observations: &[serde_json::Value],
@@ -65,7 +70,7 @@ fn render_analysis_tables(
     }
 }
 
-fn analysis_title(analysis: &serde_json::Value) -> String {
+pub(super) fn analysis_title(analysis: &serde_json::Value) -> String {
     let label = value_str(analysis, "analysis_label");
     if label.is_empty() {
         value_str(analysis, "analysis_id").to_owned()
@@ -74,7 +79,7 @@ fn analysis_title(analysis: &serde_json::Value) -> String {
     }
 }
 
-fn analysis_row_headers(
+pub(super) fn analysis_row_headers(
     analysis: &serde_json::Value,
     rows: &[serde_json::Value],
     show_participant_id: bool,
@@ -122,11 +127,11 @@ fn analysis_row_headers(
     headers
 }
 
-fn should_show_analysis_header(key: &str, show_participant_id: bool) -> bool {
+pub(super) fn should_show_analysis_header(key: &str, show_participant_id: bool) -> bool {
     (show_participant_id || key != "participant_id") && key != "notes" && key != "report_notes"
 }
 
-fn analysis_notes(rows: &[serde_json::Value]) -> Vec<String> {
+pub(super) fn analysis_notes(rows: &[serde_json::Value]) -> Vec<String> {
     let mut notes = Vec::new();
     for row in rows {
         if let Some(note) = row
@@ -142,7 +147,7 @@ fn analysis_notes(rows: &[serde_json::Value]) -> Vec<String> {
     notes
 }
 
-fn render_analysis_key_values(
+pub(super) fn render_analysis_key_values(
     out: &mut String,
     analysis: &serde_json::Value,
     row: &serde_json::Value,
@@ -161,7 +166,7 @@ fn render_analysis_key_values(
     out.push_str("</dl>");
 }
 
-fn analysis_header_label(analysis: &serde_json::Value, key: &str) -> String {
+pub(super) fn analysis_header_label(analysis: &serde_json::Value, key: &str) -> String {
     analysis
         .get("emits")
         .and_then(serde_json::Value::as_array)
@@ -179,7 +184,7 @@ fn analysis_header_label(analysis: &serde_json::Value, key: &str) -> String {
         .unwrap_or_else(|| table_header_label(key))
 }
 
-fn render_analysis_value(key: &str, value: &str) -> String {
+pub(super) fn render_analysis_value(key: &str, value: &str) -> String {
     if value.starts_with("http://") || value.starts_with("https://") {
         return format!(
             "<a href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">Source</a>",
@@ -197,11 +202,11 @@ fn render_analysis_value(key: &str, value: &str) -> String {
     }
 }
 
-fn is_analysis_badge_key(key: &str) -> bool {
+pub(super) fn is_analysis_badge_key(key: &str) -> bool {
     key.ends_with("_status") || key.ends_with("_outcome")
 }
 
-fn analysis_badge_class(value: &str) -> &'static str {
+pub(super) fn analysis_badge_class(value: &str) -> &'static str {
     match value {
         "normal" | "reference" => "analysis-badge-normal",
         "variant" => "analysis-badge-variant",
@@ -210,7 +215,7 @@ fn analysis_badge_class(value: &str) -> &'static str {
     }
 }
 
-fn render_analysis_notes(out: &mut String, notes: &[String]) {
+pub(super) fn render_analysis_notes(out: &mut String, notes: &[String]) {
     if notes.is_empty() {
         return;
     }
@@ -222,14 +227,14 @@ fn render_analysis_notes(out: &mut String, notes: &[String]) {
     out.push_str("</div>");
 }
 
-fn render_weak_indel_analysis_note(out: &mut String, weak_indel_dependency: bool) {
+pub(super) fn render_weak_indel_analysis_note(out: &mut String, weak_indel_dependency: bool) {
     if !weak_indel_dependency {
         return;
     }
     out.push_str("<div class=\"analysis-notes\"><h4>Notes</h4><p>* Result depends on a weak indel match from a consumer genotype file.</p></div>");
 }
 
-fn analysis_depends_on_weak_observation(
+pub(super) fn analysis_depends_on_weak_observation(
     analysis: &serde_json::Value,
     observations: &[serde_json::Value],
 ) -> bool {
@@ -258,14 +263,14 @@ fn analysis_depends_on_weak_observation(
         })
 }
 
-fn analysis_observation_is_weak_indel_match(observation: &serde_json::Value) -> bool {
+pub(super) fn analysis_observation_is_weak_indel_match(observation: &serde_json::Value) -> bool {
     observation
         .get("match_quality")
         .and_then(serde_json::Value::as_str)
         == Some("weak")
 }
 
-fn render_analysis_logic(out: &mut String, analysis: &serde_json::Value) {
+pub(super) fn render_analysis_logic(out: &mut String, analysis: &serde_json::Value) {
     let Some(logic) = analysis.get("logic") else {
         return;
     };

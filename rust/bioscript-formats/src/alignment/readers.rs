@@ -5,23 +5,20 @@ use std::{
     path::Path,
 };
 
+use noodles::core::Position;
+use noodles::sam::alignment::Record as _;
+use noodles::sam::header::record::value::map::header::{sort_order::COORDINATE, tag::SORT_ORDER};
 use noodles::{
-    bam,
-    bgzf,
-    csi::{self, binning_index::{Indexer, index::reference_sequence::bin::Chunk}},
-    cram::{
+    bam, bgzf,
+    cram::{self, container::ReferenceSequenceContext, crai, io::reader::Container},
+    csi::{
         self,
-        container::ReferenceSequenceContext,
-        crai,
-        io::reader::Container,
+        binning_index::{Indexer, index::reference_sequence::bin::Chunk},
     },
     fasta::{self, repository::adapters::IndexedReader as FastaIndexedReader},
     tabix, vcf,
     vcf::variant::Record as _,
 };
-use noodles::core::Position;
-use noodles::sam::alignment::Record as _;
-use noodles::sam::header::record::value::map::header::{sort_order::COORDINATE, tag::SORT_ORDER};
 
 use bioscript_core::RuntimeError;
 
@@ -65,35 +62,35 @@ where
 /// callers that receive the small index inline while the big CRAM stays on a
 /// JS-backed reader.
 pub fn parse_crai_bytes(bytes: &[u8]) -> Result<crai::Index, RuntimeError> {
-	crai::io::Reader::new(std::io::Cursor::new(bytes))
-		.read_index()
-		.map_err(|err| RuntimeError::Io(format!("failed to parse CRAM index bytes: {err}")))
+    crai::io::Reader::new(std::io::Cursor::new(bytes))
+        .read_index()
+        .map_err(|err| RuntimeError::Io(format!("failed to parse CRAM index bytes: {err}")))
 }
 
 /// Parse a BAM index (`.bai`) from an in-memory byte buffer.
 pub fn parse_bai_bytes(bytes: &[u8]) -> Result<bam::bai::Index, RuntimeError> {
-	bam::bai::io::Reader::new(std::io::Cursor::new(bytes))
-		.read_index()
-		.map_err(|err| RuntimeError::Io(format!("failed to parse BAM index bytes: {err}")))
+    bam::bai::io::Reader::new(std::io::Cursor::new(bytes))
+        .read_index()
+        .map_err(|err| RuntimeError::Io(format!("failed to parse BAM index bytes: {err}")))
 }
 
 /// Build a BAM `IndexedReader` over any `Read` source given a parsed BAI index.
 pub fn build_bam_indexed_reader_from_reader<R>(
-	reader: R,
-	bai_index: bam::bai::Index,
+    reader: R,
+    bai_index: bam::bai::Index,
 ) -> Result<bam::io::indexed_reader::IndexedReader<bgzf::io::Reader<R>>, RuntimeError>
 where
-	R: Read,
+    R: Read,
 {
-	bam::io::indexed_reader::Builder::default()
-		.set_index(bai_index)
-		.build_from_reader(reader)
-		.map_err(|err| RuntimeError::Io(format!("failed to build indexed BAM reader: {err}")))
+    bam::io::indexed_reader::Builder::default()
+        .set_index(bai_index)
+        .build_from_reader(reader)
+        .map_err(|err| RuntimeError::Io(format!("failed to build indexed BAM reader: {err}")))
 }
 
 /// Parse a FASTA index (`.fai`) from an in-memory byte buffer.
 pub fn parse_fai_bytes(bytes: &[u8]) -> Result<fasta::fai::Index, RuntimeError> {
-	fasta::fai::io::Reader::new(std::io::Cursor::new(bytes))
+    fasta::fai::io::Reader::new(std::io::Cursor::new(bytes))
         .read_index()
         .map_err(|err| RuntimeError::Io(format!("failed to parse FASTA index bytes: {err}")))
 }
@@ -138,7 +135,9 @@ pub fn generate_vcf_tbi_bytes(bytes: &[u8]) -> Result<Vec<u8>, RuntimeError> {
 
         indexer
             .add_record(reference_sequence_name, start, end, chunk)
-            .map_err(|err| RuntimeError::Io(format!("failed to add VCF record to tabix index: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Io(format!("failed to add VCF record to tabix index: {err}"))
+            })?;
         start_position = end_position;
     }
 
@@ -179,14 +178,15 @@ where
             break;
         }
 
-        let compression_header = container
-            .compression_header()
-            .map_err(|err| RuntimeError::Io(format!("failed to read CRAM compression header: {err}")))?;
+        let compression_header = container.compression_header().map_err(|err| {
+            RuntimeError::Io(format!("failed to read CRAM compression header: {err}"))
+        })?;
         let landmarks = container.header().landmarks();
         let slice_count = landmarks.len();
 
         for (i, result) in container.slices().enumerate() {
-            let slice = result.map_err(|err| RuntimeError::Io(format!("failed to read CRAM slice: {err}")))?;
+            let slice = result
+                .map_err(|err| RuntimeError::Io(format!("failed to read CRAM slice: {err}")))?;
             let landmark = landmarks[i];
             let slice_length = if i < slice_count - 1 {
                 landmarks[i + 1] - landmark
@@ -199,9 +199,9 @@ where
                     SliceReferenceSequenceAlignmentRangeInclusive,
                 > = HashMap::new();
 
-                let (core_data_src, external_data_srcs) = slice
-                    .decode_blocks()
-                    .map_err(|err| RuntimeError::Io(format!("failed to decode CRAM slice blocks: {err}")))?;
+                let (core_data_src, external_data_srcs) = slice.decode_blocks().map_err(|err| {
+                    RuntimeError::Io(format!("failed to decode CRAM slice blocks: {err}"))
+                })?;
 
                 for record in slice
                     .records(
@@ -211,16 +211,24 @@ where
                         &core_data_src,
                         &external_data_srcs,
                     )
-                    .map_err(|err| RuntimeError::Io(format!("failed to decode CRAM slice records: {err}")))?
+                    .map_err(|err| {
+                        RuntimeError::Io(format!("failed to decode CRAM slice records: {err}"))
+                    })?
                 {
                     let range = reference_sequence_ids
-                        .entry(record.reference_sequence_id(&header).transpose().map_err(|err| {
-                            RuntimeError::Io(format!("failed to read CRAM record reference id: {err}"))
-                        })?)
+                        .entry(record.reference_sequence_id(&header).transpose().map_err(
+                            |err| {
+                                RuntimeError::Io(format!(
+                                    "failed to read CRAM record reference id: {err}"
+                                ))
+                            },
+                        )?)
                         .or_default();
 
                     let alignment_start = record.alignment_start().transpose().map_err(|err| {
-                        RuntimeError::Io(format!("failed to read CRAM record alignment start: {err}"))
+                        RuntimeError::Io(format!(
+                            "failed to read CRAM record alignment start: {err}"
+                        ))
                     })?;
                     let alignment_end = record.alignment_end().transpose().map_err(|err| {
                         RuntimeError::Io(format!("failed to read CRAM record alignment end: {err}"))
@@ -307,11 +315,10 @@ where
     let header = reader
         .read_header()
         .map_err(|err| RuntimeError::Io(format!("failed to read BAM header: {err}")))?;
-    if !header
+    if header
         .header()
         .and_then(|hdr| hdr.other_fields().get(&SORT_ORDER))
-        .map(|sort_order| sort_order == COORDINATE)
-        .unwrap_or_default()
+        .is_none_or(|sort_order| sort_order != COORDINATE)
     {
         return Err(RuntimeError::Io(
             "BAM must be coordinate-sorted (SO:coordinate) before indexing".to_owned(),
@@ -330,18 +337,15 @@ where
         let end_position = reader.get_ref().virtual_position();
         let chunk = Chunk::new(start_position, end_position);
         let alignment_context = match (
-            record
-                .reference_sequence_id()
-                .transpose()
-                .map_err(|err| RuntimeError::Io(format!("failed to read BAM reference id: {err}")))?,
-            record
-                .alignment_start()
-                .transpose()
-                .map_err(|err| RuntimeError::Io(format!("failed to read BAM alignment start: {err}")))?,
-            record
-                .alignment_end()
-                .transpose()
-                .map_err(|err| RuntimeError::Io(format!("failed to read BAM alignment end: {err}")))?,
+            record.reference_sequence_id().transpose().map_err(|err| {
+                RuntimeError::Io(format!("failed to read BAM reference id: {err}"))
+            })?,
+            record.alignment_start().transpose().map_err(|err| {
+                RuntimeError::Io(format!("failed to read BAM alignment start: {err}"))
+            })?,
+            record.alignment_end().transpose().map_err(|err| {
+                RuntimeError::Io(format!("failed to read BAM alignment end: {err}"))
+            })?,
         ) {
             (Some(id), Some(start), Some(end)) => {
                 let flags = record.flags();
@@ -352,7 +356,9 @@ where
 
         builder
             .add_record(alignment_context, chunk)
-            .map_err(|err| RuntimeError::Io(format!("failed to add BAM record to BAI index: {err}")))?;
+            .map_err(|err| {
+                RuntimeError::Io(format!("failed to add BAM record to BAI index: {err}"))
+            })?;
         start_position = end_position;
     }
 
