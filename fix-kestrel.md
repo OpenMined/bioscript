@@ -1130,6 +1130,67 @@ eprintln!("[KDBG-RESTORE] consensus_size={} kmer={} next_base={:?} min_depth={}"
 With this trace from Rust + the existing Java instrumentation, the next
 session can directly find iter 4's restore disagreement.
 
+### Rust's per-iter restore trace (with KDBG-RESTORE built into runner.rs)
+
+```
+post_iter=1 restored_consensus_size=80  min_depth=1572 kmer=GGGCGGTGGAGCCCGGGGCT
+post_iter=2 restored_consensus_size=84  min_depth=58   kmer=GGTGGAGCCCGGGGCTGGCC
+post_iter=3 restored_consensus_size=100 min_depth=21   kmer=GGCCTGGTGTCCGGGGCCGC
+post_iter=4 restored_consensus_size=103 min_depth=20   kmer=CTGGTGTCCGGGGCCGCGGG
+post_iter=5 restored_consensus_size=111 min_depth=7    kmer=CGGGGCCGCGGGGACACCGG
+post_iter=6 restored_consensus_size=80  min_depth=1600 kmer=GGGCGGTGGAGCCCGGGGCG
+```
+
+Rust's iter 6 restore (`kmer=GGGCGGTGGAGCCCGGGGCG, consensus_size=80,
+min_depth=1600`) is **exactly the G-alt save from iter 1.61** (the
+remaining G-save after stack management at iter 1.61: G accepted with
+min_depth=1600 evicting min=699).
+
+Java's iter 4 (per Java's trim trace: chain head len=80 score=536 with
+cycle break at GGGCGGTGGAGCCCGGGGCC) follows the **same path that
+restoring this G-alt would produce**. So Java's iter 4 = Rust's iter 6
+in terms of which saved state is being restored.
+
+This means: between iter 3 end and iter 4 start, **Java's stack TOP is
+the G-alt from iter 1.61**, while **Rust's stack TOP is a save from
+iter 3 (consensus_size=100, min_depth=21)**.
+
+The same saves got pushed in both Java and Rust. But Java's iter 3 save
+attempts were apparently REJECTED (stack already had min >= 21), while
+Rust's same attempts were ACCEPTED.
+
+This requires Java's stack at iter 3 end to have minimum value >= 21,
+while Rust's has minimum < 21. Both stacks started from the SAME state
+at iter 3 begin (same restore). So the divergence is in how the stacks
+EVOLVED during iter 3's BASE_LOOP.
+
+### Required final bisection step
+
+Instrument Java's `removeLastMinState` to dump the stack min and the
+proposed minDepth on every save attempt. Compare with Rust's same. The
+iter (within iter 3) where Java rejects a save that Rust accepts is the
+root cause.
+
+Implementation sketch (for next session):
+
+```java
+// In Java's removeLastMinState, after `if (minState == null)`:
+logger.trace("[JDBG-STACK] proposed_min={} stack_size={} stack_min={}",
+             minDepthLimit, nState,
+             /* compute current min from iterating stack */);
+```
+
+And add the equivalent in Rust's `remove_min_state`:
+
+```rust
+let stack_min = self.saved_states.iter().map(|s| s.min_depth).min().unwrap_or(0);
+eprintln!("[KDBG-STACK] proposed_min={} stack_size={} stack_min={}",
+          min_depth_limit, self.saved_states.len(), stack_min);
+```
+
+The trace line where Java's stack_min differs from Rust's stack_min is
+the exact point of divergence.
+
 ### Cap-sweep diagnostic
 
 Final session experiment: running with cap-reset DISABLED (Rust uses the
