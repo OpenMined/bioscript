@@ -1,12 +1,12 @@
 use bioscript_core::{VariantKind, VariantSpec};
 use monty::MontyObject;
 
-pub(crate) fn bioscript_object() -> MontyObject {
+pub(crate) fn bioscript_object(context: MontyObject) -> MontyObject {
     MontyObject::Dataclass {
         name: "Bioscript".to_owned(),
         type_id: 1,
-        field_names: vec![],
-        attrs: vec![].into(),
+        field_names: vec!["context".to_owned()],
+        attrs: vec![(MontyObject::String("context".to_owned()), context)].into(),
         frozen: true,
     }
 }

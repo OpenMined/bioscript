@@ -107,6 +107,73 @@ provenance:
 }
 
 #[test]
+fn validate_variants_accepts_variant_catalogue_shape() {
+    let dir = temp_dir("validate-catalogue");
+    let fixture = dir.join("variants.yaml");
+    fs::write(
+        &fixture,
+        r#"
+schema: "bioscript:variant-catalogue:1.0"
+version: "1.0"
+name: "thalassemia-variants"
+variants:
+  source: "variants.tsv"
+  format: "tsv"
+  key: "variant_id"
+findings:
+  source: "findings.tsv"
+  format: "tsv"
+  key: "variant_id"
+provenance:
+  sources:
+    - id: "ithagenes"
+      kind: "database"
+      label: "IthaGenes"
+      url: "https://www.ithanet.eu/db/ithagenes?action=list"
+    - id: "dbsnp"
+      kind: "database"
+      label: "dbSNP"
+      url_template: "https://www.ncbi.nlm.nih.gov/snp/{rsid}"
+"#,
+    )
+    .unwrap();
+
+    let report = validate_variants_path(&fixture).unwrap();
+    assert_eq!(report.total_errors(), 0);
+    assert_eq!(report.total_warnings(), 0);
+}
+
+#[test]
+fn validate_variants_reports_variant_catalogue_shape_issues() {
+    let dir = temp_dir("validate-catalogue-errors");
+    let fixture = dir.join("variants.yaml");
+    fs::write(
+        &fixture,
+        r#"
+schema: "bioscript:variant-catalogue:1.0"
+version: "1.0"
+name: "broken-catalogue"
+variants:
+  source: "variants.csv"
+  format: "csv"
+provenance:
+  sources:
+    - id: "dbsnp"
+      kind: "database"
+      label: "dbSNP"
+"#,
+    )
+    .unwrap();
+
+    let report = validate_variants_path(&fixture).unwrap();
+    let text = report.render_text();
+    assert_eq!(report.total_errors(), 2);
+    assert_eq!(report.total_warnings(), 1);
+    assert!(text.contains("expected 'tsv'"));
+    assert!(text.contains("expected url or url_template"));
+}
+
+#[test]
 fn load_variant_manifest_text_accepts_start_end_coordinates() {
     let manifest = load_variant_manifest_text(
         "rs71338792.yaml",
@@ -260,6 +327,11 @@ interpretations:
     path: "apol1.py"
     derived_from:
       - "g1-site-1.yaml"
+    assets:
+      - id: "variants"
+        path: "variants.tsv"
+      - id: "findings"
+        path: "findings.tsv"
     emits:
       - key: "apol1_status"
         label: "APOL1 status"

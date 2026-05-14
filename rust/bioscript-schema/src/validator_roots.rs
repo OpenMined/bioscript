@@ -34,7 +34,7 @@ fn validate_panel_root(root: &Value, issues: &mut Vec<Issue>) {
     validate_tags(root, issues);
     validate_permissions(root, issues);
     validate_downloads(root, issues);
-    validate_panel_members(root, &["variant", "assay"], issues);
+    validate_panel_members(root, &["variant", "variant-catalogue", "assay"], issues);
     validate_panel_interpretations(root, issues);
     validate_findings(root, issues);
 }
@@ -43,7 +43,7 @@ fn validate_assay_root(root: &Value, issues: &mut Vec<Issue>) {
     validate_schema_and_identity(root, "bioscript:assay:1.0", None, issues);
     validate_optional_strings(root, &["name", "label", "summary"], issues);
     validate_tags(root, issues);
-    validate_panel_members(root, &["variant"], issues);
+    validate_panel_members(root, &["variant", "variant-catalogue"], issues);
     validate_panel_interpretations(root, issues);
     validate_findings(root, issues);
 }
@@ -331,4 +331,3 @@ fn validate_coordinate_range_values(start: i64, end: i64, assembly: &str, issues
         });
     }
 }
-

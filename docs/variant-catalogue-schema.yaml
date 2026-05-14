@@ -1,0 +1,26 @@
+schema: "bioscript:variant-catalogue:1.0"
+version: "1.0"
+name: "example-variant-catalogue"
+label: "Example Variant Catalogue"
+summary: "Compact source catalogue for projects with many variants."
+
+variants:
+  source: "variants.tsv"
+  format: "tsv"
+  key: "variant_id"
+
+findings:
+  source: "findings.tsv"
+  format: "tsv"
+  key: "variant_id"
+
+provenance:
+  sources:
+    - id: "dbsnp"
+      kind: "database"
+      label: "dbSNP"
+      url_template: "https://www.ncbi.nlm.nih.gov/snp/{rsid}"
+    - id: "ncbi_variation"
+      kind: "database"
+      label: "NCBI Variation Services"
+      url_template: "https://api.ncbi.nlm.nih.gov/variation/v0/hgvs/{genomic_hgvs}/contextuals"

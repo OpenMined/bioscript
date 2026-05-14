@@ -5,6 +5,7 @@ include!("validator_types.rs");
 include!("validator_load.rs");
 include!("validator_roots.rs");
 include!("validator_alleles_findings.rs");
+include!("validator_catalogue.rs");
 include!("validator_panel.rs");
 include!("validator_parse.rs");
 include!("validator_helpers.rs");

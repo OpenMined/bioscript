@@ -104,14 +104,14 @@ fn infer_kind(name: &str, schema: Option<&str>, parsed: Option<&Value>) -> Remot
     }
     if let Some(schema) = schema {
         let lower = schema.to_ascii_lowercase();
+        if lower.contains("catalogue") || lower.contains("catalog") || lower.contains("index") {
+            return RemoteResourceKind::Catalogue;
+        }
         if lower.contains("variant") {
             return RemoteResourceKind::Variant;
         }
         if lower.contains("panel") {
             return RemoteResourceKind::Panel;
-        }
-        if lower.contains("catalogue") || lower.contains("catalog") || lower.contains("index") {
-            return RemoteResourceKind::Catalogue;
         }
         if lower.contains("assay") {
             return RemoteResourceKind::Assay;

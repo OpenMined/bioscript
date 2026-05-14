@@ -96,6 +96,7 @@ impl PackageWorkspace {
                 RuntimeConfig {
                     limits,
                     loader: loader.clone(),
+                    context: BTreeMap::new(),
                     virtual_binary_files,
                     virtual_text_files: std::mem::take(&mut virtual_text_files),
                     preloaded_observations: preloaded_observations.to_vec(),

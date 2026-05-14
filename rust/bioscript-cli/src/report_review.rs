@@ -94,13 +94,14 @@ fn generate_review_report(options: &ReviewReportOptions) -> Result<(), String> {
         let input_bytes = review_case_genotype_text(&case);
         let store = GenotypeStore::from_bytes(&format!("{}.txt", case.id), input_bytes.as_bytes())
             .map_err(|err| err.to_string())?;
-        let input_observations = run_manifest_rows_with_store(
+        let manifest_rows = run_manifest_rows_with_store(
             &options.root,
             &options.manifest_path,
             &store,
             &case.id,
             &options.filters,
-        )?
+        )?;
+        let input_observations = manifest_rows
         .iter()
         .map(|row| {
             app_observation_from_manifest_row(
@@ -114,7 +115,7 @@ fn generate_review_report(options: &ReviewReportOptions) -> Result<(), String> {
         .collect::<Result<Vec<_>, _>>()?;
         observations.extend(input_observations.clone());
 
-        let input_analyses = run_review_analyses(options, &case, &input_bytes)?;
+        let input_analyses = run_review_analyses(options, &case, &input_bytes, &manifest_rows)?;
         analyses.extend(input_analyses.clone());
         let synthetic_input = PathBuf::from(format!("review://{}", case.id));
         let synthetic_input_name = synthetic_input
@@ -206,6 +207,7 @@ fn run_review_analyses(
     options: &ReviewReportOptions,
     case: &ReviewCase,
     input_bytes: &str,
+    observation_rows: &[BTreeMap<String, String>],
 ) -> Result<Vec<serde_json::Value>, String> {
     let temp_dir = options.output_dir.join(".review-temp");
     fs::create_dir_all(&temp_dir).map_err(|err| {
@@ -221,14 +223,13 @@ fn run_review_analyses(
         format: Some(GenotypeSourceFormat::Text),
         ..GenotypeLoadOptions::default()
     };
-    let observation_rows = Vec::new();
     let analysis_options = ReportAnalysisOptions {
         runtime_root: &options.root,
         input_file: &temp_path,
         participant_id: &case.id,
         loader: &loader,
         output_dir: &options.output_dir,
-        observation_rows: &observation_rows,
+        observation_rows,
         filters: &options.filters,
         max_duration_ms: 1_000,
     };

@@ -250,7 +250,52 @@ fn validate_panel_interpretation(
         }
     }
     validate_panel_interpretation_logic(key, idx, mapping, issues);
+    validate_panel_interpretation_assets(key, idx, mapping, issues);
     validate_panel_interpretation_emits(key, idx, mapping, issues);
+}
+
+fn validate_panel_interpretation_assets(
+    key: &str,
+    idx: usize,
+    mapping: &Mapping,
+    issues: &mut Vec<Issue>,
+) {
+    let Some(assets) = mapping
+        .get(Value::String("assets".to_owned()))
+        .and_then(Value::as_sequence)
+    else {
+        return;
+    };
+    let mut ids = BTreeSet::new();
+    for (asset_idx, asset) in assets.iter().enumerate() {
+        let Some(asset) = asset.as_mapping() else {
+            issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("{key}[{idx}].assets[{asset_idx}]"),
+                message: "expected mapping".to_owned(),
+            });
+            continue;
+        };
+        for field in ["id", "path"] {
+            validate_required_mapping_string(
+                asset,
+                field,
+                &format!("{key}[{idx}].assets[{asset_idx}]"),
+                issues,
+            );
+        }
+        if let Some(id) = asset
+            .get(Value::String("id".to_owned()))
+            .and_then(Value::as_str)
+            && !ids.insert(id.to_owned())
+        {
+            issues.push(Issue {
+                severity: Severity::Error,
+                path: format!("{key}[{idx}].assets[{asset_idx}].id"),
+                message: format!("duplicate asset id '{id}'"),
+            });
+        }
+    }
 }
 
 fn validate_panel_interpretation_logic(

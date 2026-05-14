@@ -8,6 +8,7 @@ use bioscript_schema::{
     load_variant_manifest_text,
 };
 
+#[path = "manifest_provenance.rs"]
 mod provenance;
 
 pub use provenance::{collect_manifest_provenance_entries, load_manifest_provenance_links};
