@@ -953,3 +953,85 @@ OR (b) attempt a targeted fix in `record_max_node` that detects "alt branches
 producing the same trace-shape tail" and skips chain extension when the new
 node's trace_node tail matches an already-emitted node's tail (a
 chain-shape-aware variant of the `haplotype_built` flag).
+
+### Shape dedup experiment (KESTREL_SHAPE_DEDUP=1)
+
+Tested by adding a `(n_consensus_bases, max_score_bits) → Rc<Cell<bool>>`
+cache in `KmerAligner`, with `record_max_node` looking up the cache and
+sharing the `haplotype_built` Rc across all shape-equivalent nodes.
+
+J-R diagnostic results (with shape dedup):
+- Raw emits: 1753 → 73 (97% reduction).
+- unique_emitted: 1753 → 73.
+- Haplotypes produced: 15 → 15 (cap, distinct shapes).
+
+Full negative VNtyper FASTQ parity (with shape dedup):
+- Actual records: 7062 → 7561 (WORSE).
+- Extras: 2727 → 3848 (WORSE).
+- Missing: 562 → 1184 (WORSE, doubled).
+
+**Conclusion**: Shape dedup also fails. The legitimate Java emissions
+include some haps that share shape with cycle-pattern haps; shape-dedup
+suppresses the first-occurrence emission of a shape that Java later
+emits. Missing example: `D-R:25 C→G GDP=1600` — a high-coverage SNP Java
+emits, but which Rust now suppresses because some earlier cycle-iter
+emitted a shape-equivalent (but content-different) hap.
+
+The cycle-pattern haps and legitimate Java-matching haps **share the
+same `(length, score)` shapes but have different content**. So
+shape-level discrimination is too coarse to separate them.
+
+### Available experimental knobs (all opt-in, default behavior unchanged)
+
+- `KESTREL_DISABLE_STATE_DEDUP=1` — bypass the runner-level
+  `SavedBranchKey` HashSet (no effect on parity, confirmed).
+- `KESTREL_AGGRESSIVE_STATE_DEDUP=1` — hash save keys by
+  `(kmer, next_base)` only, dropping consensus (J-R iters drop 99% but
+  parity gets worse 7062 → 9359).
+- `KESTREL_SHAPE_DEDUP=1` — share `haplotype_built` across nodes with
+  same `(n_consensus_bases, max_score)` (J-R raw emits drop 97% but
+  parity gets worse 7062 → 7561).
+- `KESTREL_TRACE_ITER_MAX=N` — extend `KDBG-ITER-END` logging to first N
+  iters (default 5).
+- `KESTREL_TIGHT_SEQ_LIMIT`, `KESTREL_MED_SEQ_LIMIT`,
+  `KESTREL_DISABLE_SEQ_LIMIT` — sequence-length cap experiments
+  (previous session, no effect).
+- `KESTREL_OUTER_ITER_CAP=N`, `KESTREL_STAGNATION_CAP=N` — outer-loop
+  termination experiments (previous session, no convergence).
+- `KESTREL_TRACE_REGION=REF:START-END` — region-specific tracing.
+- `KESTREL_DEBUG_BUILD=1` — KDBG-BUILD counter dump.
+- `KESTREL_DISABLE_JAVA_CLI_CAP_RESET=1` — bypass the `10/15` cap
+  override that mirrors Java's CLI bug.
+
+### Final session summary (2026-05-15)
+
+**Committed fixes** (none alone closes parity gap):
+
+1. `haplotype_built` Rc<Cell<bool>> sharing for chain clones.
+2. Initial `min_depth` reverse-complement addition.
+3. Six new opt-in experimental env vars.
+
+**Findings**:
+
+- The cycle pattern in Rust's outer iters 25-40 (mirroring iters 1-15 for
+  J-R) is **real and confirmed**.
+- The cycle pattern is **not the only divergence**: removing it via
+  dedup tools makes parity numbers worse, indicating the cycle paths
+  contain BOTH spurious extras AND legitimate matches to Java's
+  emissions.
+- Multiple naive dedup approaches (state-dedup, aggressive-dedup,
+  shape-dedup) all fail because the cycle paths and legitimate paths
+  share the same identifying features at every level we've tried.
+
+**Bug status**: Parity remains at 7062 actual vs 4897 expected (2727
+extras, 562 missing). The divergence appears to be **in the matrix
+arithmetic or trace-branch tie-breaking** at iter boundaries somewhere
+past inner-iter 9 of outer-iter 1 — where Rust and Java make different
+choose_branch decisions that we haven't been able to identify via
+inspection.
+
+**Required for next session**: JVM-side instrumentation to dump Java's
+matrix bottom-row scores per inner iter for J-R:4-119, then bisect
+against Rust's same trace to find the FIRST iter where bottom-row
+scores diverge. Without that comparison point, all the algorithm
+components match by inspection but produce different outputs.
