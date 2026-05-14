@@ -567,8 +567,8 @@ mod tests {
 
     #[test]
     fn genotype_public_cache_wrappers_and_empty_store_cover_lookup_contracts() {
-        let fallback = GenotypeStore::from_bytes("fallback.txt", b"rsid\tgenotype\nrs2\tCC\n")
-            .unwrap();
+        let fallback =
+            GenotypeStore::from_bytes("fallback.txt", b"rsid\tgenotype\nrs2\tCC\n").unwrap();
         let cached_observation = VariantObservation {
             matched_rsid: Some("rs1".to_owned()),
             genotype: Some("AG".to_owned()),

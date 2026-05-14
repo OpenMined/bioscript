@@ -529,33 +529,31 @@ mod report_matching_tests {
 
     #[test]
     fn match_app_findings_matches_variant_effects_and_deduplicates_evidence() {
-        let findings = vec![
-            serde_json::json!({
-                "schema": "bioscript:finding:1.0",
-                "label": "Repeated",
-                "evidence": {"source": "db", "kind": "guideline", "id": "cpic-1"},
-                "effects": [
-                    {
-                        "id": "effect-a",
-                        "binding": {
-                            "source": "variant",
-                            "variant": "variants/rs1.yaml",
-                            "key": "outcome",
-                            "value": "variant"
-                        }
-                    },
-                    {
-                        "id": "effect-a",
-                        "binding": {
-                            "source": "variant",
-                            "variant": "rs1.yaml",
-                            "key": "outcome",
-                            "value": "variant"
-                        }
+        let findings = vec![serde_json::json!({
+            "schema": "bioscript:finding:1.0",
+            "label": "Repeated",
+            "evidence": {"source": "db", "kind": "guideline", "id": "cpic-1"},
+            "effects": [
+                {
+                    "id": "effect-a",
+                    "binding": {
+                        "source": "variant",
+                        "variant": "variants/rs1.yaml",
+                        "key": "outcome",
+                        "value": "variant"
                     }
-                ]
-            })
-        ];
+                },
+                {
+                    "id": "effect-a",
+                    "binding": {
+                        "source": "variant",
+                        "variant": "rs1.yaml",
+                        "key": "outcome",
+                        "value": "variant"
+                    }
+                }
+            ]
+        })];
         let observations = vec![serde_json::json!({
             "participant_id": "p1",
             "variant_key": "rs1",
@@ -598,7 +596,7 @@ mod report_matching_tests {
                     "key": "score",
                     "value": 2
                 }
-            })
+            }),
         ];
         let analyses = vec![
             serde_json::json!({
@@ -615,7 +613,7 @@ mod report_matching_tests {
                 "assay_id": "assay",
                 "analysis_id": "other",
                 "rows": "not rows"
-            })
+            }),
         ];
 
         let matched = match_app_findings(&findings, &[], &analyses);
@@ -707,30 +705,36 @@ mod report_matching_tests {
             "genotype_display": "AG",
             "zygosity": "het"
         })];
-        assert!(app_variant_binding_match_observation(
-            &serde_json::json!({"source": "variant"}),
-            &observations
-        )
-        .is_none());
-        assert!(app_variant_binding_match_observation(
-            &serde_json::json!({
-                "source": "variant",
-                "key": "alt",
-                "operator": "unknown",
-                "value": "G"
-            }),
-            &observations
-        )
-        .is_none());
-        assert!(app_variant_binding_match_observation(
-            &serde_json::json!({
-                "source": "variant",
-                "allele": "",
-                "operator": "dosage_equals",
-                "value": 1
-            }),
-            &observations
-        )
-        .is_none());
+        assert!(
+            app_variant_binding_match_observation(
+                &serde_json::json!({"source": "variant"}),
+                &observations
+            )
+            .is_none()
+        );
+        assert!(
+            app_variant_binding_match_observation(
+                &serde_json::json!({
+                    "source": "variant",
+                    "key": "alt",
+                    "operator": "unknown",
+                    "value": "G"
+                }),
+                &observations
+            )
+            .is_none()
+        );
+        assert!(
+            app_variant_binding_match_observation(
+                &serde_json::json!({
+                    "source": "variant",
+                    "allele": "",
+                    "operator": "dosage_equals",
+                    "value": 1
+                }),
+                &observations
+            )
+            .is_none()
+        );
     }
 }

@@ -455,6 +455,7 @@ fn select_sex_detection_zip_entry<R: std::io::Read + std::io::Seek>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
     use std::io::Write as _;
 
     fn zip_bytes(entries: &[(&str, &str)]) -> Vec<u8> {
@@ -653,8 +654,9 @@ mod tests {
         assert_eq!(unsupported.sex, InferredSex::Unknown);
         assert_eq!(unsupported.method, "unsupported_source_type");
 
-        let result = infer_sex_from_bytes("sample.txt", text.as_bytes(), DetectedKind::GenotypeText)
-            .unwrap();
+        let result =
+            infer_sex_from_bytes("sample.txt", text.as_bytes(), DetectedKind::GenotypeText)
+                .unwrap();
         assert_eq!(result.method, "snp_array_x_y_fingerprint");
 
         let archive = zip_bytes(&[
@@ -669,10 +671,14 @@ mod tests {
 
         let err = infer_sex_from_zip_bytes(&archive, "missing.txt", DetectedKind::GenotypeText)
             .unwrap_err();
-        assert!(err.to_string().contains("failed to open zip entry missing.txt"));
+        assert!(
+            err.to_string()
+                .contains("failed to open zip entry missing.txt")
+        );
 
-        let bad_zip = infer_sex_from_zip_bytes(b"not a zip", "sample.txt", DetectedKind::GenotypeText)
-            .unwrap_err();
+        let bad_zip =
+            infer_sex_from_zip_bytes(b"not a zip", "sample.txt", DetectedKind::GenotypeText)
+                .unwrap_err();
         assert!(bad_zip.to_string().contains("failed to read zip bytes"));
 
         let mut zip = ZipArchive::new(Cursor::new(archive)).unwrap();
@@ -684,7 +690,10 @@ mod tests {
         let unsupported_zip = zip_bytes(&[("docs/readme.md", "ignored")]);
         let mut zip = ZipArchive::new(Cursor::new(unsupported_zip)).unwrap();
         let err = select_sex_detection_zip_entry(&mut zip).unwrap_err();
-        assert!(err.to_string().contains("does not contain a supported sex detection input"));
+        assert!(
+            err.to_string()
+                .contains("does not contain a supported sex detection input")
+        );
     }
 
     #[test]
@@ -694,18 +703,30 @@ mod tests {
         text.push_str("chrM\t1\t.\tC\tT\t.\tPASS\t.\tGT\t1\n");
         for idx in 0..70 {
             let gt = if idx % 2 == 0 { "0|1" } else { "0|0" };
-            text.push_str(&format!(
-                "23\t{}\t.\tC\tT\t.\tPASS\t.\tGT\t{gt}:99\n",
+            let _ = writeln!(
+                text,
+                "23\t{}\t.\tC\tT\t.\tPASS\t.\tGT\t{gt}:99",
                 3_000_000 + idx
-            ));
+            );
         }
         text.push_str("24\t1\t.\tC\tT\t.\tPASS\t.\tGT\t.\n");
         text.push_str("chrX\t60000\t.\tC\tT\t.\tPASS\t.\tGT\t0/1\n");
         text.push_str("chrX\t155000000\t.\tC\tT\t.\tPASS\t.\tGT\t0/1\n");
 
-        let result = infer_sex_from_bytes("sample.vcf", text.as_bytes(), DetectedKind::Vcf).unwrap();
+        let result =
+            infer_sex_from_bytes("sample.vcf", text.as_bytes(), DetectedKind::Vcf).unwrap();
         assert_eq!(result.sex, InferredSex::Female);
-        assert!(result.evidence.iter().any(|item| item == "x_non_par_sites=70"));
-        assert!(result.evidence.iter().any(|item| item == "x_het_gt_sites=35"));
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "x_non_par_sites=70")
+        );
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "x_het_gt_sites=35")
+        );
     }
 }

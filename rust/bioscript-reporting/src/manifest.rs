@@ -514,10 +514,10 @@ mod tests {
         ExecutableAssayMember, ExecutablePanelMember, ManifestWorkspace, ReportManifestKind,
         assay_executable_member, assay_executable_member_path, collect_analysis_manifest_tasks,
         collect_variant_manifest_tasks, load_manifest_findings, load_report_manifest_context,
-        matches_analysis_path_filters,
-        matches_variant_manifest_filters, panel_executable_member, panel_executable_member_path,
-        report_assay_id, report_manifest_kind, report_manifest_metadata, report_manifest_schema,
-        resolve_filesystem_manifest_path, traversable_manifest_member_paths,
+        matches_analysis_path_filters, matches_variant_manifest_filters, panel_executable_member,
+        panel_executable_member_path, report_assay_id, report_manifest_kind,
+        report_manifest_metadata, report_manifest_schema, resolve_filesystem_manifest_path,
+        traversable_manifest_member_paths,
     };
 
     struct InlineWorkspace {
@@ -896,9 +896,11 @@ findings:
         };
 
         let findings = load_manifest_findings(&workspace, "panel.yaml").unwrap();
-        assert!(findings
-            .iter()
-            .any(|finding| finding["summary"] == "panel direct"));
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding["summary"] == "panel direct")
+        );
         let inherited = findings
             .iter()
             .find(|finding| finding["summary"] == "included inherited")

@@ -132,7 +132,11 @@ mod tests {
         })
         .unwrap();
 
-        assert!(artifacts.reports_jsonl.contains("\"report_status\":\"complete\""));
+        assert!(
+            artifacts
+                .reports_jsonl
+                .contains("\"report_status\":\"complete\"")
+        );
         assert!(artifacts.html.contains("panel"));
     }
 

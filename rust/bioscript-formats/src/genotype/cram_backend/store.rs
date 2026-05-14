@@ -273,13 +273,14 @@ mod tests {
 
     #[test]
     fn cram_store_rejects_variants_without_coordinates_before_opening_cram() {
-        let mut options = GenotypeLoadOptions::default();
-        options.reference_file = Some(PathBuf::from("ref.fa"));
-        options.reference_index = Some(PathBuf::from("ref.fa.fai"));
-        options.input_index = Some(PathBuf::from("sample.cram.crai"));
         let store = CramBackend {
             path: PathBuf::from("sample.cram"),
-            options,
+            options: GenotypeLoadOptions {
+                reference_file: Some(PathBuf::from("ref.fa")),
+                reference_index: Some(PathBuf::from("ref.fa.fai")),
+                input_index: Some(PathBuf::from("sample.cram.crai")),
+                ..GenotypeLoadOptions::default()
+            },
         };
 
         let err = store

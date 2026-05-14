@@ -408,8 +408,8 @@ mod tests {
         let dir = fixtures_dir();
         let reference = dir.join("mini.fa");
         let repository = alignment::build_reference_repository(&reference).unwrap();
-        let index = alignment::parse_crai_bytes(&fs::read(dir.join("mini.cram.crai")).unwrap())
-            .unwrap();
+        let index =
+            alignment::parse_crai_bytes(&fs::read(dir.join("mini.cram.crai")).unwrap()).unwrap();
         alignment::build_cram_indexed_reader_from_reader(
             fs::File::open(dir.join("mini.cram")).unwrap(),
             index,

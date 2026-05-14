@@ -343,15 +343,14 @@ metadata:
         assert_eq!(resolved.version.as_deref(), Some("1.0"));
         assert_eq!(resolved.sha256, sha256_hex(text.as_bytes()));
         assert_eq!(resolved.dependencies.len(), 3);
-        assert!(resolved
-            .dependencies
-            .iter()
-            .any(|dep| dep.kind == "member"
-                && dep.url == "https://github.com/org/repo/blob/main/panels/variants/rs1.yaml"));
-        assert!(resolved
-            .dependencies
-            .iter()
-            .any(|dep| dep.kind == "download" && dep.version.as_deref() == Some("v2")));
+        assert!(resolved.dependencies.iter().any(|dep| dep.kind == "member"
+            && dep.url == "https://github.com/org/repo/blob/main/panels/variants/rs1.yaml"));
+        assert!(
+            resolved
+                .dependencies
+                .iter()
+                .any(|dep| dep.kind == "download" && dep.version.as_deref() == Some("v2"))
+        );
     }
 
     #[test]
@@ -406,8 +405,7 @@ metadata:
             Some("https://github.com/org/repo/blob/main/variants/rs1.yaml")
         );
         assert_eq!(
-            resolve_resource_url("https://example.test/a/b/panel.yaml", "../v/rs1.yaml")
-                .as_deref(),
+            resolve_resource_url("https://example.test/a/b/panel.yaml", "../v/rs1.yaml").as_deref(),
             Some("https://example.test/a/v/rs1.yaml")
         );
         assert!(resolve_resource_url("not a url", "relative.yaml").is_none());
@@ -415,15 +413,21 @@ metadata:
 
     #[test]
     fn parse_structured_text_reports_yaml_and_json_errors() {
-        assert!(parse_structured_text("bad.yaml", "{")
-            .unwrap_err()
-            .contains("failed to parse YAML"));
-        assert!(parse_structured_text("bad.json", "{")
-            .unwrap_err()
-            .contains("failed to parse JSON"));
-        assert!(parse_structured_text("notes.txt", "not structured")
-            .unwrap()
-            .is_none());
+        assert!(
+            parse_structured_text("bad.yaml", "{")
+                .unwrap_err()
+                .contains("failed to parse YAML")
+        );
+        assert!(
+            parse_structured_text("bad.json", "{")
+                .unwrap_err()
+                .contains("failed to parse JSON")
+        );
+        assert!(
+            parse_structured_text("notes.txt", "not structured")
+                .unwrap()
+                .is_none()
+        );
         assert!(has_extension("PANEL.YAML", &["yaml"]));
     }
 }

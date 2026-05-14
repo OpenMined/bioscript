@@ -496,13 +496,13 @@ mod package_tests {
 
     fn variant_manifest(name: &str) -> String {
         format!(
-            r#"
+            r"
 schema: bioscript:variant:1.0
 name: {name}
 gene: ABC
 identifiers:
   rsids: [rs1]
-"#
+"
         )
     }
 
@@ -548,11 +548,11 @@ identifiers:
 
         fs::write(
             dir.join("manifest.yaml"),
-            r#"
+            r"
 schema: bioscript:package:1.0
 name: Wrapped
 entrypoint: nested/panel.yaml
-"#,
+",
         )
         .unwrap();
         let descriptor = load_package_descriptor(&dir).unwrap();
@@ -561,20 +561,20 @@ entrypoint: nested/panel.yaml
 
         fs::write(
             dir.join("manifest.yaml"),
-            r#"
+            r"
 schema: bioscript:package:1.0
 name: Missing Entrypoint
-"#,
+",
         )
         .unwrap();
         assert!(descriptor_err(&dir).contains("missing entrypoint"));
 
         fs::write(
             dir.join("manifest.yaml"),
-            r#"
+            r"
 schema: bioscript:package:1.0
 entrypoint: ../escape.yaml
-"#,
+",
         )
         .unwrap();
         assert!(descriptor_err(&dir).contains("escapes"));
@@ -588,11 +588,11 @@ entrypoint: ../escape.yaml
         fs::remove_file(dir.join("manifest.yaml")).unwrap();
         fs::write(
             dir.join(LEGACY_PACKAGE_DESCRIPTOR),
-            r#"
+            r"
 schema: bioscript:package:1.0
 name: Legacy
 entrypoint: assay.yaml
-"#,
+",
         )
         .unwrap();
         let descriptor = load_package_descriptor(&dir).unwrap();
@@ -614,11 +614,11 @@ entrypoint: assay.yaml
             &[
                 (
                     "manifest.yaml",
-                    r#"
+                    r"
 schema: bioscript:package:1.0
 name: Test Package
 entrypoint: nested/variant.yaml
-"#,
+",
                 ),
                 ("nested/", ""),
                 ("nested/variant.yaml", &variant_manifest("Nested")),
@@ -683,10 +683,10 @@ entrypoint: nested/variant.yaml
             &missing_entrypoint,
             &[(
                 "manifest.yaml",
-                r#"
+                r"
 schema: bioscript:package:1.0
 entrypoint: missing.yaml
-"#,
+",
             )],
         );
         assert!(import_err(&dir, &missing_entrypoint, Some(Path::new("missing-out")))
@@ -698,10 +698,10 @@ entrypoint: missing.yaml
             &[
                 (
                     "manifest.yaml",
-                    r#"
+                    r"
 schema: bioscript:package:1.0
 entrypoint: nested/custom.yaml
-"#,
+",
                 ),
                 ("nested/custom.yaml", "schema: custom:schema\nname: bad\n"),
             ],
@@ -722,12 +722,12 @@ entrypoint: nested/custom.yaml
         fs::write(
             &release_path,
             format!(
-                r#"
+                r"
 schema: bioscript:package-release:1.0
 artifact:
   path: pkg.zip
   sha256: {digest}
-"#
+"
             ),
         )
         .unwrap();
@@ -739,12 +739,12 @@ artifact:
 
         fs::write(
             &release_path,
-            r#"
+            r"
 schema: bioscript:package-release:1.0
 artifact:
   path: pkg.zip
   sha256: bad
-"#,
+",
         )
         .unwrap();
         assert!(package_zip_from_release_manifest(&dir, &release_path, None)
@@ -777,12 +777,12 @@ artifact:
         fs::write(
             &release_path,
             format!(
-                r#"
+                r"
 schema: bioscript:package-release:1.0
 artifact:
   path: pkg.zip
   sha256: {digest}
-"#
+"
             ),
         )
         .unwrap();
@@ -846,11 +846,11 @@ artifact:
             &[
                 (
                     "manifest.yaml",
-                    r#"
+                    r"
 schema: bioscript:package:1.0
 name: Import Command Package
 entrypoint: variant.yaml
-"#,
+",
                 ),
                 ("variant.yaml", &variant_manifest("Imported")),
             ],

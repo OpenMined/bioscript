@@ -357,7 +357,7 @@ mod review_report_tests {
         let cases_path = dir.join("cases.yaml");
         fs::write(
             &cases_path,
-            r#"
+            r"
 cases:
   - id: c1
     label: First case
@@ -367,7 +367,7 @@ cases:
   - id: c2
     variants:
       rs3: C/T
-"#,
+",
         )
         .unwrap();
 
@@ -395,22 +395,22 @@ cases:
         let dir = path.parent().unwrap().to_path_buf();
 
         let missing_id = serde_yaml::from_str::<serde_yaml::Value>(
-            r#"{label: no id, genotypes: {rs1: A/G}}"#,
+            r"{label: no id, genotypes: {rs1: A/G}}",
         )
         .unwrap();
         assert!(review_case_err(&missing_id).contains("missing id"));
 
         let missing_genotypes =
-            serde_yaml::from_str::<serde_yaml::Value>(r#"{id: c1}"#).unwrap();
+            serde_yaml::from_str::<serde_yaml::Value>(r"{id: c1}").unwrap();
         assert!(review_case_err(&missing_genotypes).contains("missing genotypes"));
 
         let bad_key =
-            serde_yaml::from_str::<serde_yaml::Value>(r#"{id: c1, genotypes: {1: A/G}}"#)
+            serde_yaml::from_str::<serde_yaml::Value>(r"{id: c1, genotypes: {1: A/G}}")
                 .unwrap();
         assert!(review_case_err(&bad_key).contains("non-string genotype key"));
 
         let bad_value =
-            serde_yaml::from_str::<serde_yaml::Value>(r#"{id: c1, genotypes: {rs1: [A, G]}}"#)
+            serde_yaml::from_str::<serde_yaml::Value>(r"{id: c1, genotypes: {rs1: [A, G]}}")
                 .unwrap();
         assert!(review_case_err(&bad_value).contains("must be string or null"));
 
@@ -471,7 +471,7 @@ provenance:
         let cases = dir.join("cases.yaml");
         fs::write(
             &cases,
-            r#"
+            r"
 cases:
   - id: case1
     label: Case One
@@ -480,7 +480,7 @@ cases:
   - id: case2
     genotypes:
       rs1: null
-"#,
+",
         )
         .unwrap();
         let output = dir.join("out");

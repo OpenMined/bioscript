@@ -207,14 +207,14 @@ provenance:
     #[test]
     fn permissions_validation_reports_origin_shape_duplicates_and_bad_urls() {
         let root = yaml(
-            r#"
+            r"
 permissions:
   domains:
     - https://example.com
     - https://example.com
     - 3
     - ftp://example.com
-"#,
+",
         );
         let mut issues = Vec::new();
         validate_permissions(&root, &mut issues);

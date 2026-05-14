@@ -209,13 +209,13 @@ alleles:
     #[test]
     fn allele_validator_accepts_indel_observed_alt_superset() {
         let root = yaml(
-            r#"
+            r"
 alleles:
   kind: indel
   ref: AT
   alts: [A]
   observed_alts: [A, ATT]
-"#,
+",
         );
         let mut issues = Vec::new();
         validate_alleles(&root, &mut issues);

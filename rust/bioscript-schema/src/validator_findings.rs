@@ -361,7 +361,7 @@ findings:
     #[test]
     fn effect_validation_covers_non_sequence_and_nested_effect_bindings() {
         let root = yaml(
-            r#"
+            r"
 findings:
   - schema: bioscript:trait:1.0
     summary: ok
@@ -376,7 +376,7 @@ findings:
           operator: dosage_in
           allele: A
           values: []
-"#,
+",
         );
         let mut issues = Vec::new();
         validate_findings(&root, &mut issues);

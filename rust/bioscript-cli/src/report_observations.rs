@@ -137,7 +137,7 @@ mod app_report_observation_tests {
         let path = write_variant_yaml(
             &dir,
             "variant.yaml",
-            r#"
+            r"
 schema: bioscript:variant:1.0
 name: Test variant
 gene: CYP2D6
@@ -149,7 +149,7 @@ evidence:
   references:
     - label: Primary
       url: https://www.ncbi.nlm.nih.gov/snp/rs123
-"#,
+",
         );
 
         assert_eq!(variant_manifest_gene(&path).unwrap(), "CYP2D6");
@@ -170,13 +170,13 @@ evidence:
         let path = write_variant_yaml(
             &dir,
             "variant.yaml",
-            r#"
+            r"
 schema: bioscript:variant:1.0
 name: Test variant
 identifiers:
   rsids:
     - rs4242
-"#,
+",
         );
 
         let source = variant_primary_source(&path).unwrap();

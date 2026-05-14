@@ -321,7 +321,10 @@ mod tests {
     fn enum_name_helpers_cover_all_known_values() {
         assert_eq!(super::file_container_name(FileContainer::Plain), "plain");
         assert_eq!(super::file_container_name(FileContainer::Zip), "zip");
-        assert_eq!(super::detected_kind_name(DetectedKind::GenotypeText), "genotype_text");
+        assert_eq!(
+            super::detected_kind_name(DetectedKind::GenotypeText),
+            "genotype_text"
+        );
         assert_eq!(super::detected_kind_name(DetectedKind::Vcf), "vcf");
         assert_eq!(
             super::detected_kind_name(DetectedKind::AlignmentCram),

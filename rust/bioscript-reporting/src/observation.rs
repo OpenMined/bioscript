@@ -599,7 +599,12 @@ mod tests {
         );
     }
 
-    fn manifest(kind: VariantKind, chrom: &str, reference: &str, alternate: &str) -> VariantManifest {
+    fn manifest(
+        kind: VariantKind,
+        chrom: &str,
+        reference: &str,
+        alternate: &str,
+    ) -> VariantManifest {
         VariantManifest {
             path: PathBuf::from("variants/rs1.yaml"),
             name: "rs1".to_owned(),
@@ -731,10 +736,12 @@ mod tests {
         assert_eq!(observation["outcome"], "observed_alt");
         assert_eq!(observation["call_status"], "observed_alt");
         assert_eq!(observation["facets"], "observed_alt;known_observed_alts=T");
-        assert!(observation["evidence_raw"]
-            .as_str()
-            .unwrap()
-            .contains("detected_sex=male"));
+        assert!(
+            observation["evidence_raw"]
+                .as_str()
+                .unwrap()
+                .contains("detected_sex=male")
+        );
     }
 
     #[test]
@@ -761,9 +768,11 @@ mod tests {
         assert_eq!(observation["kind"], "deletion");
         assert_eq!(observation["genotype"], "0/1");
         assert_eq!(observation["match_quality"], "weak");
-        assert!(observation["match_notes"]
-            .as_str()
-            .unwrap()
-            .contains("insertion/deletion token"));
+        assert!(
+            observation["match_notes"]
+                .as_str()
+                .unwrap()
+                .contains("insertion/deletion token")
+        );
     }
 }

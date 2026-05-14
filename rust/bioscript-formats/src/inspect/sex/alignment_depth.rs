@@ -287,10 +287,12 @@ mod tests {
         let female = classify_alignment_stats(&stats(800, 760, 10));
         assert_eq!(female.sex, InferredSex::Female);
         assert_eq!(female.confidence, SexDetectionConfidence::High);
-        assert!(female
-            .evidence
-            .iter()
-            .any(|value| value == "x_to_autosome_ratio=0.950"));
+        assert!(
+            female
+                .evidence
+                .iter()
+                .any(|value| value == "x_to_autosome_ratio=0.950")
+        );
 
         let male = classify_alignment_stats(&stats(800, 360, 120));
         assert_eq!(male.sex, InferredSex::Male);
@@ -311,11 +313,11 @@ mod tests {
 
     #[test]
     fn alignment_depth_math_handles_empty_and_saturating_inputs() {
-        assert_eq!(mean_records(10, 0), 0.0);
-        assert_eq!(mean_records(20, 4), 5.0);
+        assert!(mean_records(10, 0).abs() <= f64::EPSILON);
+        assert!((mean_records(20, 4) - 5.0).abs() <= f64::EPSILON);
         assert!(mean_records(usize::MAX, 1) > 4_000_000_000.0);
-        assert_eq!(ratio_to_autosome(10.0, 0.0), 0.0);
-        assert_eq!(ratio_to_autosome(5.0, 10.0), 0.5);
+        assert!(ratio_to_autosome(10.0, 0.0).abs() <= f64::EPSILON);
+        assert!((ratio_to_autosome(5.0, 10.0) - 0.5).abs() <= f64::EPSILON);
     }
 
     #[test]
@@ -361,10 +363,10 @@ mod tests {
         assert!(err.to_string().contains("does not contain contig"));
 
         let repository = alignment::build_reference_repository(&reference).unwrap();
-        let crai = alignment::parse_crai_bytes(&fs::read(index).unwrap()).unwrap();
+        let cram_index = alignment::parse_crai_bytes(&fs::read(index).unwrap()).unwrap();
         let mut reader = alignment::build_cram_indexed_reader_from_reader(
             fs::File::open(cram).unwrap(),
-            crai,
+            cram_index,
             repository,
         )
         .unwrap();

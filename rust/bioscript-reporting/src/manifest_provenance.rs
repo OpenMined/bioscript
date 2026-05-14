@@ -48,8 +48,7 @@ fn provenance_source_key(source: &serde_json::Value) -> String {
         .get("url")
         .and_then(serde_json::Value::as_str)
         .or_else(|| source.get("label").and_then(serde_json::Value::as_str))
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| source.to_string())
+        .map_or_else(|| source.to_string(), ToOwned::to_owned)
 }
 
 #[cfg(test)]
