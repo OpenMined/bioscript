@@ -1035,3 +1035,30 @@ matrix bottom-row scores per inner iter for J-R:4-119, then bisect
 against Rust's same trace to find the FIRST iter where bottom-row
 scores diverge. Without that comparison point, all the algorithm
 components match by inspection but produce different outputs.
+
+### Cap-sweep diagnostic
+
+Final session experiment: running with cap-reset DISABLED (Rust uses the
+test's 2/2 caps directly instead of the 10/15 cap-reset override):
+
+```
+KESTREL_DISABLE_JAVA_CLI_CAP_RESET=1 KESTREL_VNTYPER_MAX_HAPLOTYPES=2
+KESTREL_VNTYPER_MAX_ALIGNER_STATES=2 ... vntyper_negative_fastq_parity
+```
+
+Results:
+- Actual records: 7062 → 2319 (much less than expected 4897).
+- Extras: 2727 → 79 (huge reduction).
+- Missing: 562 → 2657 (huge increase).
+
+So at 2/2 caps Rust UNDER-generates; at 10/15 caps Rust OVER-generates.
+There is no cap sweet spot. The algorithmic divergence is real at every
+cap setting — at low caps Rust misses paths Java takes; at high caps
+Rust explores extra paths Java doesn't. The divergence has different
+DIRECTIONS at different caps, confirming this is a behavior difference,
+not a search-depth difference.
+
+This means a fix MUST change Rust's algorithm to make the *exact same
+decisions* as Java at each inner iter, rather than just bounding the
+exploration. The next session must directly compare each algorithm's
+output per inner iter, requiring Java instrumentation.
