@@ -371,6 +371,43 @@ from ~1750 to Java's ~5–8.
   of the J-R:4-119 region. Verified via `KESTREL_TRACE_REGION` trace
   comparison to Java's `Saving state` log lines.
 
+### Best lead for the next session
+
+Inner-loop break-cause counters added under `KESTREL_DEBUG_BUILD`. For
+J-R:4-119 in Rust (26,894 outer iters):
+
+- `cycle_breaks=1256` (4.7 %)
+- `choose_none_breaks=3601` (13.4 %)
+- `add_base_false_breaks=17,871` (66.5 %)
+- `seq_limit_breaks=4166` (15.5 %)
+
+Java for the same region: 11 cycle breaks out of 38 outer iters = 29 %.
+So Rust's cycle-break rate per inner iter is ~6× lower than Java's. The
+dominant Rust exit path is `addBase returns false`, which fires when
+`max_pot_score < max_alignment_score`. With Rust's chain growing to ~1753
+unique entries vs Java's ~9, Rust's `max_alignment_score` likely rises
+faster than Java's during a traversal, causing addBase to return false
+earlier and the outer loop to restart more often. Each restart begins
+from a saved state, generating more saves and continuing the explosion.
+
+So the remaining work is to understand why Rust's
+`MaxAlignmentScoreNode` chain accumulates more entries than Java's per
+unit of traversal. Candidates:
+
+- Rust's `record_max_node` fires for both align- and gap_con-matrix
+  end-of-row positives. Verify Java emits at exactly the same conditions.
+- Java's `MaxAlignmentScoreNode` linked list is mutated in place via
+  shared `haplotypeBuilt` flags; Rust deep-clones on save_state. The
+  runner-side `emitted` dedup catches duplicates at emission time but
+  does not prune the chain itself, so a long chain may persist across
+  many restore_state cycles and contribute to chain-driven `addBase`
+  early-exits.
+- A focused unit test that constructs a static count map for J-R:4-119
+  and steps add_base / save_state / restore_state until the chain hits
+  the expected refLength position would isolate this. The data inputs
+  needed for that test are: J-R reference (already in /tmp/jr.fa) and
+  the post-kmercount-filter count map for the J-R region.
+
 Current observed behavior:
 
 - Reduced static regression at `10/15`: Rust emits the expected insertion
