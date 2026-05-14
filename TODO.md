@@ -468,6 +468,9 @@ This is not just a facade spike. The finish line is:
       `KESTREL_RUN_VNTYPER_FASTQ_PARITY=1 CC=cc AR=ar cargo test -p kestrel --test vntyper_fastq_parity vntyper_negative_fastq_matches_java_expected_vcf -- --nocapture`
       fails in `vendor/rust/kestrel-rs` with Rust VCF record count 2322 vs
       Java expected 4897 after 110.39s.
+      The vendor gate now also accepts `KESTREL_VNTYPER_PARITY_OUT=/tmp/path`
+      to retain the generated Rust VCF, decompressed FASTQs, and copied Java
+      expected VCF for direct record-level comparison.
       Rechecked after adding vendor failure-context diagnostics: the negative
       fixture still fails after 110.51s with Rust record count 2322 vs Java
       expected 4897. Missing examples include `1-2:43 T>C GDP=5 DP=901`,
