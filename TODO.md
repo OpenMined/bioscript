@@ -471,6 +471,14 @@ This is not just a facade spike. The finish line is:
       The vendor gate now also accepts `KESTREL_VNTYPER_PARITY_OUT=/tmp/path`
       to retain the generated Rust VCF, decompressed FASTQs, and copied Java
       expected VCF for direct record-level comparison.
+      It also reports summary counts in the failure message. Current negative
+      fixture summary: 1887 shared record keys, 3010 missing Java record keys,
+      435 Rust-only record keys, only 847 shared records with matching GDP, and
+      only 186 shared records with matching DP. Java expected VCF has many more
+      SNPs and insertions (`4432` SNP, `390` insertion, `75` deletion) than the
+      Rust output (`2189` SNP, `69` insertion, `64` deletion), reinforcing that
+      this is Kestrel engine assembly/depth parity rather than VNtyper
+      post-processing.
       Rechecked after adding vendor failure-context diagnostics: the negative
       fixture still fails after 110.51s with Rust record count 2322 vs Java
       expected 4897. Missing examples include `1-2:43 T>C GDP=5 DP=901`,
