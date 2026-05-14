@@ -1191,6 +1191,81 @@ eprintln!("[KDBG-STACK] proposed_min={} stack_size={} stack_min={}",
 The trace line where Java's stack_min differs from Rust's stack_min is
 the exact point of divergence.
 
+## 2026-05-15 (final): Root cause fix — Java's `nState` accounting
+
+### The bug
+
+Java's `restoreState` does NOT decrement `nState`. Only `saveState`
+(increment) and `removeLastMinState` (decrement on eviction) modify
+the counter. So once `nState` reaches `maxState` (after the first
+~10 successful saves), every subsequent save attempt MUST go through
+the eviction-or-reject path, even when pops have shrunk the actual
+stack below capacity.
+
+Rust's previous implementation used `saved_states.len() == max_state`
+as the capacity gate, which decreased on `pop`. After a pop+save in
+Rust, the save was unconditionally pushed (skipping the eviction min
+check), accepting saves that Java would reject. On highly-repetitive
+regions like MUC1, this caused Rust's stack to fill with low-min-depth
+states that Java would never accept, leading to the cycle in iter
+25-40 mirroring iter 1-15 and the 700× more outer iters.
+
+### The fix
+
+Added `saved_state_count: i32` field that mirrors Java's `nState`:
+- `save_state`: increments after acceptance.
+- `remove_min_state`: decrements on successful eviction.
+- `restore_state`: does NOT decrement (matches Java).
+- `set_max_state`: decrements when trimming entries (matches Java's
+  capacity-shrink behavior).
+
+The capacity check uses `saved_state_count >= max_state` instead of
+`saved_states.len() == max_state`. Once the counter reaches `max_state`,
+every save attempt goes through eviction logic.
+
+Implementation in `crates/kestrel/src/align/mod.rs`.
+
+### Verification on J-R:4-119
+
+| metric              | before fix | after fix | Java |
+| ------------------- | ---------- | --------- | ---- |
+| outer iters         | 26,894     | **11**    | ~12  |
+| raw emits           | 1,753      | **0**     | 0    |
+| save_attempts       | 164,140    | 426       | 446  |
+| save_accepts        | 40,582     | **38**    | 38   |
+| save_rejects        | 123,558    | 388       | 408  |
+| haplotypes produced | 15         | **0**     | 0    |
+
+The J-R diagnostic now produces **0 haplotypes**, matching Java exactly.
+`save_accepts=38` matches Java's 38 exactly.
+
+### Verification on full VNtyper FASTQ parity
+
+| metric         | before fix | after fix | expected |
+| -------------- | ---------- | --------- | -------- |
+| actual records | 7,062      | **4,347** | 4,897    |
+| extras         | 2,727      | **478**   | 0        |
+| missing        | 562        | 1,028     | 0        |
+| swing          | +2,165     | -550      | 0        |
+
+The over-generation problem (the J-R-style cycle filling the
+saved-state stack) is solved. Extras dropped from 2,727 to 478 (-83%).
+
+### Remaining gap
+
+550 net under-generation. The bulk of the new missing records
+(missing-before-fix + new misses) are high-coverage variants like the
+18-base insertion `G→GGGTGGAGCCCGGGGCCGG` at position 26 across MUC1
+motif references (E-N, N-R, O-N, R-M, F-N). This appears to be a
+**separate bug** in the gap-consensus traversal logic that the
+correct-stack fix actually exposed — perhaps because Rust's previous
+over-exploration was accidentally covering for it.
+
+The next session should investigate why Rust's chain doesn't traverse
+gap-consensus paths for 18-base insertions while Java's does. With the
+stack management now correct, the saved-state semantics are no longer a
+confounding variable.
+
 ### Cap-sweep diagnostic
 
 Final session experiment: running with cap-reset DISABLED (Rust uses the
