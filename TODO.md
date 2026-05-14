@@ -468,6 +468,12 @@ This is not just a facade spike. The finish line is:
       `KESTREL_RUN_VNTYPER_FASTQ_PARITY=1 CC=cc AR=ar cargo test -p kestrel --test vntyper_fastq_parity vntyper_negative_fastq_matches_java_expected_vcf -- --nocapture`
       fails in `vendor/rust/kestrel-rs` with Rust VCF record count 2322 vs
       Java expected 4897 after 110.39s.
+      Rechecked after adding vendor failure-context diagnostics: the negative
+      fixture still fails after 110.51s with Rust record count 2322 vs Java
+      expected 4897. Missing examples include `1-2:43 T>C GDP=5 DP=901`,
+      `1-2:58 A>G GDP=5 DP=901`, and `3-4:33 T>G GDP=15 DP=1162`; extra
+      examples include lower-depth calls such as `1-2:54 T>C GDP=3 DP=894`,
+      `3-4:33 T>G GDP=1 DP=1148`, and `3-4:35 A>G GDP=1 DP=1148`.
       Diagnostic re-run of the native negative FASTQ output found 42 rows with
       `passes_vntyper_filters=True`; the highest-depth false positives are
       absent from the Java expected TSV, e.g. `5C-M:61 T>TG` and `B-M:59 G>GT`
