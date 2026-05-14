@@ -568,3 +568,226 @@ Not complete:
 The current blocker is therefore not in BioScript or BCFtools/Samtools. It is
 inside `kestrel-rs` haplotype graph traversal, saved-state pruning, or aligner
 continuation/performance behavior.
+
+## 2026-05-15: Shared `haplotype_built` flag (correct but not sufficient)
+
+### Hypothesis
+
+Java's `MaxAlignmentScoreNode.haplotypeBuilt` mutates via reference semantics:
+when `getHaplotypes` walks the chain and sets `node.haplotypeBuilt = true`, the
+flag is observed by *every* saved snapshot that references the same node. Rust
+deep-cloned the chain via `Box<MaxAlignmentScoreNode>::clone`, so each
+snapshot got an isolated `haplotype_built: bool`. The hypothesis: a node
+emitted in iter N is re-emitted in iter N+M when its containing chain is
+restored from a snapshot taken before iter N.
+
+### Implementation
+
+Changed `MaxAlignmentScoreNode.haplotype_built` from `bool` to
+`Rc<Cell<bool>>` (`vendor/rust/kestrel-rs/crates/kestrel/src/align/mod.rs`).
+Cloning a `MaxAlignmentScoreNode` now `Rc::clone`s the flag, so every snapshot
+of a node observes mutations made by any other snapshot. This matches Java's
+reference semantics exactly.
+
+### Result
+
+- Compiles. All node tests still pass.
+- `KESTREL_RUN_JR_DIAGNOSTIC=1 cargo test -p kestrel --test jr_traversal`:
+  unchanged. Still produces 15 haplotypes for J-R:4-119. Java produces 0.
+- Negative VNtyper FASTQ parity: still 7062 actual vs 4897 expected, 2727
+  extras, 562 missing — identical to before the fix.
+
+### Why it didn't move parity
+
+The J-R diagnostic counters confirm:
+
+```
+[KDBG-BUILD] fwd region J-R:4-119 iters=26894 raw_emits=1753
+unique_emitted=1753 container=15
+```
+
+`raw_emits == unique_emitted`. The runner-level `emitted` HashSet (keyed by
+sequence + cigar) sees zero duplicates. Every one of the 1753 haplotypes
+emitted across 26,894 outer iters has a distinct (sequence, cigar). So they
+come from 1753 *different* chain terminal nodes — not 1753 re-emissions of
+the same node. `haplotype_built` sharing has no effect when every emit is
+already a fresh node.
+
+The remaining gap is therefore in **chain generation**, not chain emission.
+Rust generates 1753 distinct chain terminal positions; Java generates 0
+that survive `trim_haplotypes`. Both `trim_haplotypes` implementations are
+byte-equivalent (verified). The divergence is upstream — Rust's outer
+iterations explore far more chain configurations than Java's.
+
+### Side-by-side save-event match for first 20 inner iters
+
+Manual comparison of Java's `trace.log` `Saving state` events against Rust's
+`[KDBG-CHOOSE]` traces for J-R:4-119 first chain build:
+
+| iter | kmer (start)         | depths (A,C,G,T)        | java saves                      | rust saves                      | match |
+| ---- | -------------------- | ----------------------- | ------------------------------- | ------------------------------- | ----- |
+| 1.1  | GGGGCGGTGGAGCCCGGGGC | 6, 21382, 1600, 1572    | A(6), G(1600), T(1572)          | A(6), G(1600), T(1572)          | ✓     |
+| 1.2  | GGGCGGTGGAGCCCGGGGCC | 5, 35, 21499, 0         | A(5), C(35)                     | A(5), C(35)                     | ✓     |
+| 1.3  | GGCGGTGGAGCCCGGGGCCG | 29, 23, 26513, 0        | C(23), A(29)                    | C(23), A(29)                    | ✓     |
+| 1.4  | GCGGTGGAGCCCGGGGCCGG | 18, 25154, 1021, 24     | A(18), G(1021), T(24)           | A(18), G(1021), T(24)           | ✓     |
+| 1.5  | CGGTGGAGCCCGGGGCCGGC | 12, 26661, 59, 27       | A(12), G(59), T(27)             | A(12), G(59), T(27)             | ✓     |
+| 1.6  | GGTGGAGCCCGGGGCCGGCC | 16, 216, 197, 26536     | A(16), G(197), C(216)           | A(16), G(197), C(216)           | ✓     |
+| 1.7  | GTGGAGCCCGGGGCCGGCCT | 8, 0, 26633, 0          | A(8)                            | A(8)                            | ✓     |
+| 1.8  | TGGAGCCCGGGGCCGGCCTG | 8, 5849, 21662, 21      | A(8), C(5849), T(21)            | A(8), C(5849), T(21)            | ✓     |
+| 1.9  | GGAGCCCGGGGCCGGCCTGG | 56, 308, 544, 20471     | A(56), C(308), G(544)           | A(56), C(308), G(544)           | ✓     |
+
+Every save event in the first 9 inner iters matches Java byte-for-byte
+(kmer, depth, order). Stack eviction events also match — Java removes
+`min=5` before save 12, Rust does the same. The divergence emerges *somewhere
+past iter 1.9*, but the per-iter trace shows identical save attempt streams
+for the early iters.
+
+### Java's stack drains via rejection; Rust's stays full
+
+Java for J-R:4-119:
+- 446 total save attempts.
+- 38 accepted (10 initial + 28 evictions).
+- 408 rejected (stack at capacity, proposed `min_depth` ≤ stack min).
+- 38 outer iters, drained to empty.
+
+Rust for J-R:4-119:
+- 164,140 total save attempts.
+- 40,582 accepted.
+- 123,558 rejected.
+- 26,894 outer iters, stack remained at cap=10 throughout.
+
+Reject ratio: Java 91.5%, Rust 75.3%. Rust accepts 3× more frequently per
+attempt. With ~1.51 accepts/iter and 1 restore/iter, Rust's net stack growth
+is +0.51 per iter — capped at 10 by eviction. Java's net is ~0/iter (1
+accept ≈ 1 restore), eventually draining when later iters produce shorter
+chains that don't refill saves at the same rate.
+
+The 3× acceptance-rate divergence must come from differences in the
+`min_depth` proposed at save time vs the stack's current minimum. But the
+first-9-iter trace shows identical proposed `min_depth` values, so the
+divergence must emerge later (deeper in the chain, or after a different
+restore path is taken).
+
+### Next steps
+
+The chain-building algorithm itself is byte-equivalent for at least the first
+20 inner iters. The divergence must emerge later in the same outer iter OR on
+the first restore. The remaining instrumentation gap is to **dump Java's
+saves for iters 2-10+ and compare against Rust's** — pinning down the exact
+inner-iter where Java rejects but Rust accepts, or vice versa. With 26,894
+Rust iters vs 38 Java iters, the divergence is somewhere in those first ~38
+iters that Java terminates with. After that, Rust's extra iters are purely
+exploring paths that Java has already excluded.
+
+## 2026-05-15: Initial `min_depth` and runner-level state dedup
+
+Two more checks ruled out, both no-op for the parity numbers:
+
+### Initial `min_depth` reverse-complement fix
+
+`build_forward_haplotypes` and `build_reverse_haplotypes` initialized
+`min_depth` from `counter.get(&kmer)` only — forward strand only. Java does
+`counter.get(kmer) + counter.get(revKmer)` when `countReverseKmers` is true.
+Switched both call sites to use `kmer_depth(...)` so the initial value adds
+the reverse-complement count.
+
+Result: parity numbers unchanged (still 7062 vs 4897 expected, 2727 extras,
+562 missing). The initial value is quickly overwritten by lower depths from
+chain progression, so the off-by-one start was masked.
+
+### Runner-level `SavedBranchKey` HashSet dedup
+
+`save_alignment_state` keys every save attempt by `(kmer, next_base,
+consensus)` and skips duplicates via a `HashSet<SavedBranchKey>` that
+persists for the lifetime of the build (never cleared). Java has no such
+filter.
+
+Wrapped the dedup in a `KESTREL_DISABLE_STATE_DEDUP=1` opt-out and re-ran:
+
+- J-R diagnostic: identical 26,894 iters, 1753 raw emits, 15 haps.
+- Negative parity: identical 7062 vs 4897, 2727 extras, 562 missing.
+
+So the runner-level dedup is *not* the source of the divergence — the
+duplicate keys never actually fire in J-R.
+
+### Matrix and weight inspection
+
+Verified Rust vs Java match on:
+- `AlignmentWeight` defaults: `match=10, mismatch=-10, gap_open=-40,
+  gap_extend=-4, init=0, new_gap=gap_open+gap_extend=-44`.
+- Align-table candidate score formula: `source.score + (match or mismatch)`.
+- Ref-gap-table candidate scores: `align→ref_gap = +new_gap`, `ref_gap→
+  ref_gap = +gap_extend`, `con_gap→ref_gap = +new_gap`.
+- Con-gap-table candidate scores: `align_next→con_gap = +new_gap`,
+  `ref_gap_next→con_gap = +new_gap`, `con_gap_next→con_gap = +gap_extend`.
+- `trace_branch` order: Rust iterates `[align, ref_gap, con_gap]`
+  candidates; Java does the same. Tie-broken branches prepend in the same
+  order.
+- `record_max_node` gating: both use `maxScore >= maxAlignmentScore &&
+  maxScore > 0`. `next` is `null/None` if strictly greater, else the
+  existing chain head.
+- `allow_end_deletion` setting: `left_end || right_end`. For J-R
+  diagnostic (start=4, end=100), both ends are bounded so allow_end is
+  false in both ports.
+- `KmerHashSet.insert` / `KmerHashSet.add`: both return `true` if inserted,
+  `false` if already present. No semantic difference.
+
+### Status after this session
+
+Confirmed bug fixes in this session:
+
+1. `MaxAlignmentScoreNode.haplotype_built` now shares its `Cell<bool>`
+   across clones via `Rc`, matching Java's reference semantics.
+2. Initial `min_depth` now includes the reverse-complement count when
+   `count_reverse_kmers` is set.
+3. `KESTREL_DISABLE_STATE_DEDUP` env var gates the runner-level
+   `SavedBranchKey` HashSet so future investigations can bisect it cleanly.
+
+None of the three closed the parity gap. The numbers are persistently
+**7062 actual vs 4897 expected, 2727 extras, 562 missing** on the negative
+VNtyper FASTQ test. The extras are biased toward low-GDP records
+(`gdp_buckets`: 2-5: 232, 6-20: 523, 21-100: 528 in Rust vs Java's 2, 8, 9)
+while the missing are concentrated at GDP=970 high-coverage insertions
+(`G→GGGTGGAGCCCGGGGCCGG` repeated across E-N, N-R, O-N, R-M, F-N at
+position 26).
+
+### Remaining investigative angles
+
+The algorithm appears textually byte-equivalent in:
+
+- Matrix score formulas (3 tables, 3 source-table transitions each).
+- `record_max_node` chain-extension/reset semantics.
+- `trace_branch` tie-broken candidate ordering.
+- `save_state` rejection and `removeMinState` eviction policies.
+- Cycle detection via `KmerHashSet`.
+- `kmer_depth` (forward + optional reverse).
+- `trim_haplotypes` end-kmer-mismatch removal.
+- `get_haplotypes` `haplotype_built` skip-on-rebuild (now shared via Rc).
+
+Yet Rust's J-R outer-iter count is 707× Java's (26894 vs 38), and the
+overall variant set differs in both directions (extras + missing). The
+divergence must be in:
+
+1. **Matrix data flow across iters.** Specifically, the `matrix_col_*`
+   `Vec<Option<TraceNodeRef>>` snapshots at save time — these are deep
+   `Vec::clone`d but the inner `Rc<TraceNode>` are shared. Need to verify
+   that the matrix state at restore matches Java byte-for-byte (the swap
+   of `next` → current happens at end of `add_base`; if the snapshot
+   captures before the swap, the matrices look different).
+2. **`addBase` return value.** Java's `addBase` returns
+   `maxPotScore >= maxAlignmentScore && maxPotScore > 0`. Rust's equivalent
+   is the same formula. But `maxPotScore` is accumulated DURING the add_base
+   call. If Rust accumulates an extra contribution somewhere Java doesn't
+   (e.g., an additional max-of-candidate within the loop), Rust's iter would
+   keep returning true longer, leading to longer chains and more saves.
+3. **The `record_max_node` call at the deletion bottom-row.** In Java this
+   is gated by `allowEndDeletion`; in Rust the same gating exists. But the
+   `record_max_node` for the ALIGN-table bottom (line 1124, no gate) fires
+   unconditionally on `Some(node)` — if Rust's matrix update produces a
+   non-None bottom-row node where Java's is `ZERO_NODE`, Rust would record
+   max where Java would not.
+
+Next session pursue (3) — instrument Rust to log
+`matrix_col_align_next[ref_length - 1]` per iter, run with
+`KESTREL_TRACE_REGION=J-R:4-119`, and check the FIRST iter where Rust's
+bottom-row is `Some` while Java's would be ZERO_NODE.
