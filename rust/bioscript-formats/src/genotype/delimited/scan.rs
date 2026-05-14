@@ -190,12 +190,17 @@ pub(crate) fn scan_delimited_variants(
 
     for (idx, variant) in indexed {
         if results[idx].genotype.is_none() {
-            results[idx] = VariantObservation {
-                backend: backend.backend_name().to_owned(),
-                evidence: vec![format!(
+            let evidence = if variant.has_coordinates() {
+                format!(
                     "no matching rsid or locus found for {}",
                     describe_query(variant)
-                )],
+                )
+            } else {
+                "no matching rsid found".to_owned()
+            };
+            results[idx] = VariantObservation {
+                backend: backend.backend_name().to_owned(),
+                evidence: vec![evidence],
                 ..VariantObservation::default()
             };
         }
