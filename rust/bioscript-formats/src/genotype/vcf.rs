@@ -238,8 +238,7 @@ pub(crate) fn lookup_indexed_vcf_variants(
             && !observation.evidence.iter().any(|line| {
                 line.contains("tabix index has no contig")
                     || line.contains("has no GRCh37/GRCh38 locus")
-            })
-        {
+            }) {
             imputed_reference_observation(
                 backend.backend_name(),
                 &backend.path.display().to_string(),

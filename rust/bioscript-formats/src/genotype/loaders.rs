@@ -68,7 +68,13 @@ pub(crate) fn from_delimited_reader<R: BufRead>(
     let mut locus_values = HashMap::new();
     let mut source_lines = HashMap::new();
     for line in prelude {
-        consume_delimited_line(&mut parser, &line, &mut values, &mut locus_values, &mut source_lines)?;
+        consume_delimited_line(
+            &mut parser,
+            &line,
+            &mut values,
+            &mut locus_values,
+            &mut source_lines,
+        )?;
     }
     loop {
         buf.clear();
@@ -146,7 +152,10 @@ fn consume_delimited_line(
         let source_line = sanitize_evidence_line(line);
         if let (Some(chrom), Some(position)) = (row.chrom.as_ref(), row.position) {
             locus_values.insert(
-                (chrom.trim_start_matches("chr").to_ascii_lowercase(), position),
+                (
+                    chrom.trim_start_matches("chr").to_ascii_lowercase(),
+                    position,
+                ),
                 (row.genotype.clone(), row.rsid.clone(), source_line.clone()),
             );
         }

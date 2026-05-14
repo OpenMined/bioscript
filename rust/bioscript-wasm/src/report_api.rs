@@ -1,24 +1,18 @@
 use std::{
     collections::BTreeMap,
-    fmt::Write as _,
     path::{Path, PathBuf},
     time::Duration,
 };
 
 use bioscript_core::{
-    Assembly, GenomicLocus, OBSERVATION_TSV_HEADERS, RuntimeError, VariantKind, VariantObservation,
-    VariantSpec,
+    Assembly, GenomicLocus, RuntimeError, VariantKind, VariantObservation, VariantSpec,
 };
 use bioscript_formats::{
-    DetectedKind, DetectionConfidence, FileContainer, FileInspection, GenotypeLoadOptions,
-    GenotypeStore, InferredSex, InspectOptions, SexDetectionConfidence, SexInference,
+    GenotypeLoadOptions, GenotypeStore, InspectOptions, SexInference,
     inspect_bytes as inspect_bytes_rs,
 };
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig};
-use bioscript_schema::{
-    AssayManifest, PanelInterpretation, PanelManifest, VariantManifest, load_assay_manifest_text,
-    load_panel_manifest_text, load_variant_manifest_text,
-};
+use bioscript_schema::{PanelInterpretation, VariantManifest, load_variant_manifest_text};
 use monty::{MontyObject, ResourceLimits};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -29,8 +23,6 @@ mod report_helpers;
 mod report_input_inspection;
 #[path = "report_lookup.rs"]
 mod report_lookup;
-#[path = "report_render.rs"]
-mod report_render;
 #[path = "report_workspace.rs"]
 mod report_workspace;
 
@@ -40,18 +32,7 @@ use report_input_inspection::{
     vcf_sex_via_tabix,
 };
 use report_lookup::{BamReportLookup, CramReportLookup, VcfReportLookup};
-use report_render::{
-    AppReportJsonInput, app_report_json, match_app_findings, render_app_html_document,
-};
 use report_workspace::PackageWorkspace;
-
-include!("../../bioscript-cli/src/report_matching.rs");
-include!("../../bioscript-cli/src/report_html_sections.rs");
-include!("../../bioscript-cli/src/report_html_analysis.rs");
-include!("../../bioscript-cli/src/report_html_provenance.rs");
-include!("../../bioscript-cli/src/report_html_observations.rs");
-include!("../../bioscript-cli/src/report_html_pgx.rs");
-include!("../../bioscript-cli/src/report_html_helpers.rs");
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -149,10 +130,7 @@ pub fn run_package_report_bytes(
     };
     let workspace = PackageWorkspace::new(package_files)?;
     let participant_id = participant_id_from_name(input_name);
-    let assay_id = app_assay_id_from_workspace(&workspace, manifest_path)?;
-    let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
-    let findings = workspace.load_manifest_findings(manifest_path)?;
-    let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
+    let manifest_context = workspace.report_manifest_context(manifest_path)?;
     let inspect_options = InspectOptions {
         input_index: None,
         reference_file: None,
@@ -177,7 +155,7 @@ pub fn run_package_report_bytes(
         .map(|row| {
             workspace.app_observation_from_manifest_row(
                 row,
-                &assay_id,
+                &manifest_context.assay_id,
                 input_inspection.inferred_sex.as_ref(),
                 input_inspection.assembly,
             )
@@ -192,40 +170,22 @@ pub fn run_package_report_bytes(
         &loader,
         &options,
     )?;
-    let matched_findings = match_app_findings(&findings, &observations, &analyses);
-    let reports = vec![app_report_json(AppReportJsonInput {
-        assay_id: &assay_id,
-        participant_id: &participant_id,
-        input_file_name: input_name,
-        observations: &observations,
-        analyses: &analyses,
-        findings: &matched_findings,
-        provenance: &provenance,
-        input_inspection: Some(&input_inspection),
-        manifest_metadata: &manifest_metadata,
-    })];
-    let observations_tsv = render_app_observations_tsv(&observations)?;
-    let analysis_jsonl = render_jsonl(&analyses)?;
-    let reports_jsonl = render_jsonl(&reports)?;
-    let html = render_app_html_document(&observations, &reports)?;
-    let text_output = format!(
-        "observations: observations.tsv\nanalysis: analysis.jsonl\nreports: reports.jsonl\nhtml: index.html\n"
-    );
-    serde_json::to_string(&ReportRunOutput {
-        artifacts: vec![
-            artifact(
-                "observations.tsv",
-                "text/tab-separated-values",
-                observations_tsv,
-            ),
-            artifact("analysis.jsonl", "application/jsonl", analysis_jsonl),
-            artifact("reports.jsonl", "application/jsonl", reports_jsonl),
-            artifact("index.html", "text/html", html),
-        ],
-        duration_ms: (js_sys::Date::now() - started_ms).max(0.0) as u128,
-        text_output,
-    })
-    .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
+    let artifacts = bioscript_reporting::render_input_report_artifact_texts(
+        bioscript_reporting::AppInputReportInput {
+            assay_id: &manifest_context.assay_id,
+            participant_id: &participant_id,
+            input_file_name: input_name,
+            input_file_path: input_name,
+            observations: &observations,
+            analyses: &analyses,
+            findings: &manifest_context.findings,
+            provenance: &manifest_context.provenance,
+            input_inspection: Some(&input_inspection),
+            manifest_metadata: &manifest_context.manifest_metadata,
+        },
+    )
+    .map_err(|err| JsError::new(&err))?;
+    encode_report_run_output(started_ms, artifacts)
 }
 
 /// Mirrors `runPackageReportBytes` but for CRAM input. The CRAM body and
@@ -263,10 +223,7 @@ pub fn run_package_report_from_cram(
     };
     let workspace = PackageWorkspace::new(package_files)?;
     let participant_id = participant_id_from_name(input_name);
-    let assay_id = app_assay_id_from_workspace(&workspace, manifest_path)?;
-    let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
-    let findings = workspace.load_manifest_findings(manifest_path)?;
-    let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
+    let manifest_context = workspace.report_manifest_context(manifest_path)?;
     let mut head_inspection = inspect_head_via_js_reader(
         &cram_read_at,
         cram_len as u64,
@@ -324,7 +281,9 @@ pub fn run_package_report_from_cram(
     let observations = manifest_output
         .rows
         .iter()
-        .map(|row| workspace.app_observation_from_manifest_row(row, &assay_id, None, None))
+        .map(|row| {
+            workspace.app_observation_from_manifest_row(row, &manifest_context.assay_id, None, None)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let analysis_observations =
         analysis_cache_observations(&manifest_output.observations, &observations);
@@ -343,38 +302,22 @@ pub fn run_package_report_from_cram(
         &loader,
         &options,
     )?;
-    let matched_findings = match_app_findings(&findings, &observations, &analyses);
-    let reports = vec![app_report_json(AppReportJsonInput {
-        assay_id: &assay_id,
-        participant_id: &participant_id,
-        input_file_name: input_name,
-        observations: &observations,
-        analyses: &analyses,
-        findings: &matched_findings,
-        provenance: &provenance,
-        input_inspection: Some(&head_inspection),
-        manifest_metadata: &manifest_metadata,
-    })];
-    let observations_tsv = render_app_observations_tsv(&observations)?;
-    let analysis_jsonl = render_jsonl(&analyses)?;
-    let reports_jsonl = render_jsonl(&reports)?;
-    let html = render_app_html_document(&observations, &reports)?;
-    let text_output = "observations: observations.tsv\nanalysis: analysis.jsonl\nreports: reports.jsonl\nhtml: index.html\n".to_owned();
-    serde_json::to_string(&ReportRunOutput {
-        artifacts: vec![
-            artifact(
-                "observations.tsv",
-                "text/tab-separated-values",
-                observations_tsv,
-            ),
-            artifact("analysis.jsonl", "application/jsonl", analysis_jsonl),
-            artifact("reports.jsonl", "application/jsonl", reports_jsonl),
-            artifact("index.html", "text/html", html),
-        ],
-        duration_ms: (js_sys::Date::now() - started_ms).max(0.0) as u128,
-        text_output,
-    })
-    .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
+    let artifacts = bioscript_reporting::render_input_report_artifact_texts(
+        bioscript_reporting::AppInputReportInput {
+            assay_id: &manifest_context.assay_id,
+            participant_id: &participant_id,
+            input_file_name: input_name,
+            input_file_path: input_name,
+            observations: &observations,
+            analyses: &analyses,
+            findings: &manifest_context.findings,
+            provenance: &manifest_context.provenance,
+            input_inspection: Some(&head_inspection),
+            manifest_metadata: &manifest_context.manifest_metadata,
+        },
+    )
+    .map_err(|err| JsError::new(&err))?;
+    encode_report_run_output(started_ms, artifacts)
 }
 
 /// Mirrors `runPackageReportBytes` but for BAM input. The BAM body is streamed
@@ -401,21 +344,16 @@ pub fn run_package_report_from_bam(
     };
     let workspace = PackageWorkspace::new(package_files)?;
     let participant_id = participant_id_from_name(input_name);
-    let assay_id = app_assay_id_from_workspace(&workspace, manifest_path)?;
-    let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
-    let findings = workspace.load_manifest_findings(manifest_path)?;
-    let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
+    let manifest_context = workspace.report_manifest_context(manifest_path)?;
     let mut head_inspection =
         inspect_head_via_js_reader(&bam_read_at, bam_len as u64, input_name, false);
 
     let bai_index = bioscript_formats::alignment::parse_bai_bytes(bai_bytes)
         .map_err(|err| JsError::new(&format!("parse bai: {err:?}")))?;
     let bam_reader = JsReader::new(bam_read_at, bam_len as u64, "bam");
-    let indexed = bioscript_formats::alignment::build_bam_indexed_reader_from_reader(
-        bam_reader,
-        bai_index,
-    )
-    .map_err(|err| JsError::new(&format!("build bam reader: {err:?}")))?;
+    let indexed =
+        bioscript_formats::alignment::build_bam_indexed_reader_from_reader(bam_reader, bai_index)
+            .map_err(|err| JsError::new(&format!("build bam reader: {err:?}")))?;
 
     let lookup = BamReportLookup {
         reader: std::cell::RefCell::new(indexed),
@@ -433,7 +371,9 @@ pub fn run_package_report_from_bam(
     let observations = manifest_output
         .rows
         .iter()
-        .map(|row| workspace.app_observation_from_manifest_row(row, &assay_id, None, None))
+        .map(|row| {
+            workspace.app_observation_from_manifest_row(row, &manifest_context.assay_id, None, None)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let analysis_observations =
         analysis_cache_observations(&manifest_output.observations, &observations);
@@ -446,38 +386,22 @@ pub fn run_package_report_from_bam(
         &loader,
         &options,
     )?;
-    let matched_findings = match_app_findings(&findings, &observations, &analyses);
-    let reports = vec![app_report_json(AppReportJsonInput {
-        assay_id: &assay_id,
-        participant_id: &participant_id,
-        input_file_name: input_name,
-        observations: &observations,
-        analyses: &analyses,
-        findings: &matched_findings,
-        provenance: &provenance,
-        input_inspection: Some(&head_inspection),
-        manifest_metadata: &manifest_metadata,
-    })];
-    let observations_tsv = render_app_observations_tsv(&observations)?;
-    let analysis_jsonl = render_jsonl(&analyses)?;
-    let reports_jsonl = render_jsonl(&reports)?;
-    let html = render_app_html_document(&observations, &reports)?;
-    let text_output = "observations: observations.tsv\nanalysis: analysis.jsonl\nreports: reports.jsonl\nhtml: index.html\n".to_owned();
-    serde_json::to_string(&ReportRunOutput {
-        artifacts: vec![
-            artifact(
-                "observations.tsv",
-                "text/tab-separated-values",
-                observations_tsv,
-            ),
-            artifact("analysis.jsonl", "application/jsonl", analysis_jsonl),
-            artifact("reports.jsonl", "application/jsonl", reports_jsonl),
-            artifact("index.html", "text/html", html),
-        ],
-        duration_ms: (js_sys::Date::now() - started_ms).max(0.0) as u128,
-        text_output,
-    })
-    .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
+    let artifacts = bioscript_reporting::render_input_report_artifact_texts(
+        bioscript_reporting::AppInputReportInput {
+            assay_id: &manifest_context.assay_id,
+            participant_id: &participant_id,
+            input_file_name: input_name,
+            input_file_path: input_name,
+            observations: &observations,
+            analyses: &analyses,
+            findings: &manifest_context.findings,
+            provenance: &manifest_context.provenance,
+            input_inspection: Some(&head_inspection),
+            manifest_metadata: &manifest_context.manifest_metadata,
+        },
+    )
+    .map_err(|err| JsError::new(&err))?;
+    encode_report_run_output(started_ms, artifacts)
 }
 
 /// Mirrors `runPackageReportBytes` but for a bgzipped, tabix-indexed VCF
@@ -504,10 +428,7 @@ pub fn run_package_report_from_vcf(
     };
     let workspace = PackageWorkspace::new(package_files)?;
     let participant_id = participant_id_from_name(input_name);
-    let assay_id = app_assay_id_from_workspace(&workspace, manifest_path)?;
-    let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
-    let findings = workspace.load_manifest_findings(manifest_path)?;
-    let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
+    let manifest_context = workspace.report_manifest_context(manifest_path)?;
     // Inspect format/source/assembly from the head, but skip the byte-stream
     // sex detection — we'll do that via tabix-targeted X non-PAR queries
     // below, which works on indexed VCFs of any size.
@@ -546,7 +467,9 @@ pub fn run_package_report_from_vcf(
     let observations = manifest_output
         .rows
         .iter()
-        .map(|row| workspace.app_observation_from_manifest_row(row, &assay_id, None, None))
+        .map(|row| {
+            workspace.app_observation_from_manifest_row(row, &manifest_context.assay_id, None, None)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let analysis_observations =
         analysis_cache_observations(&manifest_output.observations, &observations);
@@ -564,36 +487,20 @@ pub fn run_package_report_from_vcf(
         &loader,
         &options,
     )?;
-    let matched_findings = match_app_findings(&findings, &observations, &analyses);
-    let reports = vec![app_report_json(AppReportJsonInput {
-        assay_id: &assay_id,
-        participant_id: &participant_id,
-        input_file_name: input_name,
-        observations: &observations,
-        analyses: &analyses,
-        findings: &matched_findings,
-        provenance: &provenance,
-        input_inspection: Some(&head_inspection),
-        manifest_metadata: &manifest_metadata,
-    })];
-    let observations_tsv = render_app_observations_tsv(&observations)?;
-    let analysis_jsonl = render_jsonl(&analyses)?;
-    let reports_jsonl = render_jsonl(&reports)?;
-    let html = render_app_html_document(&observations, &reports)?;
-    let text_output = "observations: observations.tsv\nanalysis: analysis.jsonl\nreports: reports.jsonl\nhtml: index.html\n".to_owned();
-    serde_json::to_string(&ReportRunOutput {
-        artifacts: vec![
-            artifact(
-                "observations.tsv",
-                "text/tab-separated-values",
-                observations_tsv,
-            ),
-            artifact("analysis.jsonl", "application/jsonl", analysis_jsonl),
-            artifact("reports.jsonl", "application/jsonl", reports_jsonl),
-            artifact("index.html", "text/html", html),
-        ],
-        duration_ms: (js_sys::Date::now() - started_ms).max(0.0) as u128,
-        text_output,
-    })
-    .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
+    let artifacts = bioscript_reporting::render_input_report_artifact_texts(
+        bioscript_reporting::AppInputReportInput {
+            assay_id: &manifest_context.assay_id,
+            participant_id: &participant_id,
+            input_file_name: input_name,
+            input_file_path: input_name,
+            observations: &observations,
+            analyses: &analyses,
+            findings: &manifest_context.findings,
+            provenance: &manifest_context.provenance,
+            input_inspection: Some(&head_inspection),
+            manifest_metadata: &manifest_context.manifest_metadata,
+        },
+    )
+    .map_err(|err| JsError::new(&err))?;
+    encode_report_run_output(started_ms, artifacts)
 }

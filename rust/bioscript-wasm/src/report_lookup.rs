@@ -9,17 +9,13 @@ pub(super) struct CramReportLookup<R: std::io::Read + std::io::Seek> {
 }
 
 pub(super) struct BamReportLookup<R: std::io::Read + std::io::Seek> {
-    pub(super) reader:
-        std::cell::RefCell<noodles::bam::io::indexed_reader::IndexedReader<noodles::bgzf::io::Reader<R>>>,
+    pub(super) reader: std::cell::RefCell<
+        noodles::bam::io::indexed_reader::IndexedReader<noodles::bgzf::io::Reader<R>>,
+    >,
     pub(super) label: String,
 }
 
 impl<R: std::io::Read + std::io::Seek> report_workspace::VariantLookup for BamReportLookup<R> {
-    fn lookup_variant(&self, spec: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
-        let mut reader = self.reader.borrow_mut();
-        observe_bam_variant(&mut reader, &self.label, spec)
-    }
-
     fn lookup_variants(
         &self,
         specs: &[VariantSpec],
@@ -34,11 +30,6 @@ impl<R: std::io::Read + std::io::Seek> report_workspace::VariantLookup for BamRe
 }
 
 impl<R: std::io::Read + std::io::Seek> report_workspace::VariantLookup for CramReportLookup<R> {
-    fn lookup_variant(&self, spec: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
-        let mut reader = self.reader.borrow_mut();
-        observe_cram_variant(&mut reader, &self.label, spec)
-    }
-
     fn lookup_variants(
         &self,
         specs: &[VariantSpec],
@@ -159,13 +150,7 @@ fn observe_bam_variant<R: std::io::Read + std::io::Seek>(
             )
         }
         VariantKind::Deletion => {
-            observe_bam_deletion_with_reader(
-                reader,
-                label,
-                &locus,
-                variant,
-                assembly,
-            )
+            observe_bam_deletion_with_reader(reader, label, &locus, variant, assembly)
         }
         VariantKind::Insertion | VariantKind::Indel => {
             let reference = variant.reference.as_deref().ok_or_else(|| {
@@ -304,7 +289,10 @@ fn observe_bam_snp_with_reader<R: std::io::Read + std::io::Seek>(
     let ref_count = counts.filtered_ref_count;
     let alt_count = counts.filtered_alt_count;
     let depth = counts.filtered_depth;
-    let evidence = counts.evidence_lines(&format!("{}:{}-{}", locus.chrom, locus.start, locus.end), locus.start);
+    let evidence = counts.evidence_lines(
+        &format!("{}:{}-{}", locus.chrom, locus.start, locus.end),
+        locus.start,
+    );
     Ok(VariantObservation {
         backend: "bam".to_owned(),
         matched_rsid,
@@ -450,13 +438,7 @@ fn observe_bam_indel_with_reader<R: std::io::Read + std::io::Seek>(
         )),
         evidence: vec![format!(
             "observed BAM indel at {}:{}-{} depth={} ref_count={} alt_count={} matching_alt_lengths={}",
-            locus.chrom,
-            locus.start,
-            locus.end,
-            depth,
-            ref_count,
-            alt_count,
-            evidence_label
+            locus.chrom, locus.start, locus.end, depth, ref_count, alt_count, evidence_label
         )],
     })
 }
@@ -523,7 +505,8 @@ fn bam_base_quality_at_reference_position(
     let qualities = record.quality_scores();
 
     for result in record.cigar().iter() {
-        let op = result.map_err(|err| RuntimeError::Io(format!("failed to read BAM CIGAR: {err}")))?;
+        let op =
+            result.map_err(|err| RuntimeError::Io(format!("failed to read BAM CIGAR: {err}")))?;
         let len = op.len();
         match op.kind() {
             Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
@@ -533,7 +516,11 @@ fn bam_base_quality_at_reference_position(
                     let Some(base) = sequence.get(read_index) else {
                         return Ok(None);
                     };
-                    let quality = qualities.as_ref().get(read_index).copied().unwrap_or(u8::MAX);
+                    let quality = qualities
+                        .as_ref()
+                        .get(read_index)
+                        .copied()
+                        .unwrap_or(u8::MAX);
                     return Ok(Some((base, quality)));
                 }
                 reference_position += len;
@@ -566,26 +553,40 @@ fn bam_alignment_record(
     let start = record
         .alignment_start()
         .transpose()
-        .map_err(|err| RuntimeError::Io(format!("failed to read BAM alignment start from {label}: {err}")))?
+        .map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to read BAM alignment start from {label}: {err}"
+            ))
+        })?
         .map(|pos| i64::try_from(usize::from(pos)))
         .transpose()
-        .map_err(|_| RuntimeError::Unsupported(format!("record alignment start exceeds i64 range in {label}")))?
+        .map_err(|_| {
+            RuntimeError::Unsupported(format!(
+                "record alignment start exceeds i64 range in {label}"
+            ))
+        })?
         .unwrap_or(0);
     let end = record
         .alignment_end()
         .transpose()
-        .map_err(|err| RuntimeError::Io(format!("failed to read BAM alignment end from {label}: {err}")))?
+        .map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to read BAM alignment end from {label}: {err}"
+            ))
+        })?
         .map(|pos| i64::try_from(usize::from(pos)))
         .transpose()
-        .map_err(|_| RuntimeError::Unsupported(format!("record alignment end exceeds i64 range in {label}")))?
+        .map_err(|_| {
+            RuntimeError::Unsupported(format!("record alignment end exceeds i64 range in {label}"))
+        })?
         .unwrap_or(start);
     let cigar = record
         .cigar()
         .iter()
         .map(|result| {
-            result
-                .map(map_bam_op)
-                .map_err(|err| RuntimeError::Io(format!("failed to read BAM CIGAR from {label}: {err}")))
+            result.map(map_bam_op).map_err(|err| {
+                RuntimeError::Io(format!("failed to read BAM CIGAR from {label}: {err}"))
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -615,7 +616,10 @@ fn map_bam_op(
         Kind::SequenceMismatch => AlignmentOpKind::SequenceMismatch,
     };
 
-    AlignmentOp { kind, len: op.len() }
+    AlignmentOp {
+        kind,
+        len: op.len(),
+    }
 }
 
 fn normalize_pileup_base(base: u8) -> Option<char> {
@@ -660,13 +664,19 @@ fn indel_at_anchor(
             bioscript_formats::alignment::AlignmentOpKind::Insertion => {
                 let anchor = ref_pos.saturating_sub(1);
                 if anchor == anchor_pos {
-                    return Some((bioscript_formats::alignment::AlignmentOpKind::Insertion, op.len));
+                    return Some((
+                        bioscript_formats::alignment::AlignmentOpKind::Insertion,
+                        op.len,
+                    ));
                 }
             }
             bioscript_formats::alignment::AlignmentOpKind::Deletion => {
                 let anchor = ref_pos.saturating_sub(1);
                 if anchor == anchor_pos {
-                    return Some((bioscript_formats::alignment::AlignmentOpKind::Deletion, op.len));
+                    return Some((
+                        bioscript_formats::alignment::AlignmentOpKind::Deletion,
+                        op.len,
+                    ));
                 }
                 ref_pos += i64::try_from(op.len).ok()?;
             }
@@ -705,7 +715,9 @@ fn classify_expected_indel(
         if let Some((kind, len)) = indel_at_anchor(record, anchor) {
             observed_len = match kind {
                 bioscript_formats::alignment::AlignmentOpKind::Insertion => reference_len + len,
-                bioscript_formats::alignment::AlignmentOpKind::Deletion => reference_len.saturating_sub(len),
+                bioscript_formats::alignment::AlignmentOpKind::Deletion => {
+                    reference_len.saturating_sub(len)
+                }
                 _ => reference_len,
             };
 
@@ -794,7 +806,10 @@ fn infer_snp_genotype(
     } else if alt_fraction <= 0.2 {
         Some(format!("{reference}{reference}"))
     } else {
-        let mut alleles = [reference.to_ascii_uppercase(), alternate.to_ascii_uppercase()];
+        let mut alleles = [
+            reference.to_ascii_uppercase(),
+            alternate.to_ascii_uppercase(),
+        ];
         alleles.sort_by_key(|allele| match allele {
             'A' => 0,
             'C' => 1,
@@ -850,15 +865,17 @@ fn infer_copy_number_genotype(
             reference.to_ascii_uppercase(),
             alternate.to_ascii_uppercase(),
         ];
-        alleles.sort_by_key(|allele| allele.chars().next().map_or(u8::MAX, |ch| match ch {
-            'A' => 0,
-            'C' => 1,
-            'G' => 2,
-            'T' => 3,
-            'I' => 4,
-            'D' => 5,
-            _ => 99,
-        }));
+        alleles.sort_by_key(|allele| {
+            allele.chars().next().map_or(u8::MAX, |ch| match ch {
+                'A' => 0,
+                'C' => 1,
+                'G' => 2,
+                'T' => 3,
+                'I' => 4,
+                'D' => 5,
+                _ => 99,
+            })
+        });
         Some(alleles.concat())
     }
 }
@@ -1034,11 +1051,6 @@ pub(super) struct VcfReportLookup<R: std::io::Read + std::io::Seek> {
 }
 
 impl<R: std::io::Read + std::io::Seek> report_workspace::VariantLookup for VcfReportLookup<R> {
-    fn lookup_variant(&self, spec: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
-        let mut reader = self.reader.borrow_mut();
-        observe_vcf_variant(&mut reader, &self.label, spec, self.detected_assembly)
-    }
-
     fn lookup_variants(
         &self,
         specs: &[VariantSpec],

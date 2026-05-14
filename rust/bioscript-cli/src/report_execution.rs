@@ -7,41 +7,35 @@ fn run_manifest_rows_for_report(
     filters: &[String],
 ) -> Result<Vec<BTreeMap<String, String>>, String> {
     let input_text = input_file.display().to_string();
-    match manifest_schema(manifest_path)?.as_str() {
-        "bioscript:variant:1.0" | "bioscript:variant" => {
-            let manifest = load_variant_manifest(manifest_path)?;
-            Ok(vec![run_variant_manifest(
+    let store = GenotypeStore::from_file_with_options(Path::new(&input_text), loader)
+        .map_err(|err| err.to_string())?;
+    let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(runtime_root);
+    let manifest_path_text = manifest_path.display().to_string();
+    let tasks =
+        bioscript_reporting::collect_variant_manifest_tasks(&workspace, &manifest_path_text, filters)?;
+    let observations = store
+        .lookup_variants(
+            &tasks
+                .iter()
+                .map(|task| task.manifest.spec.clone())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|err| err.to_string())?;
+    Ok(tasks
+        .into_iter()
+        .zip(observations)
+        .map(|(task, observation)| {
+            let resolved = Path::new(&task.manifest_path);
+            variant_row(
                 runtime_root,
-                &manifest,
-                Some(&input_text),
+                resolved,
+                &task.manifest.name,
+                &task.manifest.tags,
+                &observation,
                 Some(participant_id),
-                loader,
-            )?])
-        }
-        "bioscript:panel:1.0" => {
-            let manifest = load_panel_manifest(manifest_path)?;
-            run_panel_manifest(
-                runtime_root,
-                &manifest,
-                Some(&input_text),
-                Some(participant_id),
-                loader,
-                filters,
             )
-        }
-        "bioscript:assay:1.0" => {
-            let manifest = load_assay_manifest(manifest_path)?;
-            run_assay_manifest(
-                runtime_root,
-                &manifest,
-                Some(&input_text),
-                Some(participant_id),
-                loader,
-                filters,
-            )
-        }
-        other => Err(format!("unsupported manifest schema '{other}'")),
-    }
+        })
+        .collect())
 }
 
 struct ReportAnalysisOptions<'a> {
@@ -50,6 +44,7 @@ struct ReportAnalysisOptions<'a> {
     participant_id: &'a str,
     loader: &'a GenotypeLoadOptions,
     output_dir: &'a Path,
+    observation_rows: &'a [BTreeMap<String, String>],
     filters: &'a [String],
     max_duration_ms: u64,
 }
@@ -58,53 +53,20 @@ fn run_manifest_analyses_for_report(
     manifest_path: &Path,
     options: &ReportAnalysisOptions<'_>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    match manifest_schema(manifest_path)?.as_str() {
-        "bioscript:panel:1.0" => {
-            let manifest = load_panel_manifest(manifest_path)?;
-            let mut analyses = Vec::new();
-            if options.filters.is_empty() {
-                analyses.extend(run_interpretations_for_report(
-                    &manifest.path,
-                    &manifest.name,
-                    &manifest.interpretations,
-                    options,
-                )?);
-            }
-            for member in &manifest.members {
-                if member.kind != "assay" {
-                    continue;
-                }
-                let Some(path) = &member.path else {
-                    continue;
-                };
-                let resolved =
-                    resolve_manifest_path(options.runtime_root, &manifest.path, path)?;
-                if !analysis_path_matches_filters(&resolved, options.filters) {
-                    continue;
-                }
-                analyses.extend(run_manifest_analyses_for_report(&resolved, options)?);
-            }
-            Ok(analyses)
-        }
-        "bioscript:assay:1.0" => {
-            let manifest = load_assay_manifest(manifest_path)?;
-            run_interpretations_for_report(
-                &manifest.path,
-                &manifest.name,
-                &manifest.interpretations,
-                options,
-            )
-        }
-        "bioscript:variant:1.0" | "bioscript:variant" => Ok(Vec::new()),
-        other => Err(format!("unsupported manifest schema '{other}'")),
+    let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(options.runtime_root);
+    let manifest_path_text = manifest_path.display().to_string();
+    let mut analyses = Vec::new();
+    for task in
+        bioscript_reporting::collect_analysis_manifest_tasks(&workspace, &manifest_path_text, options.filters)?
+    {
+        analyses.extend(run_interpretations_for_report(
+            Path::new(&task.manifest_path),
+            &task.manifest_name,
+            &task.interpretations,
+            options,
+        )?);
     }
-}
-
-fn analysis_path_matches_filters(path: &Path, filters: &[String]) -> bool {
-    filters.iter().all(|filter| match filter.split_once('=') {
-        Some(("path", value)) => path.display().to_string().contains(value),
-        _ => false,
-    })
+    Ok(analyses)
 }
 
 fn run_interpretations_for_report(
@@ -115,19 +77,11 @@ fn run_interpretations_for_report(
 ) -> Result<Vec<serde_json::Value>, String> {
     let mut outputs = Vec::new();
     for interpretation in interpretations {
-        if interpretation.kind != "bioscript" {
-            return Err(format!(
-                "analysis '{}' uses unsupported kind '{}'",
-                interpretation.id, interpretation.kind
-            ));
-        }
+        bioscript_reporting::validate_bioscript_interpretation(interpretation)?;
         let script_path =
             resolve_manifest_path(options.runtime_root, manifest_path, &interpretation.path)?;
-        let format = interpretation
-            .output_format
-            .as_deref()
-            .unwrap_or("json")
-            .to_ascii_lowercase();
+        let analysis_format =
+            bioscript_reporting::analysis_output_format(interpretation.output_format.as_deref())?;
         let analysis_dir = options.output_dir.join("analysis").join(options.participant_id);
         fs::create_dir_all(&analysis_dir).map_err(|err| {
             format!(
@@ -135,52 +89,74 @@ fn run_interpretations_for_report(
                 analysis_dir.display()
             )
         })?;
-        let extension = match format.as_str() {
-            "tsv" => "tsv",
-            "json" => "json",
-            "jsonl" => "jsonl",
-            other => return Err(format!("unsupported analysis output_format '{other}'")),
-        };
-        let output_file = analysis_dir.join(format!("{}.{}", interpretation.id, extension));
+        let output_file = options.output_dir.join(
+            bioscript_reporting::analysis_output_relative_file(
+                options.participant_id,
+                &interpretation.id,
+                analysis_format.extension,
+            ),
+        );
+        let observations_file = options.output_dir.join(
+            bioscript_reporting::analysis_observations_relative_file(
+                options.participant_id,
+                &interpretation.id,
+            ),
+        );
+        fs::write(
+            &observations_file,
+            bioscript_reporting::render_manifest_rows_tsv(options.observation_rows),
+        )
+        .map_err(|err| {
+            format!(
+                "failed to write analysis observations {}: {err}",
+                observations_file.display()
+            )
+        })?;
         run_bioscript_analysis_script(
             options.runtime_root,
             &script_path,
             options.input_file,
             &output_file,
+            &observations_file,
             options.participant_id,
             options.loader,
             options.max_duration_ms,
         )?;
-        let (rows, row_headers) = parse_analysis_output(&output_file, &format)?;
-        outputs.push(serde_json::json!({
-            "schema": "bioscript:analysis-output:1.0",
-            "version": "1.0",
-            "participant_id": options.participant_id,
-            "assay_id": manifest_name,
-            "analysis_id": interpretation.id,
-            "analysis_label": interpretation.label.clone(),
-            "kind": interpretation.kind,
-            "output_format": format,
-            "manifest_path": manifest_path.strip_prefix(options.runtime_root).unwrap_or(manifest_path).display().to_string(),
-            "script_path": script_path.strip_prefix(options.runtime_root).unwrap_or(&script_path).display().to_string(),
-            "output_file": output_file.strip_prefix(options.runtime_root).unwrap_or(&output_file).display().to_string(),
-            "derived_from": interpretation.derived_from.clone(),
-            "emits": interpretation.emits.iter().map(|emit| serde_json::json!({
-                "key": emit.key.clone(),
-                "label": emit.label.clone(),
-                "value_type": emit.value_type.clone(),
-                "format": emit.format.clone(),
-            })).collect::<Vec<_>>(),
-            "logic": interpretation.logic.as_ref().map(|logic| serde_json::json!({
-                "description": logic.description.clone(),
-                "source": logic.source.as_ref().map(|source| serde_json::json!({
-                    "name": source.name.clone(),
-                    "url": source.url.clone(),
-                })),
-            })),
-            "row_headers": row_headers,
-            "rows": rows,
-        }));
+        let (rows, row_headers) = parse_analysis_output(&output_file, analysis_format.format)?;
+        let manifest_path_text = manifest_path
+            .strip_prefix(options.runtime_root)
+            .unwrap_or(manifest_path)
+            .display()
+            .to_string();
+        let script_path_text = script_path
+            .strip_prefix(options.runtime_root)
+            .unwrap_or(&script_path)
+            .display()
+            .to_string();
+        let output_file_text = output_file
+            .strip_prefix(options.runtime_root)
+            .unwrap_or(&output_file)
+            .display()
+            .to_string();
+        let observations_file_text = observations_file
+            .strip_prefix(options.runtime_root)
+            .unwrap_or(&observations_file)
+            .display()
+            .to_string();
+        outputs.push(bioscript_reporting::analysis_output_json(
+            bioscript_reporting::AnalysisOutputJsonInput {
+                participant_id: options.participant_id,
+                assay_id: manifest_name,
+                interpretation,
+                output_format: analysis_format.format,
+                manifest_path: &manifest_path_text,
+                script_path: &script_path_text,
+                output_file: &output_file_text,
+                observations_file: Some(&observations_file_text),
+                row_headers,
+                rows,
+            },
+        ));
     }
     Ok(outputs)
 }
@@ -190,6 +166,7 @@ fn run_bioscript_analysis_script(
     script_path: &Path,
     input_file: &Path,
     output_file: &Path,
+    observations_file: &Path,
     participant_id: &str,
     loader: &GenotypeLoadOptions,
     analysis_max_duration_ms: u64,
@@ -223,6 +200,13 @@ fn run_bioscript_analysis_script(
                     monty::MontyObject::String(runtime_path_string(runtime_root, output_file)),
                 ),
                 (
+                    "observations_file",
+                    monty::MontyObject::String(runtime_path_string(
+                        runtime_root,
+                        observations_file,
+                    )),
+                ),
+                (
                     "participant_id",
                     monty::MontyObject::String(participant_id.to_owned()),
                 ),
@@ -245,93 +229,10 @@ fn parse_analysis_output(
 ) -> Result<(Vec<serde_json::Value>, Vec<String>), String> {
     let text = fs::read_to_string(path)
         .map_err(|err| format!("failed to read analysis output {}: {err}", path.display()))?;
-    match format {
-        "tsv" => Ok(parse_analysis_tsv(&text)),
-        "json" => {
-            let value: serde_json::Value = serde_json::from_str(&text).map_err(|err| {
-                format!("failed to parse analysis JSON {}: {err}", path.display())
-            })?;
-            let rows = match value {
-                serde_json::Value::Array(rows) => rows,
-                serde_json::Value::Object(mut object) => object
-                    .remove("rows")
-                    .and_then(|rows| rows.as_array().cloned())
-                    .unwrap_or_else(|| vec![serde_json::Value::Object(object)]),
-                other => vec![other],
-            };
-            let headers = analysis_headers_from_rows(&rows);
-            Ok((rows, headers))
-        }
-        "jsonl" => {
-            let rows = text
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| serde_json::from_str(line).map_err(|err| err.to_string()))
-            .collect::<Result<Vec<_>, _>>()?;
-            let headers = analysis_headers_from_rows(&rows);
-            Ok((rows, headers))
-        }
-        other => Err(format!("unsupported analysis output_format '{other}'")),
-    }
-}
-
-fn parse_analysis_tsv(text: &str) -> (Vec<serde_json::Value>, Vec<String>) {
-    let mut lines = text.lines().filter(|line| !line.trim().is_empty());
-    let Some(header_line) = lines.next() else {
-        return (Vec::new(), Vec::new());
-    };
-    let headers: Vec<&str> = header_line.split('\t').collect();
-    let mut rows = Vec::new();
-    for line in lines {
-        let values: Vec<&str> = line.split('\t').collect();
-        let mut object = serde_json::Map::new();
-        for (idx, header) in headers.iter().enumerate() {
-            object.insert(
-                (*header).to_owned(),
-                serde_json::Value::String(values.get(idx).copied().unwrap_or_default().to_owned()),
-            );
-        }
-        rows.push(serde_json::Value::Object(object));
-    }
-    (rows, headers.iter().map(|header| (*header).to_owned()).collect())
-}
-
-fn analysis_headers_from_rows(rows: &[serde_json::Value]) -> Vec<String> {
-    let mut headers = Vec::new();
-    for row in rows {
-        let Some(object) = row.as_object() else {
-            continue;
-        };
-        for key in object.keys() {
-            if !headers.contains(key) {
-                headers.push(key.clone());
-            }
-        }
-    }
-    headers
-}
-
-fn app_assay_id(path: &Path) -> Result<String, String> {
-    match manifest_schema(path)?.as_str() {
-        "bioscript:panel:1.0" => Ok(load_panel_manifest(path)?.name),
-        "bioscript:assay:1.0" => Ok(load_assay_manifest(path)?.name),
-        "bioscript:variant:1.0" | "bioscript:variant" => Ok(load_variant_manifest(path)?.name),
-        other => Err(format!("unsupported manifest schema '{other}'")),
-    }
+    bioscript_reporting::parse_analysis_output_text(&text, format)
+        .map_err(|err| format!("failed to parse analysis output {}: {err}", path.display()))
 }
 
 fn participant_id_from_path(path: &Path) -> String {
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("participant");
-    file_name
-        .trim_end_matches(".txt.zip")
-        .trim_end_matches(".csv.zip")
-        .trim_end_matches(".vcf.gz")
-        .trim_end_matches(".cram")
-        .trim_end_matches(".zip")
-        .trim_end_matches(".txt")
-        .trim_end_matches(".csv")
-        .to_owned()
+    bioscript_reporting::participant_id_from_path(path)
 }

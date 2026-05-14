@@ -14,11 +14,10 @@ mod readers;
 
 pub use readers::{
     build_bam_indexed_reader_from_reader, build_cram_indexed_reader_from_reader,
-    build_reference_repository_from_readers,
-    generate_bam_bai_bytes, generate_bam_bai_reader, generate_cram_crai_bytes,
-    generate_cram_crai_reader, generate_fasta_fai_bytes, generate_fasta_fai_reader,
-    generate_vcf_tbi_bytes,
-    parse_bai_bytes, parse_crai_bytes, parse_fai_bytes, parse_tbi_bytes,
+    build_reference_repository_from_readers, generate_bam_bai_bytes, generate_bam_bai_reader,
+    generate_cram_crai_bytes, generate_cram_crai_reader, generate_fasta_fai_bytes,
+    generate_fasta_fai_reader, generate_vcf_tbi_bytes, parse_bai_bytes, parse_crai_bytes,
+    parse_fai_bytes, parse_tbi_bytes,
 };
 
 pub(crate) use cram_stream::for_each_raw_cram_record_with_reader_inner;

@@ -11,56 +11,27 @@ impl PackageWorkspace {
         loader: &GenotypeLoadOptions,
         options: &ReportOptionsInput,
     ) -> Result<Vec<serde_json::Value>, JsError> {
-        match self.schema(manifest_path)?.as_str() {
-            "bioscript:panel:1.0" => {
-                let panel = self.load_panel(manifest_path)?;
-                let mut analyses = self.run_interpretations(
-                    manifest_path,
-                    &panel.name,
-                    &panel.interpretations,
-                    input_name,
-                    input_bytes,
-                    preloaded_observations,
-                    participant_id,
-                    loader,
-                    options,
-                )?;
-                for member in &panel.members {
-                    if member.kind != "assay" {
-                        continue;
-                    }
-                    let Some(path) = &member.path else {
-                        continue;
-                    };
-                    let resolved = self.resolve(manifest_path, path)?;
-                    analyses.extend(self.run_manifest_analyses(
-                        &resolved,
-                        input_name,
-                        input_bytes,
-                        preloaded_observations,
-                        participant_id,
-                        loader,
-                        options,
-                    )?);
-                }
-                Ok(analyses)
-            }
-            "bioscript:assay:1.0" => {
-                let assay = self.load_assay(manifest_path)?;
-                self.run_interpretations(
-                    manifest_path,
-                    &assay.name,
-                    &assay.interpretations,
-                    input_name,
-                    input_bytes,
-                    preloaded_observations,
-                    participant_id,
-                    loader,
-                    options,
-                )
-            }
-            _ => Ok(Vec::new()),
+        let tasks = bioscript_reporting::collect_analysis_manifest_tasks(
+            self,
+            manifest_path,
+            &options.filters,
+        )
+        .map_err(|err| JsError::new(&err))?;
+        let mut analyses = Vec::new();
+        for task in tasks {
+            analyses.extend(self.run_interpretations(
+                &task.manifest_path,
+                &task.manifest_name,
+                &task.interpretations,
+                input_name,
+                input_bytes,
+                preloaded_observations,
+                participant_id,
+                loader,
+                options,
+            )?);
         }
+        Ok(analyses)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -78,17 +49,17 @@ impl PackageWorkspace {
     ) -> Result<Vec<serde_json::Value>, JsError> {
         let mut outputs = Vec::new();
         for interpretation in interpretations {
-            if interpretation.kind != "bioscript" {
-                return Err(JsError::new(&format!(
-                    "analysis '{}' uses unsupported kind '{}'",
-                    interpretation.id, interpretation.kind
-                )));
-            }
+            bioscript_reporting::validate_bioscript_interpretation(interpretation)
+                .map_err(|err| JsError::new(&err))?;
             let script_path = self.resolve(manifest_path, &interpretation.path)?;
-            let analysis_output_file = format!(
-                "analysis/{participant_id}/{}.{}",
-                interpretation.id,
-                interpretation.output_format.as_deref().unwrap_or("json")
+            let analysis_format = bioscript_reporting::analysis_output_format(
+                interpretation.output_format.as_deref(),
+            )
+            .map_err(|err| JsError::new(&err))?;
+            let analysis_output_file = bioscript_reporting::analysis_output_relative_file(
+                participant_id,
+                &interpretation.id,
+                analysis_format.extension,
             );
             let output_file = options
                 .output_dir
@@ -96,7 +67,21 @@ impl PackageWorkspace {
                 .filter(|dir| !dir.is_empty())
                 .map(|dir| format!("{}/{}", dir.trim_end_matches('/'), analysis_output_file))
                 .unwrap_or(analysis_output_file);
+            let observations_output_file = bioscript_reporting::analysis_observations_relative_file(
+                participant_id,
+                &interpretation.id,
+            );
+            let observations_file = options
+                .output_dir
+                .as_deref()
+                .filter(|dir| !dir.is_empty())
+                .map(|dir| format!("{}/{}", dir.trim_end_matches('/'), observations_output_file))
+                .unwrap_or(observations_output_file);
             let mut virtual_text_files = self.files.clone();
+            virtual_text_files.insert(
+                observations_file.clone(),
+                bioscript_reporting::render_analysis_observations_tsv(preloaded_observations),
+            );
             let mut virtual_binary_files = BTreeMap::new();
             virtual_binary_files.insert(input_name.to_owned(), input_bytes.to_vec());
             let limits = ResourceLimits::new()
@@ -124,6 +109,10 @@ impl PackageWorkspace {
                         ("input_file", MontyObject::String(input_name.to_owned())),
                         ("output_file", MontyObject::String(output_file.clone())),
                         (
+                            "observations_file",
+                            MontyObject::String(observations_file.clone()),
+                        ),
+                        (
                             "participant_id",
                             MontyObject::String(participant_id.to_owned()),
                         ),
@@ -139,41 +128,21 @@ impl PackageWorkspace {
                     interpretation.id
                 ))
             })?;
-            let format = interpretation
-                .output_format
-                .as_deref()
-                .unwrap_or("json")
-                .to_ascii_lowercase();
-            let (rows, row_headers) = parse_analysis_output_text(text, &format)?;
-            outputs.push(serde_json::json!({
-                "schema": "bioscript:analysis-output:1.0",
-                "version": "1.0",
-                "participant_id": participant_id,
-                "assay_id": manifest_name,
-                "analysis_id": interpretation.id,
-                "analysis_label": interpretation.label,
-                "kind": interpretation.kind,
-                "output_format": format,
-                "manifest_path": manifest_path,
-                "script_path": script_path,
-                "output_file": output_file,
-                "derived_from": interpretation.derived_from,
-                "emits": interpretation.emits.iter().map(|emit| serde_json::json!({
-                    "key": emit.key,
-                    "label": emit.label,
-                    "value_type": emit.value_type,
-                    "format": emit.format,
-                })).collect::<Vec<_>>(),
-                "logic": interpretation.logic.as_ref().map(|logic| serde_json::json!({
-                    "description": logic.description,
-                    "source": logic.source.as_ref().map(|source| serde_json::json!({
-                        "name": source.name,
-                        "url": source.url,
-                    })),
-                })),
-                "row_headers": row_headers,
-                "rows": rows,
-            }));
+            let (rows, row_headers) = parse_analysis_output_text(text, analysis_format.format)?;
+            outputs.push(bioscript_reporting::analysis_output_json(
+                bioscript_reporting::AnalysisOutputJsonInput {
+                    participant_id,
+                    assay_id: manifest_name,
+                    interpretation,
+                    output_format: analysis_format.format,
+                    manifest_path,
+                    script_path: &script_path,
+                    output_file: &output_file,
+                    observations_file: Some(&observations_file),
+                    row_headers,
+                    rows,
+                },
+            ));
         }
         Ok(outputs)
     }

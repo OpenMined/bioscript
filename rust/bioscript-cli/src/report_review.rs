@@ -81,10 +81,10 @@ fn generate_review_report(options: &ReviewReportOptions) -> Result<(), String> {
         )
     })?;
 
-    let assay_id = app_assay_id(&options.manifest_path)?;
-    let manifest_metadata = report_manifest_metadata(&options.manifest_path)?;
-    let findings = load_manifest_findings(&options.root, &options.manifest_path)?;
-    let provenance = load_manifest_provenance_links(&options.root, &options.manifest_path)?;
+    let manifest_workspace = bioscript_reporting::FilesystemManifestWorkspace::new(&options.root);
+    let manifest_path = options.manifest_path.display().to_string();
+    let manifest_context =
+        bioscript_reporting::load_report_manifest_context(&manifest_workspace, &manifest_path)?;
     let cases = load_review_cases(&options.cases_path)?;
     let mut observations = Vec::new();
     let mut analyses = Vec::new();
@@ -102,25 +102,40 @@ fn generate_review_report(options: &ReviewReportOptions) -> Result<(), String> {
             &options.filters,
         )?
         .iter()
-        .map(|row| app_observation_from_manifest_row(&options.root, row, &assay_id, None, None))
+        .map(|row| {
+            app_observation_from_manifest_row(
+                &options.root,
+                row,
+                &manifest_context.assay_id,
+                None,
+                None,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
         observations.extend(input_observations.clone());
 
         let input_analyses = run_review_analyses(options, &case, &input_bytes)?;
         analyses.extend(input_analyses.clone());
-        let matched_findings = match_app_findings(&findings, &input_observations, &input_analyses);
         let synthetic_input = PathBuf::from(format!("review://{}", case.id));
-        let mut report = app_report_json(AppReportJsonInput {
-            assay_id: &assay_id,
+        let synthetic_input_name = synthetic_input
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let synthetic_input_path = synthetic_input.display().to_string();
+        let mut report = bioscript_reporting::app_input_report_json(
+            bioscript_reporting::AppInputReportInput {
+            assay_id: &manifest_context.assay_id,
             participant_id: &case.id,
-            input_file: &synthetic_input,
+            input_file_name: synthetic_input_name,
+            input_file_path: &synthetic_input_path,
             observations: &input_observations,
             analyses: &input_analyses,
-            findings: &matched_findings,
-            provenance: &provenance,
+            findings: &manifest_context.findings,
+            provenance: &manifest_context.provenance,
             input_inspection: None,
-            manifest_metadata: &manifest_metadata,
-        });
+            manifest_metadata: &manifest_context.manifest_metadata,
+            },
+        );
         if let Some(object) = report.as_object_mut() {
             object.insert(
                 "review_case".to_owned(),
@@ -206,12 +221,14 @@ fn run_review_analyses(
         format: Some(GenotypeSourceFormat::Text),
         ..GenotypeLoadOptions::default()
     };
+    let observation_rows = Vec::new();
     let analysis_options = ReportAnalysisOptions {
         runtime_root: &options.root,
         input_file: &temp_path,
         participant_id: &case.id,
         loader: &loader,
         output_dir: &options.output_dir,
+        observation_rows: &observation_rows,
         filters: &options.filters,
         max_duration_ms: 1_000,
     };

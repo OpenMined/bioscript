@@ -32,8 +32,7 @@ use cram_backend::{
     infer_snp_genotype, len_as_i64, normalize_pileup_base, record_overlaps_locus, spans_position,
 };
 pub use cram_backend::{
-    observe_cram_deletion_with_reader, observe_cram_indel_with_reader,
-    observe_cram_snp_with_reader,
+    observe_cram_deletion_with_reader, observe_cram_indel_with_reader, observe_cram_snp_with_reader,
 };
 pub(crate) use delimited::{
     COMMENT_PREFIXES, DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row,
@@ -680,9 +679,7 @@ mod tests {
             matched_rsid: None,
             assembly: Some(Assembly::Grch38),
             genotype: Some("TT".to_owned()),
-            evidence: vec![
-                "observed SNP pileup at 22:36265988-36265988 ref=T alt=G".to_owned(),
-            ],
+            evidence: vec!["observed SNP pileup at 22:36265988-36265988 ref=T alt=G".to_owned()],
             ..VariantObservation::default()
         }];
 

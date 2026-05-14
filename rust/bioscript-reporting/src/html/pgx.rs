@@ -1,4 +1,7 @@
-fn render_pgx_table(
+use super::helpers::*;
+use super::observations::highlight_allele;
+use std::fmt::Write as _;
+pub(super) fn render_pgx_table(
     out: &mut String,
     label_findings: &[serde_json::Value],
     summary_findings: &[serde_json::Value],
@@ -68,7 +71,7 @@ fn render_pgx_table(
     out.push_str("</div>");
 }
 
-fn render_pgx_row(out: &mut String, finding: &serde_json::Value, show_drug: bool) {
+pub(super) fn render_pgx_row(out: &mut String, finding: &serde_json::Value, show_drug: bool) {
     let source_type = pgx_source_type(finding);
     let level = pgx_level_value(finding);
     let level_slug = pgx_level_filter_slug(finding);
@@ -97,14 +100,14 @@ fn render_pgx_row(out: &mut String, finding: &serde_json::Value, show_drug: bool
     out.push_str("</tr>");
 }
 
-fn pgx_source_type(finding: &serde_json::Value) -> &str {
+pub(super) fn pgx_source_type(finding: &serde_json::Value) -> &str {
     match value_str(finding, "schema") {
         "bioscript:pgx-label:1.0" => "Drug Label",
         _ => "Summary",
     }
 }
 
-fn pgx_level_value(finding: &serde_json::Value) -> &str {
+pub(super) fn pgx_level_value(finding: &serde_json::Value) -> &str {
     if pgx_source_type(finding) == "Drug Label" {
         value_str(finding, "pgx_action_level")
     } else {
@@ -112,7 +115,7 @@ fn pgx_level_value(finding: &serde_json::Value) -> &str {
     }
 }
 
-fn pgx_level_filter_slug(finding: &serde_json::Value) -> String {
+pub(super) fn pgx_level_filter_slug(finding: &serde_json::Value) -> String {
     if pgx_source_type(finding) == "Drug Label" {
         format!("drug-{}", pgx_level_slug(pgx_level_value(finding)))
     } else {
@@ -120,7 +123,7 @@ fn pgx_level_filter_slug(finding: &serde_json::Value) -> String {
     }
 }
 
-fn pgx_category(finding: &serde_json::Value) -> String {
+pub(super) fn pgx_category(finding: &serde_json::Value) -> String {
     if pgx_source_type(finding) == "Drug Label" {
         let actions = join_string_array(finding.get("prescribing_actions"));
         let sources = join_string_array(finding.get("regulatory_sources"));
@@ -136,7 +139,7 @@ fn pgx_category(finding: &serde_json::Value) -> String {
     }
 }
 
-fn pgx_finding_text(finding: &serde_json::Value) -> String {
+pub(super) fn pgx_finding_text(finding: &serde_json::Value) -> String {
     if pgx_source_type(finding) == "Drug Label" {
         for key in ["prescribing_information", "summary", "notes", "label"] {
             let value = value_str(finding, key);
@@ -156,7 +159,7 @@ fn pgx_finding_text(finding: &serde_json::Value) -> String {
     value_str(finding, "notes").to_owned()
 }
 
-fn pgx_evidence_url(finding: &serde_json::Value) -> &str {
+pub(super) fn pgx_evidence_url(finding: &serde_json::Value) -> &str {
     finding
         .get("evidence")
         .and_then(|value| value.get("url"))
@@ -164,7 +167,7 @@ fn pgx_evidence_url(finding: &serde_json::Value) -> &str {
         .unwrap_or_default()
 }
 
-fn pgx_drug_names(findings: &[&serde_json::Value]) -> Vec<String> {
+pub(super) fn pgx_drug_names(findings: &[&serde_json::Value]) -> Vec<String> {
     let mut drugs = Vec::new();
     for finding in findings {
         for drug in finding_drug_names(finding) {
@@ -177,7 +180,7 @@ fn pgx_drug_names(findings: &[&serde_json::Value]) -> Vec<String> {
     drugs
 }
 
-fn finding_drug_names(finding: &serde_json::Value) -> Vec<String> {
+pub(super) fn finding_drug_names(finding: &serde_json::Value) -> Vec<String> {
     finding
         .get("drugs")
         .and_then(serde_json::Value::as_array)
@@ -191,7 +194,7 @@ fn finding_drug_names(finding: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn render_pgx_filters(out: &mut String) {
+pub(super) fn render_pgx_filters(out: &mut String) {
     out.push_str("<div class=\"level-filter\"><div class=\"filter-scale\"><div class=\"filter-scale-title\">Drug Label PGx Level <a href=\"https://www.clinpgx.org/page/drugLabelLegend#pgx-level\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"ClinPGx drug label PGx levels\">i</a></div><div class=\"filter-options\">");
     for (level, label) in [
         ("required", "Testing Required"),
@@ -241,7 +244,7 @@ fn render_pgx_filters(out: &mut String) {
     out.push_str("</div></div><div class=\"filter-actions\"><button class=\"filter-action\" type=\"button\" onclick=\"setPgxFilterGroup(true)\">Show all</button><button class=\"filter-action\" type=\"button\" onclick=\"setPgxFilterGroup(false)\">Hide all</button></div></div>");
 }
 
-fn pgx_any_level_cell(out: &mut String, finding: &serde_json::Value) {
+pub(super) fn pgx_any_level_cell(out: &mut String, finding: &serde_json::Value) {
     let level = pgx_level_value(finding);
     if pgx_source_type(finding) == "Drug Label" {
         pgx_level_cell(out, level);
@@ -250,7 +253,7 @@ fn pgx_any_level_cell(out: &mut String, finding: &serde_json::Value) {
     }
 }
 
-fn pgx_genotype_cell(out: &mut String, finding: &serde_json::Value) {
+pub(super) fn pgx_genotype_cell(out: &mut String, finding: &serde_json::Value) {
     let value = finding
         .get("matched_observation")
         .and_then(|observation| observation.get("genotype_display"))
@@ -278,7 +281,7 @@ fn pgx_genotype_cell(out: &mut String, finding: &serde_json::Value) {
     }
 }
 
-fn finding_participant(finding: &serde_json::Value) -> String {
+pub(super) fn finding_participant(finding: &serde_json::Value) -> String {
     finding
         .get("matched_observation")
         .or_else(|| finding.get("matched_analysis"))
@@ -288,7 +291,7 @@ fn finding_participant(finding: &serde_json::Value) -> String {
         .to_owned()
 }
 
-fn pgx_outcome_filter_slug(finding: &serde_json::Value) -> &'static str {
+pub(super) fn pgx_outcome_filter_slug(finding: &serde_json::Value) -> &'static str {
     match finding
         .get("matched_observation")
         .and_then(|observation| observation.get("outcome"))
@@ -301,7 +304,7 @@ fn pgx_outcome_filter_slug(finding: &serde_json::Value) -> &'static str {
     }
 }
 
-fn finding_rsid(finding: &serde_json::Value) -> String {
+pub(super) fn finding_rsid(finding: &serde_json::Value) -> String {
     finding
         .get("matched_observation")
         .and_then(|observation| observation.get("rsid"))
@@ -311,7 +314,7 @@ fn finding_rsid(finding: &serde_json::Value) -> String {
         .to_owned()
 }
 
-fn finding_gene(finding: &serde_json::Value) -> String {
+pub(super) fn finding_gene(finding: &serde_json::Value) -> String {
     finding
         .get("matched_observation")
         .and_then(|observation| observation.get("gene"))
@@ -319,16 +322,12 @@ fn finding_gene(finding: &serde_json::Value) -> String {
         .map(ToOwned::to_owned)
         .or_else(|| {
             let genes = join_string_array(finding.get("genes"));
-            if genes.is_empty() {
-                None
-            } else {
-                Some(genes)
-            }
+            if genes.is_empty() { None } else { Some(genes) }
         })
         .unwrap_or_default()
 }
 
-fn matched_ref_alt(finding: &serde_json::Value) -> String {
+pub(super) fn matched_ref_alt(finding: &serde_json::Value) -> String {
     let Some(observation) = finding.get("matched_observation") else {
         return String::new();
     };
@@ -348,7 +347,7 @@ fn matched_ref_alt(finding: &serde_json::Value) -> String {
     }
 }
 
-fn evidence_level_group(level: &str) -> String {
+pub(super) fn evidence_level_group(level: &str) -> String {
     let normalized = level.trim().to_ascii_lowercase();
     if normalized.starts_with("1a") {
         "1a".to_owned()
@@ -371,14 +370,14 @@ fn evidence_level_group(level: &str) -> String {
     }
 }
 
-fn evidence_level_color_group(level: &str) -> String {
+pub(super) fn evidence_level_color_group(level: &str) -> String {
     level
         .chars()
         .find(char::is_ascii_digit)
         .map_or_else(|| "unknown".to_owned(), |ch| ch.to_string())
 }
 
-fn evidence_level_cell(out: &mut String, level: &str) {
+pub(super) fn evidence_level_cell(out: &mut String, level: &str) {
     let display = if level.is_empty() { "Unknown" } else { level };
     let group = evidence_level_color_group(display);
     let _ = write!(
@@ -390,7 +389,7 @@ fn evidence_level_cell(out: &mut String, level: &str) {
     );
 }
 
-fn pgx_level_slug(level: &str) -> String {
+pub(super) fn pgx_level_slug(level: &str) -> String {
     let normalized = level.to_ascii_lowercase();
     if normalized.contains("required") {
         "required".to_owned()
@@ -409,7 +408,7 @@ fn pgx_level_slug(level: &str) -> String {
     }
 }
 
-fn pgx_level_cell(out: &mut String, level: &str) {
+pub(super) fn pgx_level_cell(out: &mut String, level: &str) {
     let display = if level.is_empty() { "Unknown" } else { level };
     let slug = pgx_level_slug(display);
     let _ = write!(
@@ -421,7 +420,7 @@ fn pgx_level_cell(out: &mut String, level: &str) {
     );
 }
 
-fn pgx_level_sort_rank(level: &str) -> u8 {
+pub(super) fn pgx_level_sort_rank(level: &str) -> u8 {
     match pgx_level_slug(level).as_str() {
         "required" => 1,
         "recommended" => 2,
@@ -433,7 +432,7 @@ fn pgx_level_sort_rank(level: &str) -> u8 {
     }
 }
 
-fn evidence_level_sort_rank(level: &str) -> u8 {
+pub(super) fn evidence_level_sort_rank(level: &str) -> u8 {
     match evidence_level_group(level).as_str() {
         "1a" => 11,
         "1b" => 12,

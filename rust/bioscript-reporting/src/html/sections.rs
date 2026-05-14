@@ -1,4 +1,6 @@
-fn collect_report_analyses(reports: &[serde_json::Value]) -> Vec<serde_json::Value> {
+use super::helpers::*;
+use std::fmt::Write as _;
+pub(super) fn collect_report_analyses(reports: &[serde_json::Value]) -> Vec<serde_json::Value> {
     reports
         .iter()
         .filter_map(|report| report.get("analyses").and_then(serde_json::Value::as_array))
@@ -7,7 +9,10 @@ fn collect_report_analyses(reports: &[serde_json::Value]) -> Vec<serde_json::Val
         .collect()
 }
 
-fn collect_report_findings(reports: &[serde_json::Value], schema: &str) -> Vec<serde_json::Value> {
+pub(super) fn collect_report_findings(
+    reports: &[serde_json::Value],
+    schema: &str,
+) -> Vec<serde_json::Value> {
     reports
         .iter()
         .filter_map(|report| report.get("findings").and_then(serde_json::Value::as_array))
@@ -17,7 +22,7 @@ fn collect_report_findings(reports: &[serde_json::Value], schema: &str) -> Vec<s
         .collect()
 }
 
-fn collect_report_participants(reports: &[serde_json::Value]) -> Vec<String> {
+pub(super) fn collect_report_participants(reports: &[serde_json::Value]) -> Vec<String> {
     let mut participants = Vec::new();
     for report in reports {
         let participant = value_str(report, "participant_id");
@@ -28,7 +33,7 @@ fn collect_report_participants(reports: &[serde_json::Value]) -> Vec<String> {
     participants
 }
 
-fn render_report_manifest_header(out: &mut String, reports: &[serde_json::Value]) {
+pub(super) fn render_report_manifest_header(out: &mut String, reports: &[serde_json::Value]) {
     let manifest = reports
         .first()
         .and_then(|report| report.get("manifest"))
@@ -45,7 +50,7 @@ fn render_report_manifest_header(out: &mut String, reports: &[serde_json::Value]
     out.push_str("<div class=\"logic-note\"><p><strong>Disclaimer:</strong> This is not medical or clinical advice, only for research purposes. Always consult a licensed professional to interpret medical information.</p><p>This report was generated offline on your system.</p><p>For more information see <a href=\"https://app.biovault.net\" target=\"_blank\" rel=\"noopener noreferrer\">https://app.biovault.net</a></p></div>");
 }
 
-fn render_report_source_section(out: &mut String, reports: &[serde_json::Value]) {
+pub(super) fn render_report_source_section(out: &mut String, reports: &[serde_json::Value]) {
     let manifest = reports
         .first()
         .and_then(|report| report.get("manifest"))
@@ -61,7 +66,7 @@ fn render_report_source_section(out: &mut String, reports: &[serde_json::Value])
     render_manifest_members(out, manifest);
 }
 
-fn report_manifest_kv(out: &mut String, key: &str, value: &str) {
+pub(super) fn report_manifest_kv(out: &mut String, key: &str, value: &str) {
     if value.is_empty() {
         return;
     }
@@ -73,7 +78,7 @@ fn report_manifest_kv(out: &mut String, key: &str, value: &str) {
     );
 }
 
-fn manifest_tags(manifest: &serde_json::Value) -> String {
+pub(super) fn manifest_tags(manifest: &serde_json::Value) -> String {
     manifest
         .get("tags")
         .and_then(serde_json::Value::as_array)
@@ -87,8 +92,11 @@ fn manifest_tags(manifest: &serde_json::Value) -> String {
         .unwrap_or_default()
 }
 
-fn manifest_member_summary(manifest: &serde_json::Value) -> String {
-    let Some(members) = manifest.get("members").and_then(serde_json::Value::as_array) else {
+pub(super) fn manifest_member_summary(manifest: &serde_json::Value) -> String {
+    let Some(members) = manifest
+        .get("members")
+        .and_then(serde_json::Value::as_array)
+    else {
         return String::new();
     };
     let preview = members
@@ -114,8 +122,11 @@ fn manifest_member_summary(manifest: &serde_json::Value) -> String {
     }
 }
 
-fn render_manifest_members(out: &mut String, manifest: &serde_json::Value) {
-    let Some(members) = manifest.get("members").and_then(serde_json::Value::as_array) else {
+pub(super) fn render_manifest_members(out: &mut String, manifest: &serde_json::Value) {
+    let Some(members) = manifest
+        .get("members")
+        .and_then(serde_json::Value::as_array)
+    else {
         return;
     };
     if members.is_empty() {
@@ -132,7 +143,7 @@ fn render_manifest_members(out: &mut String, manifest: &serde_json::Value) {
     out.push_str("</tbody></table></div></details>");
 }
 
-fn render_participant_filter(out: &mut String, participants: &[String]) {
+pub(super) fn render_participant_filter(out: &mut String, participants: &[String]) {
     if participants.len() <= 1 {
         return;
     }
@@ -148,7 +159,11 @@ fn render_participant_filter(out: &mut String, participants: &[String]) {
     out.push_str("</select></div>");
 }
 
-fn render_input_debug(out: &mut String, reports: &[serde_json::Value], show_participant_id: bool) {
+pub(super) fn render_input_debug(
+    out: &mut String,
+    reports: &[serde_json::Value],
+    show_participant_id: bool,
+) {
     if reports.is_empty() {
         out.push_str("<p class=\"muted\">No input metadata.</p>");
         return;
@@ -185,7 +200,9 @@ fn render_input_debug(out: &mut String, reports: &[serde_json::Value], show_part
         let input = report.get("input").unwrap_or(&serde_json::Value::Null);
         let debug = input.get("debug").unwrap_or(&serde_json::Value::Null);
         let source = debug.get("source").unwrap_or(&serde_json::Value::Null);
-        let sex = debug.get("inferred_sex").unwrap_or(&serde_json::Value::Null);
+        let sex = debug
+            .get("inferred_sex")
+            .unwrap_or(&serde_json::Value::Null);
         let _ = write!(
             out,
             "<tr data-participant=\"{}\">",
@@ -225,11 +242,13 @@ fn render_input_debug(out: &mut String, reports: &[serde_json::Value], show_part
     out.push_str("</tbody></table></div>");
 }
 
-fn render_input_debug_key_values(out: &mut String, report: &serde_json::Value) {
+pub(super) fn render_input_debug_key_values(out: &mut String, report: &serde_json::Value) {
     let input = report.get("input").unwrap_or(&serde_json::Value::Null);
     let debug = input.get("debug").unwrap_or(&serde_json::Value::Null);
     let source = debug.get("source").unwrap_or(&serde_json::Value::Null);
-    let sex = debug.get("inferred_sex").unwrap_or(&serde_json::Value::Null);
+    let sex = debug
+        .get("inferred_sex")
+        .unwrap_or(&serde_json::Value::Null);
     out.push_str("<dl class=\"analysis-kv\">");
     input_debug_kv(out, "File", value_str(input, "file_name"));
     input_debug_kv(
@@ -263,7 +282,7 @@ fn render_input_debug_key_values(out: &mut String, report: &serde_json::Value) {
     out.push_str("</dl>");
 }
 
-fn input_debug_kv(out: &mut String, key: &str, value: &str) {
+pub(super) fn input_debug_kv(out: &mut String, key: &str, value: &str) {
     let _ = write!(
         out,
         "<dt>{}</dt><dd>{}</dd>",
@@ -272,7 +291,7 @@ fn input_debug_kv(out: &mut String, key: &str, value: &str) {
     );
 }
 
-fn compact_join(values: &[&str]) -> String {
+pub(super) fn compact_join(values: &[&str]) -> String {
     values
         .iter()
         .filter(|value| !value.is_empty())
@@ -281,7 +300,7 @@ fn compact_join(values: &[&str]) -> String {
         .join(" / ")
 }
 
-fn input_debug_vcf_imputation(debug: &serde_json::Value) -> &'static str {
+pub(super) fn input_debug_vcf_imputation(debug: &serde_json::Value) -> &'static str {
     if debug
         .get("vcf_missing_reference_imputation")
         .and_then(serde_json::Value::as_bool)
@@ -293,7 +312,7 @@ fn input_debug_vcf_imputation(debug: &serde_json::Value) -> &'static str {
     }
 }
 
-fn input_debug_evidence(debug: &serde_json::Value) -> String {
+pub(super) fn input_debug_evidence(debug: &serde_json::Value) -> String {
     let mut evidence = Vec::new();
     collect_string_array(debug.get("evidence"), &mut evidence);
     collect_string_array(debug.get("warnings"), &mut evidence);
@@ -306,7 +325,7 @@ fn input_debug_evidence(debug: &serde_json::Value) -> String {
     evidence.join(" | ")
 }
 
-fn collect_string_array(value: Option<&serde_json::Value>, out: &mut Vec<String>) {
+pub(super) fn collect_string_array(value: Option<&serde_json::Value>, out: &mut Vec<String>) {
     if let Some(items) = value.and_then(serde_json::Value::as_array) {
         for item in items.iter().filter_map(serde_json::Value::as_str) {
             if !item.is_empty() && !out.iter().any(|existing| existing == item) {

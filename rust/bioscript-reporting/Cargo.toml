@@ -1,0 +1,14 @@
+[package]
+name = "bioscript-reporting"
+version = "0.2.0"
+edition = "2024"
+
+[dependencies]
+bioscript-core = { path = "../bioscript-core" }
+bioscript-formats = { path = "../bioscript-formats" }
+bioscript-schema = { path = "../bioscript-schema" }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml = "0.9"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
