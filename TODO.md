@@ -474,6 +474,13 @@ This is not just a facade spike. The finish line is:
       `1-2:58 A>G GDP=5 DP=901`, and `3-4:33 T>G GDP=15 DP=1162`; extra
       examples include lower-depth calls such as `1-2:54 T>C GDP=3 DP=894`,
       `3-4:33 T>G GDP=1 DP=1148`, and `3-4:35 A>G GDP=1 DP=1148`.
+      Current implementation note: Java Kestrel's
+      `KmerAlignmentBuilder.java` walks the k-mer count graph with saved
+      alignment states and keeps the best haplotypes through
+      `HaplotypeContainer`; the current Rust runner still uses
+      `read_backed_haplotypes(...)` to derive candidate consensus sequences
+      from reads before alignment. That algorithmic gap is the next likely
+      source of the remaining VCF depth/record differences.
       Diagnostic re-run of the native negative FASTQ output found 42 rows with
       `passes_vntyper_filters=True`; the highest-depth false positives are
       absent from the Java expected TSV, e.g. `5C-M:61 T>TG` and `B-M:59 G>GT`
