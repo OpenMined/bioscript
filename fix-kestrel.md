@@ -335,6 +335,42 @@ first ~20 inner iterations. The candidates for the remaining work:
   length minimum, segment cutoff) that is being applied to FASTQ input
   before counting.
 
+### Quantitative progress summary
+
+| Step | Negative parity result | Test time |
+|------|------------------------|-----------|
+| Initial state (2/2 caps, no kmercount) | 2322 vs 4897, missing 2762, extra 82 | ~10 min |
+| 10/15 caps (no kmercount, no overlap retry) | 8269 vs 4897, missing 625, extra 3997 | ~8 min |
+| 10/15 caps + overlap retry | 8376 vs 4897, missing 561, extra 4040 | ~8 min |
+| 10/15 caps + overlap retry + kmercount:5 | 7062 vs 4897, missing 562, extra 2727 | ~93 s |
+| 10/5 caps + overlap retry + kmercount:5 (manual test) | 4563 vs 4897, missing 1371, extra 1037 | ~93 s |
+
+The kmercount filter alone closed ~33 % of the gap and cut test time by ~5×.
+Forcing `max_haplotypes=5` closes the gap further but undershoots Java's
+record count — that knob is therefore not the right fix on its own. The
+remaining work is in the haplotype graph traversal itself: Rust's accept
+rate during state save (~35–75 %) needs to converge to Java's ~90 %, and
+Rust's `MaxAlignmentScoreNode` chain emissions per region need to drop
+from ~1750 to Java's ~5–8.
+
+### What is verified clean
+
+- `apply_java_cli_cap_reset` (replicates Java's CLI cap-reset bug). Empirical
+  proof: Java jar at `--maxalignstates 2,10,40` produces byte-identical
+  output md5 `cb0ed3...`, matching the expected fixture sorted.
+- `KmerCounter::retain` + `MemoryCountMap::with_min_count` /
+  `IkcCountMap::with_min_count` (replicates Java's kmercount:5 default).
+  Verified: for k-mer `GGCGGTGGAGCCCGGGGCCA` in the negative FASTQ, manual
+  occurrence count is 6 (1 fwd + 5 revComp); kanalyze CLI without
+  `-rduplicate` returns 1 fwd + 5 revComp = 6; Java in-runtime sums to 5
+  because the forward occurrence (count=1) is dropped by `kmercount:5`,
+  giving 0 + 5 = 5; Rust now matches Java when `min_kmer_count=5`.
+- `ActiveRegionDetector::detect_from_counts_with` callback API (replicates
+  Java `REF_SEARCH` overlap retry). Verified by inspection of Java trace.
+- Per-step choose_branch decision parity for the first 20+ inner iterations
+  of the J-R:4-119 region. Verified via `KESTREL_TRACE_REGION` trace
+  comparison to Java's `Saving state` log lines.
+
 Current observed behavior:
 
 - Reduced static regression at `10/15`: Rust emits the expected insertion
