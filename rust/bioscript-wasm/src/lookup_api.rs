@@ -2,8 +2,8 @@ use std::io::BufReader;
 
 use bioscript_core::{GenomicLocus, VariantKind, VariantObservation, VariantSpec};
 use bioscript_formats::{
-    GenotypeStore, alignment, observe_cram_deletion_with_reader, observe_cram_indel_with_reader,
-    observe_cram_snp_with_reader, observe_vcf_snp_with_reader,
+    GenotypeStore, alignment, observe_bam_variant, observe_cram_deletion_with_reader,
+    observe_cram_indel_with_reader, observe_cram_snp_with_reader, observe_vcf_snp_with_reader,
 };
 use noodles::csi as noodles_csi;
 use serde::{Deserialize, Serialize};
@@ -155,6 +155,34 @@ pub fn lookup_cram_variants(
             }
         }
         .map_err(|err| JsError::new(&format!("lookup {}: {err:?}", variant.name)))?;
+        results.push(observation_to_js(variant, observation));
+    }
+
+    serde_json::to_string(&results).map_err(|err| JsError::new(&format!("encode results: {err}")))
+}
+
+/// Observe a list of variants against an indexed BAM, with bulk bytes pulled
+/// on demand via a JS-supplied `readAt(offset, len)` callback and the `.bai`
+/// index passed inline.
+#[wasm_bindgen(js_name = lookupBamVariants)]
+pub fn lookup_bam_variants(
+    bam_read_at: js_sys::Function,
+    bam_len: f64,
+    bai_bytes: &[u8],
+    variants_json: &str,
+) -> Result<String, JsError> {
+    let bai_index = alignment::parse_bai_bytes(bai_bytes)
+        .map_err(|err| JsError::new(&format!("parse bai: {err:?}")))?;
+    let bam_reader = JsReader::new(bam_read_at, bam_len as u64, "bam");
+    let mut indexed = alignment::build_bam_indexed_reader_from_reader(bam_reader, bai_index)
+        .map_err(|err| JsError::new(&format!("build bam reader: {err:?}")))?;
+
+    let variants = parse_variants_json(variants_json)?;
+    let mut results = Vec::with_capacity(variants.len());
+    for variant in variants {
+        let spec = variant_input_to_spec(&variant)?;
+        let observation = observe_bam_variant(&mut indexed, "bam", &spec)
+            .map_err(|err| JsError::new(&format!("bam lookup {}: {err:?}", variant.name)))?;
         results.push(observation_to_js(variant, observation));
     }
 

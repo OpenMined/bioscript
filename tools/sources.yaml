@@ -121,6 +121,32 @@ datasets:
             url: "https://raw.githubusercontent.com/OpenMined/biovault-data/main/snp/myheritage/hu33515F/MyHeritage_raw_dna_data.zip"
             description: "MyHeritage raw DNA export for participant hu33515F"
 
+  apol1:
+    description: "Small APOL1 BAM/CRAM alignment fixtures from OpenMined biovault-data"
+    source_repo: "https://github.com/OpenMined/biovault-data/tree/main/apol1"
+    subdirs:
+      .:
+        description: "APOL1 alignment fixtures and stub reference"
+        files:
+          - name: "apol1.bam"
+            url: "https://raw.githubusercontent.com/OpenMined/biovault-data/main/apol1/apol1.bam"
+            description: "Small APOL1 BAM alignment fixture"
+          - name: "apol1.bam.bai"
+            url: "https://raw.githubusercontent.com/OpenMined/biovault-data/main/apol1/apol1.bam.bai"
+            description: "BAM index for the APOL1 fixture"
+          - name: "apol1.cram"
+            url: "https://raw.githubusercontent.com/OpenMined/biovault-data/main/apol1/apol1.cram"
+            description: "Small APOL1 CRAM alignment fixture"
+          - name: "apol1.cram.crai"
+            url: "https://raw.githubusercontent.com/OpenMined/biovault-data/main/apol1/apol1.cram.crai"
+            description: "CRAM index for the APOL1 fixture"
+          - name: "stub.fa"
+            url: "https://raw.githubusercontent.com/OpenMined/biovault-data/main/apol1/stub.fa"
+            description: "Stub FASTA reference for the APOL1 alignment fixtures"
+          - name: "stub.fa.fai"
+            url: "https://raw.githubusercontent.com/OpenMined/biovault-data/main/apol1/stub.fa.fai"
+            description: "FASTA index for the APOL1 stub reference"
+
 sample_data_urls:
   NA06985-chrY:
     ref_version: GRCh38

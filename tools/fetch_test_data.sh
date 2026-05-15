@@ -259,6 +259,7 @@ Filter examples:
 Datasets:
   1k-genomes           GRCh38 reference genome + NA06985 CRAM + cleaned NA06985 VCF
   23andme              23andMe SNP exports (v2-v5) from OpenMined biovault-data
+  apol1                APOL1 BAM/CRAM alignment fixtures + stub reference
   dynamicdna           Dynamic DNA GSAv3-DTC synthetic export on GRCh38
 
 Data directory: ${DATA_DIR}/
@@ -300,6 +301,11 @@ downloaded=0
 failed=0
 
 while IFS=$'\t' read -r dataset subdir filename url; do
+  rel_path="${dataset}/${subdir}/${filename}"
+  if [ "$subdir" = "." ]; then
+    rel_path="${dataset}/${filename}"
+  fi
+
   # apply dataset filter
   if [ -n "$FILTER_DATASET" ] && [ "$dataset" != "$FILTER_DATASET" ]; then
     continue
@@ -307,22 +313,26 @@ while IFS=$'\t' read -r dataset subdir filename url; do
 
   # apply --only filter (match against filename or full path)
   if [ -n "$ONLY_PATTERNS" ]; then
-    if ! matches_any "$filename" "$ONLY_PATTERNS" && ! matches_any "${dataset}/${subdir}/${filename}" "$ONLY_PATTERNS"; then
+    if ! matches_any "$filename" "$ONLY_PATTERNS" && ! matches_any "$rel_path" "$ONLY_PATTERNS"; then
       continue
     fi
   fi
 
   # apply --exclude filter
   if [ -n "$EXCLUDE_PATTERNS" ]; then
-    if matches_any "$filename" "$EXCLUDE_PATTERNS" || matches_any "${dataset}/${subdir}/${filename}" "$EXCLUDE_PATTERNS"; then
+    if matches_any "$filename" "$EXCLUDE_PATTERNS" || matches_any "$rel_path" "$EXCLUDE_PATTERNS"; then
       continue
     fi
   fi
 
-  label="${dataset}/${subdir}/${filename}"
+  label="$rel_path"
   repo_dir="${DATA_DIR}/${dataset}/${subdir}"
-  repo_path="${repo_dir}/${filename}"
   cache_dir="${CACHE_ROOT}/${dataset}/${subdir}"
+  if [ "$subdir" = "." ]; then
+    repo_dir="${DATA_DIR}/${dataset}"
+    cache_dir="${CACHE_ROOT}/${dataset}"
+  fi
+  repo_path="${repo_dir}/${filename}"
   cache_path="${cache_dir}/${filename}"
 
   if [ "$MODE" = "list" ]; then

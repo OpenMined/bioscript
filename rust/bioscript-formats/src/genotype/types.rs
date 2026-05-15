@@ -15,6 +15,12 @@ pub(crate) enum QueryBackend {
     Delimited(DelimitedBackend),
     Vcf(VcfBackend),
     Cram(CramBackend),
+    Bam(BamBackend),
+    /// In-memory CRAM/BAM: alignment + index (+ reference for CRAM) held as
+    /// byte buffers instead of filesystem paths. Used by the report pipeline
+    /// which virtualizes the genotype input as `/input/genotypes`; mirrors
+    /// `Cram` but reader-based so it works on wasm (no filesystem).
+    AlignmentBytes(AlignmentBytesBackend),
     /// Pre-resolved observations layered on top of any other backend.
     /// Variant lookups consult `observations` first (matched by rsid OR by
     /// chrom+pos+ref+alt). On miss, falls back to `fallback`. This is the
@@ -60,6 +66,27 @@ pub(crate) struct VcfBackend {
 #[derive(Debug, Clone)]
 pub(crate) struct CramBackend {
     pub(crate) path: PathBuf,
+    pub(crate) options: GenotypeLoadOptions,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BamBackend {
+    pub(crate) path: PathBuf,
+    pub(crate) options: GenotypeLoadOptions,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AlignmentBytesBackend {
+    /// `Cram` or `Bam`.
+    pub(crate) kind: GenotypeSourceFormat,
+    /// CRAM/BAM payload.
+    pub(crate) data: Vec<u8>,
+    /// `.crai` (CRAM) or `.bai` (BAM) index bytes.
+    pub(crate) index: Vec<u8>,
+    /// Reference FASTA bytes (CRAM only; empty for BAM).
+    pub(crate) reference: Vec<u8>,
+    /// Reference FASTA `.fai` bytes (CRAM only; empty for BAM).
+    pub(crate) reference_index: Vec<u8>,
     pub(crate) options: GenotypeLoadOptions,
 }
 
