@@ -27,7 +27,10 @@ pub(crate) use delimited::{
     COMMENT_PREFIXES, DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row,
 };
 use delimited::{RowParser, scan_delimited_variants};
-use io::{detect_source_format, is_bgzf_path, read_lines_from_reader, select_zip_entry};
+use io::{
+    detect_source_format, is_bgzf_path, looks_like_vcf_lines, read_lines_from_reader,
+    select_zip_entry,
+};
 pub use types::{
     BackendCapabilities, GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind,
 };
@@ -119,12 +122,16 @@ impl GenotypeStore {
     }
 
     pub fn from_bytes(name: &str, bytes: &[u8]) -> Result<Self, RuntimeError> {
+        // The report pipeline hands us a fixed virtual path (`/input/genotypes`)
+        // with no extension, so we cannot rely on `name` alone for format
+        // detection the way `from_file_with_options` can. Sniff the leading
+        // bytes so a zip/VCF payload is recognised regardless of the name.
         let lower = name.to_ascii_lowercase();
-        if lower.ends_with(".zip") {
+        if lower.ends_with(".zip") || bytes_look_like_zip(bytes) {
             return Self::from_zip_bytes(name, bytes);
         }
         let reader = BufReader::new(Cursor::new(bytes));
-        if lower.ends_with(".vcf") {
+        if lower.ends_with(".vcf") || bytes_look_like_vcf(bytes) {
             return Self::from_vcf_reader(reader, name);
         }
         Self::from_delimited_reader(GenotypeSourceFormat::Text, reader, name)
@@ -487,6 +494,19 @@ fn required_cache_miss(spec: &VariantSpec) -> RuntimeError {
     RuntimeError::InvalidArguments(format!(
         "required preloaded genotype observation missing for rsids={rsids} loci={loci}"
     ))
+}
+
+fn bytes_look_like_zip(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"PK\x03\x04")
+        || bytes.starts_with(b"PK\x05\x06")
+        || bytes.starts_with(b"PK\x07\x08")
+}
+
+fn bytes_look_like_vcf(bytes: &[u8]) -> bool {
+    let prefix = &bytes[..bytes.len().min(8192)];
+    let text = String::from_utf8_lossy(prefix);
+    let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    looks_like_vcf_lines(&lines)
 }
 
 #[cfg(test)]

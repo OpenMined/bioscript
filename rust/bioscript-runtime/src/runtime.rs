@@ -291,7 +291,7 @@ impl BioscriptRuntime {
 
     fn resolve_user_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
         let path = Path::new(raw_path);
-        if path.is_absolute() {
+        if path_is_rooted(path) {
             if self.uses_virtual_files() {
                 for component in path.components() {
                     match component {
@@ -327,7 +327,7 @@ impl BioscriptRuntime {
         if self.virtual_file_exists(raw_path) {
             return Ok(path);
         }
-        if self.uses_virtual_files() && Path::new(raw_path).is_absolute() {
+        if self.uses_virtual_files() && path_is_rooted(Path::new(raw_path)) {
             return Err(RuntimeError::Io(format!(
                 "virtual file does not exist: {raw_path}"
             )));
@@ -342,7 +342,7 @@ impl BioscriptRuntime {
     fn resolve_user_write_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
         let path = self.resolve_user_path(raw_path)?;
         if self.uses_virtual_files() {
-            if Path::new(raw_path).is_absolute()
+            if path_is_rooted(Path::new(raw_path))
                 && !(raw_path.starts_with("/output/") || raw_path.starts_with("/work/"))
             {
                 return Err(RuntimeError::InvalidArguments(format!(
@@ -489,12 +489,23 @@ impl BioscriptRuntime {
     }
 }
 
+// Treat any path with a leading root (`/...`) as rooted/absolute. We cannot use
+// `Path::is_absolute()` here: on `wasm32-unknown-unknown` (the wasm-pack build
+// target) `is_absolute()` is gated to `unix`/`wasi` and always returns `false`
+// for `/`-rooted paths, which would route the virtual report paths
+// (`/input/...`, `/work/...`, `/output/...`) into the relative-path branch and
+// reject their `RootDir` component as escaping the bioscript root.
+// `Path::has_root()` parses components and is target-independent.
+fn path_is_rooted(path: &Path) -> bool {
+    path.has_root()
+}
+
 fn resolve_optional_loader_path(
     runtime: &BioscriptRuntime,
     path: Option<PathBuf>,
 ) -> Result<Option<PathBuf>, RuntimeError> {
     path.map(|path| {
-        if path.is_absolute() {
+        if path_is_rooted(&path) {
             Ok(path)
         } else {
             runtime.resolve_user_path(&path.to_string_lossy())
