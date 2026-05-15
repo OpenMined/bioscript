@@ -279,48 +279,186 @@ def apply_uniform_filtering_right_motif(
     return deduped
 
 
-def motif_filter_and_annotate(rows, kestrel_config=None):
-    config = kestrel_config or DEFAULT_KESTREL_CONFIG
-    motif_filter = config.get("motif_filtering", {})
-    if not motif_filter:
-        return rows
+def _gg_word_match(alt, gg_value):
+    """Mirror upstream's pandas ``str.contains(r"\\bGG\\b")`` on the ALT."""
+    try:
+        return re.search(r"\b" + str(gg_value) + r"\b", str(alt)) is not None
+    except re.error:
+        return False
 
-    position_threshold = int(motif_filter.get("position_threshold", 60))
-    exclude_motifs_right = set(motif_filter.get("exclude_motifs_right", []))
-    alt_for_motif_right_gg = motif_filter.get("alt_for_motif_right_gg", "GG")
-    motifs_for_alt_gg = set(motif_filter.get("motifs_for_alt_gg", []))
-    exclude_alts_combined = set(motif_filter.get("exclude_alts_combined", []))
-    exclude_motifs_combined = set(motif_filter.get("exclude_motifs_combined", []))
+
+def _prioritize_frameshift_and_dedupe(items):
+    """Port of upstream ``_prioritize_frameshift_and_dedupe``.
+
+    Sort by is_valid_frameshift DESC, Depth_Score DESC, POS DESC (stable),
+    then keep the first row per (POS, REF, ALT) genomic locus.
+    """
+    ordered = sorted(
+        items,
+        key=lambda w: (
+            1 if bool(w.get("is_valid_frameshift")) else 0,
+            _float(w.get("Depth_Score")),
+            w["_pos"],
+        ),
+        reverse=True,
+    )
+    seen = set()
+    out = []
+    for w in ordered:
+        key = (w["_pos"], w.get("REF"), w.get("ALT"))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(w)
+    return out
+
+
+def motif_filter_and_annotate(rows, kestrel_config=None):
+    """Faithful port of upstream ``motif_correction_and_annotation``.
+
+    Upstream splits ``Motifs`` into left/right tokens, partitions rows by
+    ``POS`` vs ``position_threshold``, dedupes each side by genomic locus with
+    frameshift/depth priority, applies the GG and exclude-list rules, then
+    marks ``motif_filter_pass = (row survived) and is_valid_frameshift``.
+    The previous per-row approximation unconditionally rejected right-motif
+    ``GG`` insertions whenever ``motifs_for_alt_gg`` was empty, which dropped
+    the canonical MUC1 dup variant (e.g. 66bf ``C-Q`` POS 67 ``G>GG``).
+    """
+    config = kestrel_config or DEFAULT_KESTREL_CONFIG
+    mf = config.get("motif_filtering", {})
+
+    annotated = []
+    for index, row in enumerate(rows):
+        nr = dict(row)
+        nr["_oidx"] = index
+        motifs = str(nr.get("Motifs") or nr.get("CHROM") or "")
+        nr["Motifs"] = motifs
+        nr["Motif_fasta"] = motifs
+        try:
+            nr["_pos"] = int(_float(nr.get("POS", -1)))
+        except (TypeError, ValueError):
+            nr["_pos"] = -1
+        annotated.append(nr)
+
+    if not mf:
+        for nr in annotated:
+            nr.pop("_oidx", None)
+            pos = nr.pop("_pos", -1)
+            nr.setdefault("Motif", nr.get("Motifs"))
+            nr.setdefault("POS_fasta", pos)
+            nr["motif_filter_pass"] = bool(nr.get("is_valid_frameshift"))
+        return annotated
+
+    position_threshold = int(mf.get("position_threshold", 60))
+    exclude_motifs_right = set(mf.get("exclude_motifs_right", []))
+    alt_for_motif_right_gg = mf.get("alt_for_motif_right_gg", "GG")
+    motifs_for_alt_gg = set(mf.get("motifs_for_alt_gg", []))
+    exclude_alts_combined = set(mf.get("exclude_alts_combined", []))
+    exclude_motifs_combined = set(mf.get("exclude_motifs_combined", []))
+    use_uniform = bool(mf.get("use_uniform_filtering", False))
+
+    # Upstream guard: every Motifs must contain exactly one dash, otherwise
+    # the split fails and nothing passes (combined_df is empty).
+    max_dash = max((nr["Motifs"].count("-") for nr in annotated), default=-1)
+
+    combined_idx = set()
+    final_by_idx = {}
+    if annotated and max_dash == 1:
+        # max_dash == 1 means every Motifs has 0 or 1 dash. Mirror pandas
+        # ``str.split("-", expand=True)``: a 0-dash value pads the missing
+        # right token with None ("MUC1" -> ["MUC1", None]).
+        working = []
+        for nr in annotated:
+            parts = nr["Motifs"].split("-")
+            left = parts[0] if parts else None
+            right = parts[1] if len(parts) > 1 else None
+            w = dict(nr)
+            w["_left"], w["_right"] = left, right
+            working.append(w)
+
+        motif_left = [w for w in working if w["_pos"] < position_threshold]
+        motif_right = [w for w in working if w["_pos"] >= position_threshold]
+
+        for w in motif_left:
+            w["Motif"] = w["_right"]
+        motif_left = _prioritize_frameshift_and_dedupe(motif_left)
+
+        for w in motif_right:
+            w["Motif"] = w["_left"]
+        if use_uniform:
+            motif_right = [
+                w for w in motif_right if w["Motif"] not in exclude_motifs_right
+            ]
+            motif_right = sorted(
+                motif_right,
+                key=lambda w: (_float(w.get("Depth_Score")), w["_pos"]),
+                reverse=True,
+            )
+            seen = set()
+            deduped = []
+            for w in motif_right:
+                key = (w["_pos"], w.get("REF"), w.get("ALT"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(w)
+            motif_right = deduped
+            if any(w.get("ALT") == alt_for_motif_right_gg for w in motif_right):
+                gg_in_allowed = [
+                    w
+                    for w in motif_right
+                    if w.get("ALT") == alt_for_motif_right_gg
+                    and w["Motif"] in motifs_for_alt_gg
+                ]
+                non_gg = [
+                    w for w in motif_right if w.get("ALT") != alt_for_motif_right_gg
+                ]
+                motif_right = gg_in_allowed + non_gg
+            motif_right = _prioritize_frameshift_and_dedupe(motif_right)
+        else:
+            if any(
+                _gg_word_match(w.get("ALT"), alt_for_motif_right_gg)
+                for w in motif_right
+            ):
+                motif_right = [
+                    w for w in motif_right if w["Motif"] not in exclude_motifs_right
+                ]
+                motif_right = _prioritize_frameshift_and_dedupe(motif_right)
+                if any(w["Motif"] in motifs_for_alt_gg for w in motif_right):
+                    motif_right = [
+                        w for w in motif_right if w["Motif"] in motifs_for_alt_gg
+                    ]
+
+        combined = motif_right + motif_left
+        combined = [
+            w for w in combined if w.get("ALT") not in exclude_alts_combined
+        ]
+        combined = [
+            w for w in combined if w.get("Motif") not in exclude_motifs_combined
+        ]
+        for w in combined:
+            combined_idx.add(w["_oidx"])
+            final_by_idx[w["_oidx"]] = w
 
     out = []
-    for row in rows:
-        next_row = dict(row)
-        motifs = str(next_row.get("Motifs") or next_row.get("CHROM") or "")
-        parts = motifs.split("-")
-        if len(parts) != 2:
-            out.append(next_row)
-            continue
-
-        pos = int(_float(next_row.get("POS", 0)))
-        left, right = parts
-        is_right_motif = pos >= position_threshold
-        motif = left if is_right_motif else right
-        next_row["Motifs"] = motifs
-        next_row["Motif_fasta"] = motifs
-        next_row["POS_fasta"] = pos
-        next_row["Motif"] = motif
-
-        passes = bool(next_row.get("is_valid_frameshift"))
-        if is_right_motif and motif in exclude_motifs_right:
-            passes = False
-        if is_right_motif and next_row.get("ALT") == alt_for_motif_right_gg and motif not in motifs_for_alt_gg:
-            passes = False
-        if next_row.get("ALT") in exclude_alts_combined:
-            passes = False
-        if motif in exclude_motifs_combined:
-            passes = False
-
-        next_row["motif_filter_pass"] = passes
+    for nr in annotated:
+        next_row = dict(nr)
+        oidx = next_row.pop("_oidx")
+        pos = next_row.pop("_pos")
+        survived = oidx in combined_idx
+        next_row["motif_filter_pass"] = bool(
+            survived and bool(next_row.get("is_valid_frameshift"))
+        )
+        if survived:
+            winner = final_by_idx[oidx]
+            next_row["Motif"] = winner.get("Motif")
+            next_row["Motif_fasta"] = winner.get(
+                "Motif_fasta", next_row.get("Motif_fasta")
+            )
+            next_row["POS_fasta"] = pos
+        else:
+            next_row.setdefault("Motif", None)
+            next_row.setdefault("POS_fasta", pos)
         out.append(next_row)
     return out
 

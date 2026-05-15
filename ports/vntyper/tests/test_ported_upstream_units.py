@@ -199,12 +199,28 @@ class PortedUpstreamUnitTests(unittest.TestCase):
 
         out = vntyper_port.motif_filter_and_annotate(rows)
 
+        # Upstream `motif_correction_and_annotation` semantics:
+        # left motif (POS < 60) takes the right token, right motif
+        # (POS >= 60) takes the left token. With the default config
+        # `motifs_for_alt_gg` is empty, so upstream's legacy GG branch
+        # does NOT restrict to allowed motifs (the `.any()` guard is
+        # False) — a `G>GG` frameshift in a non-excluded right motif is
+        # kept. The previous expectations here encoded the old per-row
+        # approximation's bug, which dropped exactly that variant (the
+        # canonical MUC1 dup, e.g. 66bf C-Q POS 67 G>GG).
         self.assertEqual(out[0]["Motif"], "E")
         self.assertTrue(out[0]["motif_filter_pass"])
         self.assertEqual(out[1]["Motif"], "5")
         self.assertTrue(out[1]["motif_filter_pass"])
-        self.assertFalse(out[2]["motif_filter_pass"])
-        self.assertNotIn("motif_filter_pass", out[3])
+        # 5-X POS 67 G>GG: right motif "5", GG kept (motifs_for_alt_gg
+        # empty => no restriction). Upstream keeps it; old code wrongly
+        # rejected it.
+        self.assertEqual(out[2]["Motif"], "5")
+        self.assertTrue(out[2]["motif_filter_pass"])
+        # "MUC1" has no dash; upstream pads the split (Motif_left="MUC1",
+        # Motif_right=None) and still annotates motif_filter_pass.
+        self.assertEqual(out[3]["Motif"], "MUC1")
+        self.assertTrue(out[3]["motif_filter_pass"])
 
 
 if __name__ == "__main__":
