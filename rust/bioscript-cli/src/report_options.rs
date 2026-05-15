@@ -255,8 +255,36 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
             input_inspection.inferred_sex = Some(explicit_sample_sex_inference(sample_sex));
         }
         let input_loader = loader_with_inspection(&options.loader, &input_inspection);
-        let store = GenotypeStore::from_file_with_options(input_file, &input_loader)
-            .map_err(|err| err.to_string())?;
+        let store = match GenotypeStore::from_file_with_options(input_file, &input_loader) {
+            Ok(store) => store,
+            Err(err) => {
+                // Aligned inputs (BAM, or a CRAM we can't pileup without a
+                // reference) can't always be genotyped here: BAM variant
+                // lookup is unimplemented and a reference-compressed CRAM
+                // needs --reference-file. For an advanced assay the analysis
+                // consumes the raw aligned reads directly (e.g. VNtyper runs
+                // Kestrel over the MUC1 slice), so per-variant genotyping is
+                // best-effort enrichment, not a hard gate. Degrade to an
+                // empty store — variant members report as missing (a valid
+                // partial result) — instead of aborting the whole report.
+                let is_aligned = matches!(
+                    input_inspection.detected_kind,
+                    bioscript_formats::DetectedKind::AlignmentBam
+                        | bioscript_formats::DetectedKind::AlignmentCram
+                );
+                if is_aligned {
+                    eprintln!(
+                        "bioscript: variant genotyping unavailable for aligned \
+                         input {} ({err}); continuing with analyses only — \
+                         variant members reported as missing",
+                        input_file.display()
+                    );
+                    GenotypeStore::empty()
+                } else {
+                    return Err(err.to_string());
+                }
+            }
+        };
         let analysis_runner = CliReportAnalysisRunner {
             runtime_root: &options.root,
             input_file,

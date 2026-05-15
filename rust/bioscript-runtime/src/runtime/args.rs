@@ -81,6 +81,98 @@ pub(crate) fn optional_string_kwarg(
     Ok(found)
 }
 
+pub(crate) fn optional_int_kwarg(
+    kwargs: &[(MontyObject, MontyObject)],
+    name: &str,
+    function_name: &str,
+) -> Result<Option<i64>, RuntimeError> {
+    let mut found = None;
+    for (key, value) in kwargs {
+        let MontyObject::String(key) = key else {
+            return Err(RuntimeError::InvalidArguments(format!(
+                "{function_name} keyword names must be strings"
+            )));
+        };
+        if key == name {
+            if found.is_some() {
+                return Err(RuntimeError::InvalidArguments(format!(
+                    "{function_name} got duplicate keyword argument {name}"
+                )));
+            }
+            let MontyObject::Int(value) = value else {
+                return Err(RuntimeError::InvalidArguments(format!(
+                    "{function_name} expected keyword {name} to be int"
+                )));
+            };
+            found = Some(*value);
+        }
+    }
+    Ok(found)
+}
+
+pub(crate) fn optional_float_kwarg(
+    kwargs: &[(MontyObject, MontyObject)],
+    name: &str,
+    function_name: &str,
+) -> Result<Option<f64>, RuntimeError> {
+    let mut found = None;
+    for (key, value) in kwargs {
+        let MontyObject::String(key) = key else {
+            return Err(RuntimeError::InvalidArguments(format!(
+                "{function_name} keyword names must be strings"
+            )));
+        };
+        if key == name {
+            if found.is_some() {
+                return Err(RuntimeError::InvalidArguments(format!(
+                    "{function_name} got duplicate keyword argument {name}"
+                )));
+            }
+            // Accept int literals where a float is expected (e.g. 7 -> 7.0).
+            let parsed = match value {
+                MontyObject::Float(value) => *value,
+                MontyObject::Int(value) => *value as f64,
+                _ => {
+                    return Err(RuntimeError::InvalidArguments(format!(
+                        "{function_name} expected keyword {name} to be a number"
+                    )));
+                }
+            };
+            found = Some(parsed);
+        }
+    }
+    Ok(found)
+}
+
+pub(crate) fn optional_bool_kwarg(
+    kwargs: &[(MontyObject, MontyObject)],
+    name: &str,
+    function_name: &str,
+) -> Result<Option<bool>, RuntimeError> {
+    let mut found = None;
+    for (key, value) in kwargs {
+        let MontyObject::String(key) = key else {
+            return Err(RuntimeError::InvalidArguments(format!(
+                "{function_name} keyword names must be strings"
+            )));
+        };
+        if key == name {
+            if found.is_some() {
+                return Err(RuntimeError::InvalidArguments(format!(
+                    "{function_name} got duplicate keyword argument {name}"
+                )));
+            }
+            let MontyObject::Bool(value) = value else {
+                return Err(RuntimeError::InvalidArguments(format!(
+                    "{function_name} expected keyword {name} to be bool"
+                )));
+            };
+            found = Some(*value);
+        }
+    }
+    Ok(found)
+}
+
 pub(crate) fn reject_unknown_kwargs(
     kwargs: &[(MontyObject, MontyObject)],
     allowed: &[&str],

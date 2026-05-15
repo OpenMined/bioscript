@@ -85,10 +85,15 @@ fn annotates_and_filters_vntyper_motif_fields_like_python_port() {
         rows[1].get("motif_filter_pass").map(String::as_str),
         Some("True")
     );
+    // Upstream-faithful motif_correction keeps a `G>GG` right-motif
+    // insertion in a non-excluded motif (MOTIFS_FOR_ALT_GG is empty, so the
+    // legacy GG `.any()` guard does not restrict). This is the canonical
+    // MUC1 dup; the old per-row approximation wrongly rejected it.
     assert_eq!(
         rows[2].get("motif_filter_pass").map(String::as_str),
-        Some("False")
+        Some("True")
     );
+    // Not a valid frameshift (delta = +5), so it fails regardless of motif.
     assert_eq!(
         rows[3].get("motif_filter_pass").map(String::as_str),
         Some("False")

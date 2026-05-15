@@ -20,6 +20,17 @@ impl RsidMapBackend {
         &self,
         variant: &VariantSpec,
     ) -> Result<VariantObservation, RuntimeError> {
+        // An empty map (e.g. `GenotypeStore::empty()`, used as the
+        // best-effort fallback for aligned inputs whose variants can't be
+        // genotyped here) can never resolve anything — return missing
+        // rather than refusing a coordinate lookup over assembly ambiguity.
+        if self.values.is_empty() && self.locus_values.is_empty() {
+            return Ok(VariantObservation {
+                backend: self.backend_name().to_owned(),
+                evidence: vec!["no genotype data available".to_owned()],
+                ..VariantObservation::default()
+            });
+        }
         for rsid in &variant.rsids {
             if let Some(value) = self.values.get(rsid) {
                 let mut evidence = vec![format!("resolved by rsid {rsid}")];
