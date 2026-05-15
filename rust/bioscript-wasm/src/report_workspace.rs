@@ -40,7 +40,6 @@ impl PackageWorkspace {
         load_variant_manifest_text(path, self.text(path)?)
             .map_err(|err| JsError::new(&format!("load variant {path}: {err}")))
     }
-
 }
 
 impl bioscript_reporting::ManifestWorkspace for PackageWorkspace {

@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -284,6 +285,7 @@ pub fn collect_variant_manifest_tasks(
                     }
                 }
             }
+            dedupe_variant_manifest_tasks(&mut tasks);
             Ok(tasks)
         }
         ReportManifestKind::Assay => {
@@ -305,9 +307,15 @@ pub fn collect_variant_manifest_tasks(
                     }
                 }
             }
+            dedupe_variant_manifest_tasks(&mut tasks);
             Ok(tasks)
         }
     }
+}
+
+fn dedupe_variant_manifest_tasks(tasks: &mut Vec<VariantManifestTask>) {
+    let mut seen = BTreeSet::new();
+    tasks.retain(|task| seen.insert(task.manifest_path.clone()));
 }
 
 fn load_variant_task(
@@ -802,6 +810,62 @@ analyses:
         let variant_tasks = collect_variant_manifest_tasks(&workspace, "rs1.yaml", &[]).unwrap();
         assert_eq!(variant_tasks.len(), 1);
         assert_eq!(variant_tasks[0].manifest.name, "rs1");
+    }
+
+    #[test]
+    fn collect_variant_manifest_tasks_dedupes_catalogue_reached_through_panel_and_assay() {
+        let workspace = MapWorkspace {
+            files: BTreeMap::from([
+                (
+                    "panel.yaml".to_owned(),
+                    r#"
+schema: bioscript:panel:1.0
+version: "1.0"
+name: panel
+members:
+  - kind: variant-catalogue
+    path: catalogue.yaml
+  - kind: assay
+    path: assay.yaml
+"#
+                    .to_owned(),
+                ),
+                (
+                    "assay.yaml".to_owned(),
+                    r#"
+schema: bioscript:assay:1.0
+version: "1.0"
+name: assay
+members:
+  - kind: variant-catalogue
+    path: catalogue.yaml
+"#
+                    .to_owned(),
+                ),
+                (
+                    "catalogue.yaml".to_owned(),
+                    r#"
+schema: bioscript:variant-catalogue:1.0
+version: "1.0"
+name: catalogue
+variants:
+  source: variants.tsv
+"#
+                    .to_owned(),
+                ),
+                (
+                    "variants.tsv".to_owned(),
+                    r#"id	name	rsid	gene	ref	alt	kind	grch38_chrom	grch38_pos
+rs1	rs1	rs1	GENE	A	G	snp	1	123
+"#
+                    .to_owned(),
+                ),
+            ]),
+        };
+
+        let tasks = collect_variant_manifest_tasks(&workspace, "panel.yaml", &[]).unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].manifest_path, "catalogue.yaml#rs1");
     }
 
     #[test]

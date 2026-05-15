@@ -10,6 +10,7 @@ use zip::ZipArchive;
 use bioscript_core::{RuntimeError, VariantObservation, VariantSpec};
 
 mod backends;
+mod cache;
 mod common;
 mod cram_backend;
 mod delimited;
@@ -19,6 +20,7 @@ mod types;
 mod vcf;
 mod vcf_tokens;
 
+pub(crate) use cache::{match_cached_observation, required_cache_miss};
 pub(crate) use common::{describe_query, normalize_genotype, variant_sort_key};
 pub use cram_backend::{
     observe_cram_deletion_with_reader, observe_cram_indel_with_reader, observe_cram_snp_with_reader,
@@ -27,14 +29,17 @@ pub(crate) use delimited::{
     COMMENT_PREFIXES, DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row,
 };
 use delimited::{RowParser, scan_delimited_variants};
-use io::{detect_source_format, is_bgzf_path, read_lines_from_reader, select_zip_entry};
+use io::{
+    detect_source_format, is_bgzf_path, looks_like_vcf_lines, read_lines_from_reader,
+    select_zip_entry,
+};
 pub use types::{
     BackendCapabilities, GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind,
 };
 use types::{CramBackend, DelimitedBackend, QueryBackend, RsidMapBackend, VcfBackend};
 pub use vcf::{
-    choose_variant_locus_for_assembly, imputed_reference_observation, observe_vcf_snp_with_reader,
-    observe_vcf_variant_with_reader,
+    choose_variant_locus_for_assembly, detect_vcf_assembly, imputed_reference_observation,
+    observe_vcf_snp_with_reader, observe_vcf_variant_with_reader,
 };
 use vcf::{lookup_indexed_vcf_variants, scan_vcf_variants};
 pub(crate) use vcf_tokens::genotype_from_vcf_gt;
@@ -119,12 +124,16 @@ impl GenotypeStore {
     }
 
     pub fn from_bytes(name: &str, bytes: &[u8]) -> Result<Self, RuntimeError> {
+        // The report pipeline hands us a fixed virtual path (`/input/genotypes`)
+        // with no extension, so we cannot rely on `name` alone for format
+        // detection the way `from_file_with_options` can. Sniff the leading
+        // bytes so a zip/VCF payload is recognised regardless of the name.
         let lower = name.to_ascii_lowercase();
-        if lower.ends_with(".zip") {
+        if lower.ends_with(".zip") || bytes_look_like_zip(bytes) {
             return Self::from_zip_bytes(name, bytes);
         }
         let reader = BufReader::new(Cursor::new(bytes));
-        if lower.ends_with(".vcf") {
+        if lower.ends_with(".vcf") || bytes_look_like_vcf(bytes) {
             return Self::from_vcf_reader(reader, name);
         }
         Self::from_delimited_reader(GenotypeSourceFormat::Text, reader, name)
@@ -425,68 +434,17 @@ impl GenotypeStore {
     }
 }
 
-/// Match a `VariantSpec` against a pre-resolved observation list. Tries rsid
-/// equality first (most common case for `PGx` panels), then falls back to a
-/// chrom+pos+ref+alt match against either `GRCh37` or `GRCh38` loci so cached
-/// observations from a CRAM lookup (which may have been done on one assembly)
-/// can satisfy a script that supplies the spec on the other.
-fn match_cached_observation<'a>(
-    observations: &'a [VariantObservation],
-    spec: &VariantSpec,
-) -> Option<&'a VariantObservation> {
-    if let Some(matched) = observations.iter().find(|obs| {
-        obs.matched_rsid
-            .as_deref()
-            .is_some_and(|rsid| spec.rsids.iter().any(|target| target == rsid))
-    }) {
-        return Some(matched);
-    }
-    let assembly_loci = [spec.grch37.as_ref(), spec.grch38.as_ref()]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-    let target_ref = spec.reference.as_deref();
-    let target_alt = spec.alternate.as_deref();
-    observations.iter().find(|obs| {
-        let evidence_match = assembly_loci.iter().any(|loci| {
-            obs.evidence
-                .iter()
-                .any(|line| line.contains(&loci.chrom) && line.contains(&loci.start.to_string()))
-        });
-        if !evidence_match {
-            return false;
-        }
-        match (target_ref, target_alt) {
-            (Some(r), Some(a)) => obs
-                .evidence
-                .iter()
-                .any(|line| line.contains(r) && line.contains(a)),
-            _ => true,
-        }
-    })
+fn bytes_look_like_zip(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"PK\x03\x04")
+        || bytes.starts_with(b"PK\x05\x06")
+        || bytes.starts_with(b"PK\x07\x08")
 }
 
-fn required_cache_miss(spec: &VariantSpec) -> RuntimeError {
-    let rsids = if spec.rsids.is_empty() {
-        "<none>".to_owned()
-    } else {
-        spec.rsids.join("|")
-    };
-    let loci = [
-        spec.grch37
-            .as_ref()
-            .map(|locus| format!("grch37:{}:{}-{}", locus.chrom, locus.start, locus.end)),
-        spec.grch38
-            .as_ref()
-            .map(|locus| format!("grch38:{}:{}-{}", locus.chrom, locus.start, locus.end)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(",");
-    RuntimeError::InvalidArguments(format!(
-        "required preloaded genotype observation missing for rsids={rsids} loci={loci}"
-    ))
+fn bytes_look_like_vcf(bytes: &[u8]) -> bool {
+    let prefix = &bytes[..bytes.len().min(8192)];
+    let text = String::from_utf8_lossy(prefix);
+    let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    looks_like_vcf_lines(&lines)
 }
 
 #[cfg(test)]

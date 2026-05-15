@@ -28,7 +28,8 @@ mod report_workspace;
 
 use report_helpers::*;
 use report_input_inspection::{
-    explicit_sex_from_options, inspect_head_via_js_reader, vcf_sex_via_js_reader,
+    detect_vcf_assembly_via_js_reader, explicit_sex_from_options, inspect_head_via_js_reader,
+    vcf_sex_via_js_reader,
 };
 use report_lookup::{BamReportLookup, CramReportLookup, VcfReportLookup};
 use report_workspace::PackageWorkspace;
@@ -388,6 +389,10 @@ pub fn run_package_report_from_vcf(
         &options.inspect_options(false),
         false,
     );
+    if head_inspection.assembly.is_none() {
+        head_inspection.assembly =
+            detect_vcf_assembly_via_js_reader(vcf_read_at.clone(), vcf_len as u64, input_name);
+    }
     let tabix_index = bioscript_formats::alignment::parse_tbi_bytes(tbi_bytes)
         .map_err(|err| JsError::new(&format!("parse tbi: {err:?}")))?;
     let vcf_reader = JsReader::new(vcf_read_at.clone(), vcf_len as u64, "vcf");
