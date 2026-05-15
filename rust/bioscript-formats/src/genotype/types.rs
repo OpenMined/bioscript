@@ -35,6 +35,7 @@ pub(crate) struct RsidMapBackend {
     pub(crate) format: GenotypeSourceFormat,
     pub(crate) values: HashMap<String, String>,
     pub(crate) locus_values: HashMap<(String, i64), (String, Option<String>, String)>,
+    pub(crate) assembly: Option<Assembly>,
     /// Original input line per rsid, retained so wasm-side `from_bytes` loads
     /// can emit the same `| source line: …` evidence that the CLI's
     /// path-backed `DelimitedBackend` does on every lookup. Empty for
@@ -47,6 +48,7 @@ pub(crate) struct DelimitedBackend {
     pub(crate) format: GenotypeSourceFormat,
     pub(crate) path: PathBuf,
     pub(crate) zip_entry_name: Option<String>,
+    pub(crate) options: GenotypeLoadOptions,
 }
 
 #[derive(Debug, Clone)]

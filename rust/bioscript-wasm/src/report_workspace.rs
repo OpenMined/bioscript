@@ -40,6 +40,7 @@ impl PackageWorkspace {
         load_variant_manifest_text(path, self.text(path)?)
             .map_err(|err| JsError::new(&format!("load variant {path}: {err}")))
     }
+
 }
 
 impl bioscript_reporting::ManifestWorkspace for PackageWorkspace {
@@ -68,11 +69,26 @@ impl bioscript_reporting::ReportWorkspace for PackageWorkspace {
         fallback_assembly: Option<Assembly>,
     ) -> Result<serde_json::Value, String> {
         let row_path = row.get("path").cloned().unwrap_or_default();
-        let manifest = self
-            .load_variant(&row_path)
-            .map_err(|err| format!("{err:?}"))?;
-        let value = self.yaml(&row_path).map_err(|err| format!("{err:?}"))?;
-        let gene = yaml_string(&value, "gene").unwrap_or_default();
+        let (manifest, gene, source, observed_alt_alleles) = if row_path.contains('#') {
+            let task = bioscript_reporting::load_variant_manifest_task_by_path(self, &row_path)?;
+            (
+                task.manifest,
+                String::new(),
+                serde_json::Value::Null,
+                Vec::new(),
+            )
+        } else {
+            let manifest = self
+                .load_variant(&row_path)
+                .map_err(|err| format!("{err:?}"))?;
+            let value = self.yaml(&row_path).map_err(|err| format!("{err:?}"))?;
+            (
+                manifest,
+                yaml_string(&value, "gene").unwrap_or_default(),
+                variant_primary_source_from_yaml(&value),
+                variant_observed_alt_alleles_from_yaml(&value),
+            )
+        };
         Ok(bioscript_reporting::app_observation_from_manifest_row(
             bioscript_reporting::AppObservationInput {
                 row,
@@ -80,8 +96,8 @@ impl bioscript_reporting::ReportWorkspace for PackageWorkspace {
                 assay_id,
                 manifest,
                 gene,
-                source: variant_primary_source_from_yaml(&value),
-                observed_alt_alleles: variant_observed_alt_alleles_from_yaml(&value),
+                source,
+                observed_alt_alleles,
                 inferred_sex,
                 fallback_assembly,
             },

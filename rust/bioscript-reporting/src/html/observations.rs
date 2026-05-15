@@ -170,7 +170,7 @@ pub(super) fn render_observation_cell(
         return;
     }
     if header == "ref_alt" {
-        class_cell(out, &observation_ref_alt(observation), "mono");
+        ref_alt_cell(out, observation);
         return;
     }
     if header == "allele_balance" {
@@ -227,6 +227,15 @@ pub(super) fn render_observation_cell(
         "<td class=\"{}\">{}</td>",
         cell_class,
         html_escape(&json_field_as_tsv(observation.get(header)))
+    );
+}
+
+fn ref_alt_cell(out: &mut String, observation: &serde_json::Value) {
+    let value = observation_ref_alt(observation);
+    let escaped_value = html_escape(&value);
+    let _ = write!(
+        out,
+        "<td class=\"mono ref-alt-cell\" title=\"{escaped_value}\"><span class=\"truncate-cell\">{escaped_value}</span></td>"
     );
 }
 

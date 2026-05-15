@@ -167,18 +167,34 @@ impl ReportWorkspace for FilesystemManifestWorkspace {
         fallback_assembly: Option<Assembly>,
     ) -> Result<serde_json::Value, String> {
         let row_path = row.get("path").cloned().unwrap_or_default();
-        let text = self.load_text(&row_path)?;
-        let manifest = load_variant_manifest_text(&row_path, &text)?;
-        let value = self.load_yaml(&row_path)?;
+        let (manifest, gene, source, observed_alt_alleles) = if row_path.contains('#') {
+            let task = crate::load_variant_manifest_task_by_path(self, &row_path)?;
+            (
+                task.manifest,
+                String::new(),
+                serde_json::Value::Null,
+                Vec::new(),
+            )
+        } else {
+            let text = self.load_text(&row_path)?;
+            let manifest = load_variant_manifest_text(&row_path, &text)?;
+            let value = self.load_yaml(&row_path)?;
+            (
+                manifest,
+                yaml_string(&value, "gene").unwrap_or_default(),
+                variant_primary_source_from_yaml(&value)?,
+                variant_observed_alt_alleles_from_yaml(&value),
+            )
+        };
         Ok(app_observation_from_manifest_row(
             crate::AppObservationInput {
                 row,
                 row_path: &row_path,
                 assay_id,
                 manifest,
-                gene: yaml_string(&value, "gene").unwrap_or_default(),
-                source: variant_primary_source_from_yaml(&value)?,
-                observed_alt_alleles: variant_observed_alt_alleles_from_yaml(&value),
+                gene,
+                source,
+                observed_alt_alleles,
                 inferred_sex,
                 fallback_assembly,
             },

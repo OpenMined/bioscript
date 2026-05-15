@@ -27,9 +27,10 @@ pub use manifest::{
     VariantManifestTask, assay_executable_member, assay_executable_member_path,
     collect_analysis_manifest_tasks, collect_manifest_provenance_entries,
     collect_variant_manifest_tasks, load_manifest_findings, load_manifest_provenance_links,
-    load_report_manifest_context, matches_analysis_path_filters, matches_variant_manifest_filters,
-    panel_executable_member, panel_executable_member_path, report_assay_id, report_manifest_kind,
-    report_manifest_metadata, report_manifest_schema, resolve_filesystem_manifest_path,
+    load_report_manifest_context, load_variant_manifest_task_by_path,
+    matches_analysis_path_filters, matches_variant_manifest_filters, panel_executable_member,
+    panel_executable_member_path, report_assay_id, report_manifest_kind, report_manifest_metadata,
+    report_manifest_schema, resolve_filesystem_manifest_path,
 };
 pub use matching::match_app_findings;
 pub use observation::{AppObservationInput, app_observation_from_manifest_row};

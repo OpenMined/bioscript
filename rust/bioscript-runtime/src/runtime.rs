@@ -134,7 +134,16 @@ impl BioscriptRuntime {
             "__file__",
             MontyObject::String(script_path.display().to_string()),
         ));
-        extra_inputs.push(("bioscript", bioscript_object()));
+        extra_inputs.push((
+            "bioscript",
+            bioscript_object(MontyObject::Dict(
+                self.config
+                    .context
+                    .iter()
+                    .map(|(key, value)| (MontyObject::String(key.clone()), value.clone()))
+                    .collect(),
+            )),
+        ));
 
         let result = self.run_script(
             &instrumented,
@@ -247,8 +256,10 @@ impl BioscriptRuntime {
             ("Bioscript", "variant") => self.method_variant(args, kwargs),
             ("Bioscript", "query_plan") => self.method_query_plan(args, kwargs),
             ("Bioscript", "write_tsv") => self.method_write_tsv(args, kwargs),
+            ("Bioscript", "read_tsv") => self.method_read_tsv(args, kwargs),
             ("Bioscript", "read_text") => self.method_read_text(args, kwargs),
             ("Bioscript", "write_text") => self.method_write_text(args, kwargs),
+            ("Bioscript", "exists") => self.method_exists(args, kwargs),
             ("GenotypeFile", "get") => self.method_genotype_get(args, kwargs),
             ("GenotypeFile", "lookup_variant") => self.method_genotype_lookup_variant(args, kwargs),
             ("GenotypeFile", "lookup_variant_details") => {
@@ -281,6 +292,19 @@ impl BioscriptRuntime {
     fn resolve_user_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
         let path = Path::new(raw_path);
         if path.is_absolute() {
+            if self.uses_virtual_files() {
+                for component in path.components() {
+                    match component {
+                        Component::ParentDir | Component::Prefix(_) => {
+                            return Err(RuntimeError::InvalidArguments(format!(
+                                "path escapes bioscript root: {raw_path}"
+                            )));
+                        }
+                        Component::RootDir | Component::CurDir | Component::Normal(_) => {}
+                    }
+                }
+                return Ok(path.to_path_buf());
+            }
             return Err(RuntimeError::InvalidArguments(format!(
                 "absolute paths are not allowed: {raw_path}"
             )));
@@ -303,6 +327,11 @@ impl BioscriptRuntime {
         if self.virtual_file_exists(raw_path) {
             return Ok(path);
         }
+        if self.uses_virtual_files() && Path::new(raw_path).is_absolute() {
+            return Err(RuntimeError::Io(format!(
+                "virtual file does not exist: {raw_path}"
+            )));
+        }
         let canonical = path.canonicalize().map_err(|err| {
             RuntimeError::Io(format!("failed to resolve {}: {err}", path.display()))
         })?;
@@ -313,6 +342,13 @@ impl BioscriptRuntime {
     fn resolve_user_write_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
         let path = self.resolve_user_path(raw_path)?;
         if self.uses_virtual_files() {
+            if Path::new(raw_path).is_absolute()
+                && !(raw_path.starts_with("/output/") || raw_path.starts_with("/work/"))
+            {
+                return Err(RuntimeError::InvalidArguments(format!(
+                    "virtual write path must be under /work or /output: {raw_path}"
+                )));
+            }
             return Ok(path);
         }
         if path.exists() {
@@ -773,7 +809,7 @@ mod tests {
         )
         .unwrap();
         let runtime = BioscriptRuntime::new(&root).unwrap();
-        let bioscript = bioscript_object();
+        let bioscript = bioscript_object(MontyObject::Dict(Vec::new().into()));
 
         let genotype = runtime
             .method_load_genotypes(
@@ -853,7 +889,7 @@ mod tests {
     fn runtime_private_methods_cover_successful_text_tsv_and_trace_paths() {
         let root = temp_dir("host-output");
         let runtime = BioscriptRuntime::new(&root).unwrap();
-        let bioscript = bioscript_object();
+        let bioscript = bioscript_object(MontyObject::Dict(Vec::new().into()));
         let rows = MontyObject::List(vec![MontyObject::Dict(
             vec![
                 (

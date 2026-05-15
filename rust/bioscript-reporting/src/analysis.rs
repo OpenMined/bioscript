@@ -325,6 +325,7 @@ mod tests {
             output_format: None,
             derived_from: Vec::new(),
             emits: Vec::new(),
+            assets: Vec::new(),
             logic: None,
         };
 
@@ -355,6 +356,7 @@ mod tests {
             output_format: Some("tsv".to_owned()),
             derived_from: vec!["rs429358.yaml".to_owned()],
             emits: Vec::new(),
+            assets: Vec::new(),
             logic: Some(PanelInterpretationLogic {
                 description: Some("APOE logic".to_owned()),
                 source: Some(PanelInterpretationLogicSource {

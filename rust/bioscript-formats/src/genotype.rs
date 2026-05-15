@@ -91,6 +91,7 @@ impl GenotypeStore {
                 format: GenotypeSourceFormat::Text,
                 values: HashMap::new(),
                 locus_values: HashMap::new(),
+                assembly: None,
                 source_lines: HashMap::new(),
             }),
         }
@@ -105,8 +106,9 @@ impl GenotypeStore {
                 path,
                 GenotypeSourceFormat::Text,
                 None,
+                options,
             )),
-            GenotypeSourceFormat::Zip => Self::from_zip_file(path),
+            GenotypeSourceFormat::Zip => Self::from_zip_file(path, options),
             GenotypeSourceFormat::Vcf => Ok(Self::from_vcf_file(path, options)),
             GenotypeSourceFormat::Cram => Self::from_cram_file(path, options),
             GenotypeSourceFormat::Bam => Err(RuntimeError::Unsupported(format!(
@@ -183,7 +185,7 @@ impl GenotypeStore {
         }
     }
 
-    fn from_zip_file(path: &Path) -> Result<Self, RuntimeError> {
+    fn from_zip_file(path: &Path, options: &GenotypeLoadOptions) -> Result<Self, RuntimeError> {
         let selected = select_zip_entry(path)?;
         let lower = selected.to_ascii_lowercase();
         if lower.ends_with(".vcf") || lower.ends_with(".vcf.gz") {
@@ -212,6 +214,7 @@ impl GenotypeStore {
             path,
             GenotypeSourceFormat::Zip,
             Some(selected),
+            options,
         ))
     }
 
@@ -244,12 +247,14 @@ impl GenotypeStore {
         path: &Path,
         format: GenotypeSourceFormat,
         zip_entry_name: Option<String>,
+        options: &GenotypeLoadOptions,
     ) -> Self {
         Self {
             backend: QueryBackend::Delimited(DelimitedBackend {
                 format,
                 path: path.to_path_buf(),
                 zip_entry_name,
+                options: options.clone(),
             }),
         }
     }
@@ -1172,6 +1177,10 @@ mod tests {
             format: GenotypeSourceFormat::Text,
             path: text.clone(),
             zip_entry_name: None,
+            options: GenotypeLoadOptions {
+                assembly: Some(Assembly::Grch38),
+                ..GenotypeLoadOptions::default()
+            },
         };
         let variants = vec![
             VariantSpec {
@@ -1202,6 +1211,21 @@ mod tests {
                 .genotype
                 .as_deref(),
             Some("CT")
+        );
+
+        let unknown_assembly_backend = DelimitedBackend {
+            format: GenotypeSourceFormat::Text,
+            path: text.clone(),
+            zip_entry_name: None,
+            options: GenotypeLoadOptions::default(),
+        };
+        let unknown_assembly_err =
+            scan_delimited_variants(&unknown_assembly_backend, &variants[1..2]).unwrap_err();
+        assert!(
+            unknown_assembly_err
+                .to_string()
+                .contains("delimited genotype input assembly is unknown"),
+            "{unknown_assembly_err}"
         );
 
         let zip_path = dir.join("sample.zip");
@@ -1248,8 +1272,9 @@ mod tests {
 
         let unsupported_backend = DelimitedBackend {
             format: GenotypeSourceFormat::Vcf,
-            path: text,
+            path: text.clone(),
             zip_entry_name: None,
+            options: GenotypeLoadOptions::default(),
         };
         let err = scan_delimited_variants(&unsupported_backend, &variants).unwrap_err();
         assert!(
@@ -1450,6 +1475,7 @@ mod tests {
             format: GenotypeSourceFormat::Zip,
             path: zip_path.clone(),
             zip_entry_name: None,
+            options: GenotypeLoadOptions::default(),
         };
         let err = scan_delimited_variants(&bad_zip_backend, &[VariantSpec::default()]).unwrap_err();
         assert!(
@@ -1462,6 +1488,7 @@ mod tests {
             format: GenotypeSourceFormat::Zip,
             path: zip_path,
             zip_entry_name: Some("missing.csv".to_owned()),
+            options: GenotypeLoadOptions::default(),
         };
         let err =
             scan_delimited_variants(&bad_entry_backend, &[VariantSpec::default()]).unwrap_err();
@@ -1474,6 +1501,7 @@ mod tests {
             format: GenotypeSourceFormat::Text,
             path: dir.join("missing.txt"),
             zip_entry_name: None,
+            options: GenotypeLoadOptions::default(),
         };
         let err =
             scan_delimited_variants(&missing_text_backend, &[VariantSpec::default()]).unwrap_err();

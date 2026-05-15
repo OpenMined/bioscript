@@ -8,14 +8,25 @@ use bioscript_schema::{
     load_variant_manifest_text,
 };
 
+#[path = "manifest_catalogue.rs"]
+mod catalogue;
+#[path = "manifest_members.rs"]
+mod members;
 #[path = "manifest_provenance.rs"]
 mod provenance;
 
+use catalogue::load_variant_catalogue_tasks;
+pub(crate) use members::traversable_manifest_member_paths;
+pub use members::{
+    ExecutableAssayMember, ExecutablePanelMember, assay_executable_member,
+    assay_executable_member_path, panel_executable_member, panel_executable_member_path,
+};
 pub use provenance::{collect_manifest_provenance_entries, load_manifest_provenance_links};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportManifestKind {
     Variant,
+    VariantCatalogue,
     Panel,
     Assay,
 }
@@ -23,6 +34,7 @@ pub enum ReportManifestKind {
 pub fn report_manifest_kind(schema: &str) -> Result<ReportManifestKind, String> {
     match schema {
         "bioscript:variant:1.0" | "bioscript:variant" => Ok(ReportManifestKind::Variant),
+        "bioscript:variant-catalogue:1.0" => Ok(ReportManifestKind::VariantCatalogue),
         "bioscript:panel:1.0" => Ok(ReportManifestKind::Panel),
         "bioscript:assay:1.0" => Ok(ReportManifestKind::Assay),
         other => Err(format!("unsupported manifest schema '{other}'")),
@@ -220,7 +232,7 @@ pub fn collect_analysis_manifest_tasks(
                 interpretations: manifest.interpretations,
             }])
         }
-        ReportManifestKind::Variant => Ok(Vec::new()),
+        ReportManifestKind::Variant | ReportManifestKind::VariantCatalogue => Ok(Vec::new()),
     }
 }
 
@@ -244,6 +256,9 @@ pub fn collect_variant_manifest_tasks(
                 manifest,
             }])
         }
+        ReportManifestKind::VariantCatalogue => {
+            load_variant_catalogue_tasks(workspace, path, filters)
+        }
         ReportManifestKind::Panel => {
             let text = workspace.load_text(path)?;
             let manifest = load_panel_manifest_text(path, &text)?;
@@ -256,6 +271,10 @@ pub fn collect_variant_manifest_tasks(
                         if matches_variant_manifest_filters(&variant.manifest, &resolved, filters) {
                             tasks.push(variant);
                         }
+                    }
+                    ExecutablePanelMember::VariantCatalogue(member_path) => {
+                        let resolved = workspace.resolve(path, member_path)?;
+                        tasks.extend(load_variant_catalogue_tasks(workspace, &resolved, filters)?);
                     }
                     ExecutablePanelMember::Assay(member_path) => {
                         let resolved = workspace.resolve(path, member_path)?;
@@ -280,6 +299,10 @@ pub fn collect_variant_manifest_tasks(
                             tasks.push(variant);
                         }
                     }
+                    ExecutableAssayMember::VariantCatalogue(member_path) => {
+                        let resolved = workspace.resolve(path, member_path)?;
+                        tasks.extend(load_variant_catalogue_tasks(workspace, &resolved, filters)?);
+                    }
                 }
             }
             Ok(tasks)
@@ -297,6 +320,19 @@ fn load_variant_task(
         manifest_path: path.to_owned(),
         manifest,
     })
+}
+
+pub fn load_variant_manifest_task_by_path(
+    workspace: &impl ManifestWorkspace,
+    path: &str,
+) -> Result<VariantManifestTask, String> {
+    if let Some((catalogue_path, variant_id)) = path.rsplit_once('#') {
+        return load_variant_catalogue_tasks(workspace, catalogue_path, &[])?
+            .into_iter()
+            .find(|task| task.manifest_path == path || task.manifest.name == variant_id)
+            .ok_or_else(|| format!("variant catalogue entry not found: {path}"));
+    }
+    load_variant_task(workspace, path)
 }
 
 pub fn load_manifest_findings(
@@ -372,61 +408,6 @@ pub fn matches_analysis_path_filters(path: &str, filters: &[String]) -> bool {
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutablePanelMember<'a> {
-    Variant(&'a str),
-    Assay(&'a str),
-}
-
-pub fn panel_executable_member<'a>(
-    kind: &str,
-    path: Option<&'a str>,
-) -> Result<ExecutablePanelMember<'a>, String> {
-    let path = panel_executable_member_path(kind, path)?;
-    match kind {
-        "variant" => Ok(ExecutablePanelMember::Variant(path)),
-        "assay" => Ok(ExecutablePanelMember::Assay(path)),
-        _ => unreachable!("panel_executable_member_path validates member kind"),
-    }
-}
-
-pub fn panel_executable_member_path<'a>(
-    kind: &str,
-    path: Option<&'a str>,
-) -> Result<&'a str, String> {
-    let Some(path) = path else {
-        return Err("remote panel members are not executable yet".to_owned());
-    };
-    if !matches!(kind, "variant" | "assay") {
-        return Err(format!("panel member kind '{kind}' is not executable"));
-    }
-    Ok(path)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutableAssayMember<'a> {
-    Variant(&'a str),
-}
-pub fn assay_executable_member<'a>(
-    kind: &str,
-    path: Option<&'a str>,
-) -> Result<ExecutableAssayMember<'a>, String> {
-    let path = assay_executable_member_path(kind, path)?;
-    Ok(ExecutableAssayMember::Variant(path))
-}
-pub fn assay_executable_member_path<'a>(
-    kind: &str,
-    path: Option<&'a str>,
-) -> Result<&'a str, String> {
-    if kind != "variant" {
-        return Err(format!("assay member kind '{kind}' is not executable"));
-    }
-    let Some(path) = path else {
-        return Err("remote assay members are not executable yet".to_owned());
-    };
-    Ok(path)
-}
-
 pub(super) fn manifest_supports_findings(schema: &str) -> bool {
     matches!(
         schema,
@@ -436,34 +417,6 @@ pub(super) fn manifest_supports_findings(schema: &str) -> bool {
             | "bioscript:panel:1.0"
             | "bioscript:pgx-findings:1.0"
     )
-}
-
-fn manifest_has_traversable_members(schema: &str) -> bool {
-    matches!(schema, "bioscript:assay:1.0" | "bioscript:panel:1.0")
-}
-
-pub(super) fn traversable_manifest_member_paths<'a>(
-    schema: &str,
-    value: &'a serde_yaml::Value,
-) -> Vec<&'a str> {
-    if !manifest_has_traversable_members(schema) {
-        return Vec::new();
-    }
-    value
-        .get("members")
-        .and_then(serde_yaml::Value::as_sequence)
-        .into_iter()
-        .flatten()
-        .filter_map(traversable_manifest_member_path)
-        .collect()
-}
-
-fn traversable_manifest_member_path(member: &serde_yaml::Value) -> Option<&str> {
-    let kind = member.get("kind").and_then(serde_yaml::Value::as_str)?;
-    if !matches!(kind, "variant" | "assay") {
-        return None;
-    }
-    member.get("path").and_then(serde_yaml::Value::as_str)
 }
 
 pub(super) fn yaml_to_json(value: serde_yaml::Value) -> Result<serde_json::Value, String> {

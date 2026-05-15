@@ -6,10 +6,14 @@ use std::{
 
 use zip::ZipArchive;
 
+use crate::inspect::detect_assembly;
 use bioscript_core::{RuntimeError, VariantObservation, VariantSpec};
 
 use super::{
-    super::{GenotypeSourceFormat, describe_query, types::DelimitedBackend, variant_sort_key},
+    super::{
+        GenotypeSourceFormat, backends::delimited_locus_for_assembly, describe_query,
+        types::DelimitedBackend, variant_sort_key,
+    },
     DelimitedColumnIndexes, detect_delimiter, parse_streaming_row,
 };
 
@@ -25,11 +29,16 @@ pub(crate) fn scan_delimited_variants(
     let mut results = vec![VariantObservation::default(); variants.len()];
     let mut unresolved = variants.len();
 
+    let has_coordinate_queries = variants
+        .iter()
+        .any(|variant| variant.has_coordinates() && !variant.has_rsids());
+    let mut detected_assembly = backend.options.assembly;
+
     for (idx, variant) in &indexed {
         for rsid in &variant.rsids {
             rsid_targets.entry(rsid.clone()).or_default().push(*idx);
         }
-        if let Some(locus) = variant.grch38.as_ref().or(variant.grch37.as_ref()) {
+        if let Some(locus) = delimited_locus_for_assembly(variant, detected_assembly) {
             coord_targets
                 .entry((
                     locus.chrom.trim_start_matches("chr").to_ascii_lowercase(),
@@ -58,6 +67,32 @@ pub(crate) fn scan_delimited_variants(
         }
 
         let delimiter = detect_delimiter(&probe_lines);
+        if detected_assembly.is_none() {
+            let mut label = backend.path.to_string_lossy().to_ascii_lowercase();
+            if let Some(entry_name) = backend.zip_entry_name.as_ref() {
+                label.push('\n');
+                label.push_str(&entry_name.to_ascii_lowercase());
+            }
+            detected_assembly = detect_assembly(&label, &probe_lines);
+            if let Some(assembly) = detected_assembly {
+                for (idx, variant) in &indexed {
+                    if let Some(locus) = delimited_locus_for_assembly(variant, Some(assembly)) {
+                        coord_targets
+                            .entry((
+                                locus.chrom.trim_start_matches("chr").to_ascii_lowercase(),
+                                locus.start,
+                            ))
+                            .or_default()
+                            .push(*idx);
+                    }
+                }
+            } else if has_coordinate_queries {
+                return Err(RuntimeError::Unsupported(format!(
+                    "delimited genotype input assembly is unknown for {}; refusing coordinate lookup",
+                    backend.path.display()
+                )));
+            }
+        }
         let mut column_indexes: Option<DelimitedColumnIndexes> = None;
         let mut comment_header: Option<Vec<String>> = None;
 

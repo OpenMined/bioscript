@@ -5,7 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use bioscript_core::{VariantKind, VariantSpec};
+use bioscript_core::{Assembly, VariantKind, VariantSpec};
 use bioscript_formats::{
     GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind, alignment,
 };

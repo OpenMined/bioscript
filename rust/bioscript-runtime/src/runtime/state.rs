@@ -17,6 +17,7 @@ use bioscript_core::RuntimeError;
 pub struct RuntimeConfig {
     pub limits: ResourceLimits,
     pub loader: GenotypeLoadOptions,
+    pub context: BTreeMap<String, monty::MontyObject>,
     pub virtual_binary_files: BTreeMap<String, Vec<u8>>,
     pub virtual_text_files: BTreeMap<String, String>,
     /// Observations the host has already resolved before invoking the
@@ -38,6 +39,7 @@ impl Default for RuntimeConfig {
         Self {
             limits,
             loader: GenotypeLoadOptions::default(),
+            context: BTreeMap::new(),
             virtual_binary_files: BTreeMap::new(),
             virtual_text_files: BTreeMap::new(),
             preloaded_observations: Vec::new(),

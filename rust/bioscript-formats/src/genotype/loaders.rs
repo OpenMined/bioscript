@@ -1,6 +1,8 @@
 use std::{collections::HashMap, io::BufRead};
 
-use bioscript_core::RuntimeError;
+use bioscript_core::{Assembly, RuntimeError};
+
+use crate::inspect::detect_assembly;
 
 use super::{
     COMMENT_PREFIXES, GenotypeSourceFormat, GenotypeStore, QueryBackend, RowParser, RsidMapBackend,
@@ -28,6 +30,7 @@ pub(crate) fn from_vcf_reader<R: BufRead>(
         GenotypeSourceFormat::Vcf,
         values,
         HashMap::new(),
+        None,
         HashMap::new(),
     ))
 }
@@ -64,6 +67,7 @@ pub(crate) fn from_delimited_reader<R: BufRead>(
     }
 
     let mut parser = RowParser::new(delimiter.unwrap_or(super::Delimiter::Tab));
+    let assembly = detect_assembly(&label.to_ascii_lowercase(), &prelude);
     let mut values = HashMap::new();
     let mut locus_values = HashMap::new();
     let mut source_lines = HashMap::new();
@@ -93,7 +97,13 @@ pub(crate) fn from_delimited_reader<R: BufRead>(
         )?;
     }
 
-    Ok(from_rsid_map(format, values, locus_values, source_lines))
+    Ok(from_rsid_map(
+        format,
+        values,
+        locus_values,
+        assembly,
+        source_lines,
+    ))
 }
 
 pub(crate) fn from_vcf_lines(lines: Vec<String>) -> Result<GenotypeStore, RuntimeError> {
@@ -105,6 +115,7 @@ pub(crate) fn from_vcf_lines(lines: Vec<String>) -> Result<GenotypeStore, Runtim
         GenotypeSourceFormat::Vcf,
         values,
         HashMap::new(),
+        None,
         HashMap::new(),
     ))
 }
@@ -171,6 +182,7 @@ fn from_rsid_map(
     format: GenotypeSourceFormat,
     values: HashMap<String, String>,
     locus_values: HashMap<(String, i64), (String, Option<String>, String)>,
+    assembly: Option<Assembly>,
     source_lines: HashMap<String, String>,
 ) -> GenotypeStore {
     GenotypeStore {
@@ -178,6 +190,7 @@ fn from_rsid_map(
             format,
             values,
             locus_values,
+            assembly,
             source_lines,
         }),
     }

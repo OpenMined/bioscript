@@ -329,6 +329,14 @@ fn validate_variant_file(path: &Path) -> Result<FileReport, String> {
             }],
         });
     };
+    if schema == "bioscript:variant-catalogue:1.0" {
+        let mut issues = Vec::new();
+        validate_variant_catalogue_root(&value, &mut issues);
+        return Ok(FileReport {
+            file: path.to_path_buf(),
+            issues,
+        });
+    }
     if !schema.contains("variant") {
         if schema == "bioscript:pgx-findings:1.0" {
             let mut issues = Vec::new();

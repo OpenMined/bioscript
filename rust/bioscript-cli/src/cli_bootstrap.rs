@@ -57,13 +57,15 @@ fn run_cli() -> Result<(), String> {
     Ok(())
 }
 
-const USAGE: &str = "usage: bioscript <script.py|manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--input-file <path>] [--output-file <path>] [--participant-id <id>] [--trace-report <path>] [--timing-report <path>] [--filter key=value] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript report <manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> --input-file <path> [--input-file <path>...] --output-dir <dir> [--html] [--open] [--root <dir>] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--allow-md5-mismatch] [--detect-sex] [--sample-sex male|female|unknown] [--analysis-max-duration-ms N]\n       bioscript review <manifest.yaml|package.yaml|package.zip> --cases <cases.yaml> --output-dir <dir> [--html] [--root <dir>] [--filter key=value]\n       bioscript import-package <package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--output-dir <dir>]\n       bioscript validate-variants <path> [--report <file>]\n       bioscript validate-panels <path> [--report <file>]\n       bioscript validate-assays <path> [--report <file>]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|cram] [--cache-dir <path>]\n       bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--detect-sex]";
+const USAGE: &str = "usage: bioscript <script.py|manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--input-file <path>] [--output-file <path>] [--observations-file <path>] [--asset id=path] [--participant-id <id>] [--trace-report <path>] [--timing-report <path>] [--filter key=value] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript report <manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> --input-file <path> [--input-file <path>...] --output-dir <dir> [--html] [--open] [--root <dir>] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--allow-md5-mismatch] [--detect-sex] [--sample-sex male|female|unknown] [--analysis-max-duration-ms N]\n       bioscript review <manifest.yaml|package.yaml|package.zip> --cases <cases.yaml> --output-dir <dir> [--html] [--root <dir>] [--filter key=value]\n       bioscript import-package <package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--output-dir <dir>]\n       bioscript validate-variants <path> [--report <file>]\n       bioscript validate-panels <path> [--report <file>]\n       bioscript validate-assays <path> [--report <file>]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|cram] [--cache-dir <path>]\n       bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--detect-sex]";
 
 struct CliOptions {
     script_path: Option<PathBuf>,
     root: Option<PathBuf>,
     input_file: Option<String>,
     output_file: Option<String>,
+    observations_file: Option<String>,
+    asset_paths: BTreeMap<String, String>,
     participant_id: Option<String>,
     trace_report: Option<PathBuf>,
     timing_report: Option<PathBuf>,
@@ -107,6 +109,8 @@ fn default_cli_options() -> CliOptions {
         root: None,
         input_file: None,
         output_file: None,
+        observations_file: None,
+        asset_paths: BTreeMap::new(),
         participant_id: None,
         trace_report: None,
         timing_report: None,
@@ -167,6 +171,24 @@ fn parse_cli_path_arg(
                 return Err("--output-file requires a path".to_owned());
             };
         options.output_file = Some(value);
+    } else if arg == "--observations-file" {
+            let Some(value) = args.next() else {
+                return Err("--observations-file requires a path".to_owned());
+            };
+        options.observations_file = Some(value);
+    } else if arg == "--asset" {
+            let Some(value) = args.next() else {
+                return Err("--asset requires id=path".to_owned());
+            };
+        let Some((id, path)) = value.split_once('=') else {
+            return Err("--asset requires id=path".to_owned());
+        };
+        let id = id.trim();
+        let path = path.trim();
+        if id.is_empty() || path.is_empty() {
+            return Err("--asset requires non-empty id=path".to_owned());
+        }
+        options.asset_paths.insert(id.to_owned(), path.to_owned());
     } else if arg == "--participant-id" {
             let Some(value) = args.next() else {
                 return Err("--participant-id requires a value".to_owned());
@@ -380,6 +402,15 @@ fn run_cli_script(
     if let Some(output_file) = options.output_file {
         inputs.push(("output_file", monty::MontyObject::String(output_file)));
     }
+    if let Some(observations_file) = options.observations_file {
+        inputs.push((
+            "observations_file",
+            monty::MontyObject::String(observations_file),
+        ));
+    }
+    if !options.asset_paths.is_empty() {
+        inputs.push(("asset_paths", monty_string_dict(&options.asset_paths)));
+    }
     if let Some(participant_id) = options.participant_id {
         inputs.push(("participant_id", monty::MontyObject::String(participant_id)));
     }
@@ -393,6 +424,20 @@ fn run_cli_script(
         write_timing_report(&timing_path, &all_timings)?;
     }
     Ok(())
+}
+
+fn monty_string_dict(values: &BTreeMap<String, String>) -> monty::MontyObject {
+    monty::MontyObject::Dict(
+        values
+            .iter()
+            .map(|(key, value)| {
+                (
+                    monty::MontyObject::String(key.clone()),
+                    monty::MontyObject::String(value.clone()),
+                )
+            })
+            .collect(),
+    )
 }
 
 fn write_timing_report(path: &PathBuf, timings: &[StageTiming]) -> Result<(), String> {
