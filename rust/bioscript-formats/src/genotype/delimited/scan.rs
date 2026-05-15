@@ -29,7 +29,9 @@ pub(crate) fn scan_delimited_variants(
     let mut results = vec![VariantObservation::default(); variants.len()];
     let mut unresolved = variants.len();
 
-    let has_coordinate_queries = variants.iter().any(VariantSpec::has_coordinates);
+    let has_coordinate_queries = variants
+        .iter()
+        .any(|variant| variant.has_coordinates() && !variant.has_rsids());
     let mut detected_assembly = backend.options.assembly;
 
     for (idx, variant) in &indexed {

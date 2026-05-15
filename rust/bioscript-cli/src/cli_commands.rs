@@ -258,3 +258,178 @@ fn run_validate_assays(args: Vec<String>) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod cli_command_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!(
+            "bioscript-cli-command-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn valid_variant_yaml() -> &'static str {
+        r#"
+schema: bioscript:variant:1.0
+version: "1.0"
+name: Test variant
+gene: ABC
+identifiers:
+  rsids: [rs1]
+coordinates:
+  grch38:
+    chrom: "1"
+    pos: 100
+alleles:
+  kind: snv
+  ref: G
+  alts: [A]
+"#
+    }
+
+    #[test]
+    fn prepare_and_inspect_commands_validate_arguments() {
+        assert!(run_prepare(vec!["--root".to_owned()])
+            .unwrap_err()
+            .contains("--root requires"));
+        assert!(run_prepare(vec!["--input-file".to_owned()])
+            .unwrap_err()
+            .contains("--input-file requires"));
+        assert!(run_prepare(vec![
+            "--input-format".to_owned(),
+            "not-a-format".to_owned(),
+        ])
+        .unwrap_err()
+        .contains("invalid --input-format"));
+        assert!(run_prepare(vec!["--unexpected".to_owned()])
+            .unwrap_err()
+            .contains("unexpected argument"));
+
+        assert!(run_inspect(Vec::new()).unwrap_err().contains("usage"));
+        assert!(run_inspect(vec!["a.txt".to_owned(), "b.txt".to_owned()])
+            .unwrap_err()
+            .contains("unexpected argument"));
+        assert!(run_inspect(vec!["sample.cram".to_owned(), "--input-index".to_owned()])
+            .unwrap_err()
+            .contains("--input-index requires"));
+    }
+
+    #[test]
+    fn yaml_manifest_extension_matching_is_case_sensitive_by_contract() {
+        assert!(is_yaml_manifest(Path::new("panel.yaml")));
+        assert!(is_yaml_manifest(Path::new("panel.yml")));
+        assert!(!is_yaml_manifest(Path::new("panel.YAML")));
+        assert!(!is_yaml_manifest(Path::new("panel.json")));
+    }
+
+    #[test]
+    fn validate_variants_writes_report_and_surfaces_errors() {
+        let dir = temp_dir("variants");
+        let valid = dir.join("variant.yaml");
+        let report = dir.join("reports/variant.txt");
+        fs::write(&valid, valid_variant_yaml()).unwrap();
+
+        run_validate_variants(vec![
+            valid.display().to_string(),
+            "--report".to_owned(),
+            report.display().to_string(),
+        ])
+        .unwrap();
+        assert!(fs::read_to_string(&report).unwrap().contains("files_scanned"));
+
+        let invalid = dir.join("invalid.yaml");
+        fs::write(&invalid, "schema: bioscript:variant:1.0\n").unwrap();
+        let err = run_validate_variants(vec![invalid.display().to_string()]).unwrap_err();
+        assert!(err.contains("validation found"));
+
+        assert!(run_validate_variants(Vec::new()).unwrap_err().contains("usage"));
+        assert!(run_validate_variants(vec![valid.display().to_string(), "--report".to_owned()])
+            .unwrap_err()
+            .contains("--report requires"));
+        assert!(run_validate_variants(vec![
+            valid.display().to_string(),
+            "extra".to_owned(),
+        ])
+        .unwrap_err()
+        .contains("unexpected argument"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn validate_panels_and_assays_cover_report_and_error_paths() {
+        let dir = temp_dir("panels-assays");
+        let variant = dir.join("variant.yaml");
+        fs::write(&variant, valid_variant_yaml()).unwrap();
+
+        let panel = dir.join("panel.yaml");
+        fs::write(
+            &panel,
+            r#"
+schema: bioscript:panel:1.0
+version: "1.0"
+name: Test panel
+members:
+  - kind: variant
+    path: variant.yaml
+"#,
+        )
+        .unwrap();
+        let panel_report = dir.join("reports/panel.txt");
+        run_validate_panels(vec![
+            panel.display().to_string(),
+            "--report".to_owned(),
+            panel_report.display().to_string(),
+        ])
+        .unwrap();
+        assert!(panel_report.exists());
+
+        let assay = dir.join("assay.yaml");
+        fs::write(
+            &assay,
+            r#"
+schema: bioscript:assay:1.0
+version: "1.0"
+name: Test assay
+members:
+  - kind: variant
+    path: variant.yaml
+"#,
+        )
+        .unwrap();
+        let assay_report = dir.join("reports/assay.txt");
+        run_validate_assays(vec![
+            assay.display().to_string(),
+            "--report".to_owned(),
+            assay_report.display().to_string(),
+        ])
+        .unwrap();
+        assert!(assay_report.exists());
+
+        assert!(run_validate_panels(Vec::new()).unwrap_err().contains("usage"));
+        assert!(run_validate_panels(vec![panel.display().to_string(), "--report".to_owned()])
+            .unwrap_err()
+            .contains("--report requires"));
+        assert!(run_validate_panels(vec![panel.display().to_string(), "extra".to_owned()])
+            .unwrap_err()
+            .contains("unexpected argument"));
+        assert!(run_validate_assays(Vec::new()).unwrap_err().contains("usage"));
+        assert!(run_validate_assays(vec![assay.display().to_string(), "--report".to_owned()])
+            .unwrap_err()
+            .contains("--report requires"));
+        assert!(run_validate_assays(vec![assay.display().to_string(), "extra".to_owned()])
+            .unwrap_err()
+            .contains("unexpected argument"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

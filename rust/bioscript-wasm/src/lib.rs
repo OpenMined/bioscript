@@ -5,8 +5,8 @@
 //! Current surface:
 //! - `inspectBytes(name, bytes, options)` — file classification / vendor sniff
 //! - `lookupCramVariants(cramReadAt, cramLen, craiBytes, fastaReadAt, fastaLen,
-//!    faiBytes, variantsJson)` — SNP lookups against an indexed CRAM + FASTA
-//!    through JS-supplied random-read callbacks.
+//!   faiBytes, variantsJson)` — SNP lookups against an indexed CRAM + FASTA
+//!   through JS-supplied random-read callbacks.
 //!
 //! Pending (see migration checklist in the architecture doc):
 //! - `loadGenotypesBytes(name, bytes)` / `lookupVariants(storeId, planJson)`

@@ -1,40 +1,39 @@
 use super::*;
 
-impl PackageWorkspace {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn run_manifest_analyses(
+pub(crate) struct WasmReportAnalysisRunner<'a> {
+    pub(crate) workspace: &'a PackageWorkspace,
+    pub(crate) input_name: &'a str,
+    pub(crate) input_bytes: &'a [u8],
+    pub(crate) participant_id: &'a str,
+    pub(crate) loader: &'a GenotypeLoadOptions,
+    pub(crate) options: &'a ReportOptionsInput,
+}
+
+impl bioscript_reporting::ReportAnalysisRunner for WasmReportAnalysisRunner<'_> {
+    fn run_analysis_task(
         &self,
-        manifest_path: &str,
-        input_name: &str,
-        input_bytes: &[u8],
-        preloaded_observations: &[VariantObservation],
-        participant_id: &str,
-        loader: &GenotypeLoadOptions,
-        options: &ReportOptionsInput,
-    ) -> Result<Vec<serde_json::Value>, JsError> {
-        let tasks = bioscript_reporting::collect_analysis_manifest_tasks(
-            self,
-            manifest_path,
-            &options.filters,
-        )
-        .map_err(|err| JsError::new(&err))?;
-        let mut analyses = Vec::new();
-        for task in tasks {
-            analyses.extend(self.run_interpretations(
+        task: &bioscript_reporting::AnalysisManifestTask,
+        _observation_rows: &[BTreeMap<String, String>],
+        variant_observations: &[VariantObservation],
+        _observations: &[serde_json::Value],
+    ) -> Result<Vec<serde_json::Value>, String> {
+        self.workspace
+            .run_interpretations(
                 &task.manifest_path,
                 &task.manifest_name,
                 &task.interpretations,
-                input_name,
-                input_bytes,
-                preloaded_observations,
-                participant_id,
-                loader,
-                options,
-            )?);
-        }
-        Ok(analyses)
+                self.input_name,
+                self.input_bytes,
+                variant_observations,
+                self.participant_id,
+                self.loader,
+                self.options,
+            )
+            .map_err(|err| format!("{err:?}"))
     }
+}
 
+impl PackageWorkspace {
     #[allow(clippy::too_many_arguments)]
     fn run_interpretations(
         &self,
@@ -110,6 +109,11 @@ impl PackageWorkspace {
                 );
                 asset_paths.insert(asset.id.clone(), virtual_asset_path);
             }
+            let runtime_observations = if input_bytes.is_empty() {
+                preloaded_observations.to_vec()
+            } else {
+                Vec::new()
+            };
             let mut virtual_binary_files = BTreeMap::new();
             virtual_binary_files.insert(virtual_input_file.clone(), input_bytes.to_vec());
             let limits = ResourceLimits::new()
@@ -133,8 +137,8 @@ impl PackageWorkspace {
                         &virtual_output_file,
                     ),
                     virtual_binary_files,
-                    virtual_text_files,
-                    preloaded_observations: preloaded_observations.to_vec(),
+                    virtual_text_files: std::mem::take(&mut virtual_text_files),
+                    preloaded_observations: runtime_observations,
                 },
             )
             .map_err(|err| JsError::new(&format!("create analysis runtime failed: {err:?}")))?;

@@ -42,7 +42,7 @@ pub(crate) use io::*;
 pub(crate) use render::*;
 pub use sex::{
     InferredSex, SexDetectionConfidence, SexInference, infer_sex_from_alignment_reader,
-    infer_sex_from_text_lines,
+    infer_sex_from_named_reader, infer_sex_from_text_lines,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

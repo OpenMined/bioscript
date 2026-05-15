@@ -58,6 +58,7 @@ impl RsidMapBackend {
         }
 
         if variant.has_coordinates()
+            && !variant.has_rsids()
             && self.assembly.is_none()
             && matches!(
                 self.format,

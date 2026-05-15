@@ -526,4 +526,215 @@ mod report_matching_tests {
         });
         assert!(app_variant_binding_match_observation(&two_x_binding, &observations).is_some());
     }
+
+    #[test]
+    fn match_app_findings_matches_variant_effects_and_deduplicates_evidence() {
+        let findings = vec![serde_json::json!({
+            "schema": "bioscript:finding:1.0",
+            "label": "Repeated",
+            "evidence": {"source": "db", "kind": "guideline", "id": "cpic-1"},
+            "effects": [
+                {
+                    "id": "effect-a",
+                    "binding": {
+                        "source": "variant",
+                        "variant": "variants/rs1.yaml",
+                        "key": "outcome",
+                        "value": "variant"
+                    }
+                },
+                {
+                    "id": "effect-a",
+                    "binding": {
+                        "source": "variant",
+                        "variant": "rs1.yaml",
+                        "key": "outcome",
+                        "value": "variant"
+                    }
+                }
+            ]
+        })];
+        let observations = vec![serde_json::json!({
+            "participant_id": "p1",
+            "variant_key": "rs1",
+            "variant_path": "variants/rs1.yaml",
+            "rsid": "rs1",
+            "gene": "ABC",
+            "ref": "A",
+            "alt": "G",
+            "genotype_display": "AG",
+            "zygosity": "het",
+            "outcome": "variant"
+        })];
+
+        let matched = match_app_findings(&findings, &observations, &[]);
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0]["matched"], true);
+        assert_eq!(matched[0]["matched_effect"]["id"], "effect-a");
+        assert_eq!(matched[0]["matched_observation"]["participant_id"], "p1");
+        assert!(matched[0].get("effects").is_none());
+    }
+
+    #[test]
+    fn match_app_findings_matches_analysis_bindings_with_alias_and_value_types() {
+        let findings = vec![
+            serde_json::json!({
+                "id": "analysis-finding",
+                "binding": {
+                    "source": "analysis",
+                    "analysis": "star-allele",
+                    "key": "score",
+                    "operator": "in",
+                    "values": [1, 2, 3]
+                }
+            }),
+            serde_json::json!({
+                "id": "non-match",
+                "binding": {
+                    "source": "analysis",
+                    "analysis_id": "other",
+                    "key": "score",
+                    "value": 2
+                }
+            }),
+        ];
+        let analyses = vec![
+            serde_json::json!({
+                "participant_id": "p1",
+                "assay_id": "assay",
+                "analysis_id": "star-allele",
+                "rows": [
+                    {"score": 2, "label": "ok"},
+                    {"score": 5, "label": "skip"}
+                ]
+            }),
+            serde_json::json!({
+                "participant_id": "p1",
+                "assay_id": "assay",
+                "analysis_id": "other",
+                "rows": "not rows"
+            }),
+        ];
+
+        let matched = match_app_findings(&findings, &[], &analyses);
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0]["matched_analysis"]["analysis_id"], "star-allele");
+        assert_eq!(matched[0]["matched_analysis"]["key"], "score");
+        assert_eq!(matched[0]["matched_analysis"]["value"], 2);
+    }
+
+    #[test]
+    fn binding_helpers_cover_value_dosage_reference_and_dedupe_edges() {
+        let observation = serde_json::json!({
+            "variant_key": "rs1",
+            "variant_path": "nested/rs1.yaml",
+            "rsid": "rs1",
+            "ref": "A",
+            "alt": "G",
+            "genotype_display": "AG",
+            "zygosity": "het"
+        });
+        assert!(!app_variant_ref_mismatch(
+            &serde_json::json!({"variant": "rs1.yaml"}),
+            &observation
+        ));
+        assert!(app_variant_ref_mismatch(
+            &serde_json::json!({"path": "rs2.yaml"}),
+            &observation
+        ));
+
+        assert_eq!(app_observation_allele_dosage(&observation, "A"), Some(1));
+        assert_eq!(app_observation_allele_dosage(&observation, "G"), Some(1));
+        assert_eq!(app_observation_allele_dosage(&observation, "T"), Some(0));
+        assert_eq!(app_observation_allele_dosage(&observation, "DEL"), None);
+        assert_eq!(app_observation_chromosome_count(&observation), Some(2));
+
+        assert!(app_binding_matches_value(
+            Some(&serde_json::json!(true)),
+            &serde_json::json!({"value": true})
+        ));
+        assert!(app_binding_matches_value(
+            Some(&serde_json::json!(42)),
+            &serde_json::json!({"operator": "in", "values": ["41", 42]})
+        ));
+        assert!(!app_binding_matches_value(
+            Some(&serde_json::json!({"object": true})),
+            &serde_json::json!({"value": "true"})
+        ));
+        assert_eq!(
+            app_binding_expected_values(&serde_json::json!({
+                "value": "A",
+                "values": ["B", 3, false, {"ignored": true}]
+            })),
+            vec!["A", "B", "3", "false"]
+        );
+
+        assert!(app_binding_matches_dosage(
+            Some(2),
+            &serde_json::json!({"operator": "dosage_in", "values": [1, 2]})
+        ));
+        assert!(!app_binding_matches_dosage(
+            None,
+            &serde_json::json!({"operator": "dosage_equals", "value": 0})
+        ));
+
+        assert_eq!(
+            app_finding_dedupe_key(&serde_json::json!({
+                "evidence": {"url": "https://example.test/evidence"},
+                "matched_effect": {"label": "effect"}
+            })),
+            "evidence_url|https://example.test/evidence|effect"
+        );
+        assert_eq!(
+            app_finding_dedupe_key(&serde_json::json!({
+                "schema": "s",
+                "label": "l",
+                "notes": "n",
+                "matched_effect": {"text": "t"}
+            })),
+            "content|s|l|n|t"
+        );
+    }
+
+    #[test]
+    fn variant_binding_rejects_missing_keys_and_unsupported_operators() {
+        let observations = vec![serde_json::json!({
+            "variant_path": "rs1.yaml",
+            "ref": "A",
+            "alt": "G",
+            "genotype_display": "AG",
+            "zygosity": "het"
+        })];
+        assert!(
+            app_variant_binding_match_observation(
+                &serde_json::json!({"source": "variant"}),
+                &observations
+            )
+            .is_none()
+        );
+        assert!(
+            app_variant_binding_match_observation(
+                &serde_json::json!({
+                    "source": "variant",
+                    "key": "alt",
+                    "operator": "unknown",
+                    "value": "G"
+                }),
+                &observations
+            )
+            .is_none()
+        );
+        assert!(
+            app_variant_binding_match_observation(
+                &serde_json::json!({
+                    "source": "variant",
+                    "allele": "",
+                    "operator": "dosage_equals",
+                    "value": 1
+                }),
+                &observations
+            )
+            .is_none()
+        );
+    }
 }

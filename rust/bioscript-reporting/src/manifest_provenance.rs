@@ -73,3 +73,116 @@ fn insert_provenance_link(
         .map_or_else(|| source.to_string(), ToOwned::to_owned);
     links.entry(key).or_insert(source);
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::manifest::tests::MapWorkspace;
+
+    #[test]
+    fn collect_manifest_provenance_entries_deduplicates_sources() {
+        let value: serde_yaml::Value = serde_yaml::from_str(
+            r"
+schema: bioscript:variant:1.0
+provenance:
+  sources:
+    - kind: database
+      label: dbSNP
+      url: https://www.ncbi.nlm.nih.gov/snp/rs1
+    - kind: database
+      label: Duplicate dbSNP
+      url: https://www.ncbi.nlm.nih.gov/snp/rs1
+",
+        )
+        .unwrap();
+
+        let mut links = BTreeMap::new();
+        collect_manifest_provenance_entries(&value, &mut links).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            links.values().next().unwrap()["label"],
+            serde_json::Value::String("dbSNP".to_owned())
+        );
+    }
+
+    #[test]
+    fn load_manifest_provenance_links_walks_members() {
+        let workspace = MapWorkspace {
+            files: BTreeMap::from([
+                (
+                    "panel.yaml".to_owned(),
+                    r"
+schema: bioscript:panel:1.0
+members:
+  - kind: variant
+    path: rs1.yaml
+  - kind: assay
+    path: assay/manifest.yaml
+provenance:
+  sources:
+    - kind: database
+      label: Panel
+      url: https://example.test/panel
+"
+                    .to_owned(),
+                ),
+                (
+                    "rs1.yaml".to_owned(),
+                    r"
+schema: bioscript:variant:1.0
+provenance:
+  sources:
+    - kind: database
+      label: Variant
+      url: https://example.test/variant
+"
+                    .to_owned(),
+                ),
+                (
+                    "assay/manifest.yaml".to_owned(),
+                    r"
+schema: bioscript:assay:1.0
+members:
+  - kind: variant
+    path: rs2.yaml
+provenance:
+  sources:
+    - kind: database
+      label: Assay
+      url: https://example.test/assay
+"
+                    .to_owned(),
+                ),
+                (
+                    "assay/rs2.yaml".to_owned(),
+                    r"
+schema: bioscript:variant:1.0
+provenance:
+  sources:
+    - kind: database
+      label: Nested Variant
+      url: https://example.test/nested
+"
+                    .to_owned(),
+                ),
+            ]),
+        };
+
+        let links = load_manifest_provenance_links(&workspace, "panel.yaml").unwrap();
+        let urls = links
+            .iter()
+            .filter_map(|link| link.get("url").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            urls,
+            vec![
+                "https://example.test/assay",
+                "https://example.test/nested",
+                "https://example.test/panel",
+                "https://example.test/variant",
+            ]
+        );
+    }
+}

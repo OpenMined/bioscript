@@ -492,3 +492,184 @@ fn locus_from_root(root: &Value, assembly: &str) -> Result<Option<GenomicLocus>,
         end,
     }))
 }
+
+#[cfg(test)]
+mod panel_validator_tests {
+    use super::*;
+
+    fn yaml(text: &str) -> Value {
+        serde_yaml::from_str(text).unwrap()
+    }
+
+    fn issue_paths(issues: &[Issue]) -> Vec<String> {
+        issues.iter().map(|issue| issue.path.clone()).collect()
+    }
+
+    #[test]
+    fn panel_member_validation_reports_missing_empty_and_unknown_references() {
+        let root = yaml(
+            r#"
+downloads:
+  - id: known
+members:
+  - not-a-mapping
+  - kind: unknown
+  - kind: variant
+    path: ""
+    download: known
+    version: ""
+    sha256: BAD
+  - kind: variant
+    download: missing
+  - kind: variant
+    download: ""
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_panel_members(&root, &["variant"], &mut issues);
+        let paths = issue_paths(&issues);
+        assert!(paths.contains(&"members[0]".to_owned()));
+        assert!(paths.contains(&"members[1].kind".to_owned()));
+        assert!(paths.contains(&"members[1]".to_owned()));
+        assert!(paths.contains(&"members[2]".to_owned()));
+        assert!(paths.contains(&"members[2].path".to_owned()));
+        assert!(paths.contains(&"members[2].version".to_owned()));
+        assert!(paths.contains(&"members[2].sha256".to_owned()));
+        assert!(paths.contains(&"members[3].download".to_owned()));
+        assert!(paths.contains(&"members[4].download".to_owned()));
+    }
+
+    #[test]
+    fn panel_member_validation_reports_missing_and_empty_lists() {
+        let mut issues = Vec::new();
+        validate_panel_members(&yaml("{}"), &["variant"], &mut issues);
+        assert_eq!(issues[0].path, "members");
+        assert_eq!(issues[0].message, "missing required field");
+
+        let mut issues = Vec::new();
+        validate_panel_members(&yaml("members: []"), &["variant"], &mut issues);
+        assert_eq!(issues[0].path, "members");
+        assert_eq!(issues[0].message, "expected at least one member");
+    }
+
+    #[test]
+    fn interpretation_validation_reports_shape_and_required_field_errors() {
+        let root = yaml(
+            r#"
+analyses:
+  - not-a-mapping
+  - id: ""
+    kind: python
+    path: ""
+    output_format: xml
+    derived_from: []
+  - id: a
+    kind: bioscript
+    path: a.bs
+    derived_from: ["", 3]
+    logic: not-a-mapping
+  - id: b
+    kind: bioscript
+    path: b.bs
+    derived_from: [rs1]
+    emits: not-a-sequence
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_panel_interpretations(&root, &mut issues);
+        let paths = issue_paths(&issues);
+        assert!(paths.contains(&"analyses[0]".to_owned()));
+        assert!(paths.contains(&"analyses[1].id".to_owned()));
+        assert!(paths.contains(&"analyses[1].kind".to_owned()));
+        assert!(paths.contains(&"analyses[1].path".to_owned()));
+        assert!(paths.contains(&"analyses[1].output_format".to_owned()));
+        assert!(paths.contains(&"analyses[1].derived_from".to_owned()));
+        assert!(paths.contains(&"analyses[2].derived_from[0]".to_owned()));
+        assert!(paths.contains(&"analyses[2].derived_from[1]".to_owned()));
+        assert!(paths.contains(&"analyses[2].logic".to_owned()));
+        assert!(paths.contains(&"analyses[3].emits".to_owned()));
+    }
+
+    #[test]
+    fn interpretation_logic_and_emits_validate_nested_strings_and_urls() {
+        let root = yaml(
+            r#"
+analyses:
+  - id: a
+    kind: bioscript
+    path: a.bs
+    derived_from: [rs1]
+    logic:
+      description: ""
+      source:
+        name: 3
+        url: not-a-url
+    emits:
+      - not-a-mapping
+      - key: ""
+        label: 3
+        value_type: ""
+        format: {}
+interpretations:
+  - id: old
+    kind: bioscript
+    path: old.bs
+    derived_from: [rs1]
+"#,
+        );
+        let mut issues = Vec::new();
+        validate_panel_interpretations(&root, &mut issues);
+        let paths = issue_paths(&issues);
+        assert!(paths.contains(&"interpretations".to_owned()));
+        assert!(paths.contains(&"analyses[0].logic.description".to_owned()));
+        assert!(paths.contains(&"analyses[0].logic.source.name".to_owned()));
+        assert!(paths.contains(&"analyses[0].logic.source.url".to_owned()));
+        assert!(paths.contains(&"analyses[0].emits[0]".to_owned()));
+        assert!(paths.contains(&"analyses[0].emits[1].key".to_owned()));
+        assert!(paths.contains(&"analyses[0].emits[1].label".to_owned()));
+        assert!(paths.contains(&"analyses[0].emits[1].value_type".to_owned()));
+        assert!(paths.contains(&"analyses[0].emits[1].format".to_owned()));
+    }
+
+    #[test]
+    fn variant_spec_parsing_extracts_coordinates_alleles_and_motifs() {
+        let root = yaml(
+            r#"
+identifiers:
+  rsids: [rs1]
+coordinates:
+  grch37:
+    chrom: "1"
+    pos: 10
+    assembly_ref: b37
+  grch38:
+    chrom: "1"
+    start: 20
+    end: 22
+    assembly_ref: b38
+alleles:
+  kind: deletion
+  ref: AT
+  alts: [A]
+  deletion_length: 1
+  motifs: [T]
+"#,
+        );
+        let spec = variant_spec_from_root(&root).unwrap();
+        assert_eq!(spec.rsids, vec!["rs1"]);
+        assert_eq!(spec.grch37.unwrap().start, 10);
+        assert_eq!(spec.grch38.unwrap().end, 22);
+        assert_eq!(spec.grch37_assembly_ref.as_deref(), Some("b37"));
+        assert_eq!(spec.grch38_assembly_ref.as_deref(), Some("b38"));
+        assert_eq!(spec.reference.as_deref(), Some("AT"));
+        assert_eq!(spec.alternate.as_deref(), Some("A"));
+        assert_eq!(spec.kind, Some(VariantKind::Deletion));
+        assert_eq!(spec.deletion_length, Some(1));
+        assert_eq!(spec.motifs, vec!["T"]);
+
+        let missing = yaml("coordinates: {grch38: {chrom: '1'}}");
+        assert!(locus_from_root(&missing, "grch38")
+            .unwrap_err()
+            .contains("start missing"));
+    }
+}

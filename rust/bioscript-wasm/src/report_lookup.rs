@@ -19,20 +19,17 @@ pub(super) struct VcfReportLookup<R: std::io::Read + std::io::Seek> {
     pub(super) detected_assembly: Option<Assembly>,
 }
 
-impl<R: std::io::Read + std::io::Seek> report_workspace::VariantLookup for VcfReportLookup<R> {
-    fn lookup_variants(
-        &self,
-        specs: &[VariantSpec],
-    ) -> Result<Vec<VariantObservation>, RuntimeError> {
+impl<R: std::io::Read + std::io::Seek> bioscript_reporting::ReportVariantLookup
+    for VcfReportLookup<R>
+{
+    fn lookup_variants(&self, specs: &[VariantSpec]) -> Result<Vec<VariantObservation>, String> {
         let mut reader = self.reader.borrow_mut();
         let mut out = Vec::with_capacity(specs.len());
         for spec in specs {
-            out.push(observe_vcf_variant(
-                &mut reader,
-                &self.label,
-                spec,
-                self.detected_assembly,
-            )?);
+            out.push(
+                observe_vcf_variant(&mut reader, &self.label, spec, self.detected_assembly)
+                    .map_err(|err| err.to_string())?,
+            );
         }
         Ok(out)
     }

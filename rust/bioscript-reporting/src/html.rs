@@ -81,3 +81,198 @@ pub fn render_app_html_document(
     out.push_str("</details></section></div>");
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::render_app_html_document;
+
+    fn observation(participant_id: &str, outcome: &str, call_status: &str) -> serde_json::Value {
+        json!({
+            "participant_id": participant_id,
+            "assay_id": "pgx-panel",
+            "assay_version": "1.0",
+            "variant_key": "rs123",
+            "variant_path": "variants/rs123.yaml",
+            "rsid": "rs123",
+            "gene": "CYP2C19",
+            "assembly": "grch38",
+            "chrom": "10",
+            "pos_start": 94_781_859,
+            "pos_end": 94_781_859,
+            "kind": "snv",
+            "ref": "G",
+            "alt": "A",
+            "match_status": if call_status == "called" { "matched" } else { "not_found" },
+            "coverage_status": if call_status == "called" { "covered" } else { "not_covered" },
+            "call_status": call_status,
+            "genotype": "G/A",
+            "genotype_display": "G/A",
+            "zygosity": "heterozygous",
+            "ref_count": 12,
+            "alt_count": 9,
+            "depth": 21,
+            "genotype_quality": 99,
+            "allele_balance": 0.43,
+            "outcome": outcome,
+            "evidence_type": "vcf",
+            "evidence_raw": if outcome == "reference" {
+                "imputed reference genotype from absent variant-only VCF record"
+            } else {
+                "consumer genotype weak indel match"
+            },
+            "match_quality": if outcome == "variant" { "weak" } else { "strong" },
+            "match_notes": "reported by fixture",
+            "facets": {"clinical": "example"},
+            "source": {
+                "label": "dbSNP",
+                "url": "https://www.ncbi.nlm.nih.gov/snp/rs123"
+            }
+        })
+    }
+
+    fn analysis(participant_id: &str) -> serde_json::Value {
+        json!({
+            "analysis_id": "cyp2c19-summary",
+            "analysis_label": "CYP2C19 Summary",
+            "participant_id": participant_id,
+            "derived_from": ["variants/rs123.yaml"],
+            "logic": {
+                "description": "Classify star allele status.",
+                "source": {
+                    "name": "CPIC",
+                    "url": "https://cpicpgx.org/"
+                }
+            },
+            "emits": [
+                {"key": "participant_id", "label": "Participant"},
+                {"key": "metabolizer_status", "label": "Metabolizer"},
+                {"key": "source_url", "label": "Source"}
+            ],
+            "row_headers": ["metabolizer_status", "source_url", "notes"],
+            "rows": [
+                {
+                    "participant_id": participant_id,
+                    "metabolizer_status": "variant",
+                    "source_url": "https://example.test/source",
+                    "notes": "Use clinical context."
+                },
+                {
+                    "participant_id": participant_id,
+                    "metabolizer_status": "normal",
+                    "source_url": "https://example.test/normal",
+                    "report_notes": "Second note."
+                }
+            ]
+        })
+    }
+
+    fn report(participant_id: &str) -> serde_json::Value {
+        let matched_observation = observation(participant_id, "variant", "called");
+        json!({
+            "schema": "bioscript:report:1.0",
+            "participant_id": participant_id,
+            "assay_id": "pgx-panel",
+            "manifest": {
+                "schema": "bioscript:panel:1.0",
+                "version": "1.0",
+                "name": "pgx-panel",
+                "label": "PGx Panel",
+                "tags": ["pgx", "demo"],
+                "members": [
+                    {"kind": "variant", "path": "variants/rs123.yaml", "version": "1.0"},
+                    {"kind": "assay", "path": "assays/cyp2c19.yaml", "version": "1.0"}
+                ]
+            },
+            "input": {
+                "file_name": format!("{participant_id}.vcf"),
+                "file_path": format!("/data/{participant_id}.vcf"),
+                "debug": {
+                    "format": "vcf",
+                    "format_confidence": "authoritative",
+                    "assembly": "grch38",
+                    "vcf_missing_reference_imputation": true,
+                    "source": {
+                        "vendor": "Example",
+                        "platform_version": "v1"
+                    },
+                    "inferred_sex": {
+                        "sex": "female",
+                        "confidence": "high",
+                        "method": "x_het"
+                    },
+                    "evidence": ["header", "genotypes"]
+                }
+            },
+            "analyses": [analysis(participant_id)],
+            "findings": [
+                {
+                    "schema": "bioscript:pgx-label:1.0",
+                    "pgx_action_level": "Testing Required",
+                    "prescribing_actions": ["Dose adjustment"],
+                    "regulatory_sources": ["FDA"],
+                    "prescribing_information": "Consider alternative therapy.",
+                    "drugs": [{"name": "clopidogrel"}],
+                    "evidence": {"url": "https://example.test/label"},
+                    "matched_observation": matched_observation
+                },
+                {
+                    "schema": "bioscript:pgx-summary:1.0",
+                    "evidence_level": "1A",
+                    "phenotype_categories": ["efficacy"],
+                    "phenotypes": ["response"],
+                    "drugs": [{"name": "clopidogrel"}],
+                    "matched_effect": {"label": "A carrier", "text": "Reduced activation."},
+                    "matched_observation": observation(participant_id, "reference", "called"),
+                    "evidence": {"url": "https://example.test/summary"}
+                }
+            ],
+            "provenance": [
+                {
+                    "kind": "database",
+                    "label": "dbSNP",
+                    "url": "https://www.ncbi.nlm.nih.gov/snp/rs123",
+                    "fields": ["identifiers.rsids"]
+                },
+                {
+                    "kind": "guideline",
+                    "label": "CPIC",
+                    "url": "https://cpicpgx.org/"
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn render_app_html_document_covers_report_sections() {
+        let observations = vec![
+            observation("P001", "variant", "called"),
+            observation("P002", "reference", "called"),
+            observation("P002", "unknown", "missing"),
+        ];
+        let reports = vec![report("P001"), report("P002")];
+
+        let html = render_app_html_document(&observations, &reports).unwrap();
+
+        assert!(html.contains("PGx Panel"));
+        assert!(html.contains("participant-filter"));
+        assert!(html.contains("observations-table"));
+        assert!(html.contains("analysis-table-0"));
+        assert!(html.contains("pgx-variant-table"));
+        assert!(html.contains("pgx-drug-table-0"));
+        assert!(html.contains("dbSNP"));
+        assert!(html.contains("manifest-members-table"));
+        assert!(html.contains("Raw Reports JSON"));
+    }
+
+    #[test]
+    fn render_app_html_document_handles_empty_inputs() {
+        let html = render_app_html_document(&[], &[]).unwrap();
+
+        assert!(html.contains("BioScript Report"));
+        assert!(html.contains("No input metadata."));
+        assert!(html.contains("No analysis outputs."));
+        assert!(html.contains("No provenance links."));
+    }
+}
