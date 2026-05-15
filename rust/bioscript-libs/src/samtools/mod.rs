@@ -78,18 +78,41 @@ pub fn faidx(fasta: &Path) -> LibResult<CommandSpec> {
     CommandSpec::new("samtools", vec!["faidx".to_owned(), path_arg(fasta)?])
 }
 
+/// Make an explicitly-provided index discoverable by samtools-rs/HTSlib.
+///
+/// HTSlib's primary index discovery is co-location: for a data file `X` it
+/// probes `X.csi` then `X.bai`. The runtime hands us the genome and its index
+/// as two independent (often materialized-temp) paths, so when the caller
+/// passes an index that is not already co-located we mirror it next to the
+/// data file under HTSlib's expected name. This keeps the samtools port
+/// faithful to upstream (which finds the index by HTSlib lookup) while still
+/// honoring an explicit index argument.
+fn colocate_index(bam: &Path, index: Option<&Path>) -> LibResult<()> {
+    let Some(index) = index else {
+        return Ok(());
+    };
+    let expected = std::path::PathBuf::from(format!("{}.bai", bam.display()));
+    if expected == index || expected.exists() {
+        return Ok(());
+    }
+    std::fs::copy(index, &expected).map_err(samtools_error)?;
+    Ok(())
+}
+
 pub fn view_region_native(
     bam: &Path,
-    _index: Option<&Path>,
+    index: Option<&Path>,
     region: &str,
     output_bam: &Path,
 ) -> LibResult<usize> {
+    colocate_index(bam, index)?;
     samtools_native::view_region_native(bam, region, output_bam, None, None)
         .map_err(samtools_error)?;
     Ok(0)
 }
 
-pub fn depth_native(bam: &Path, _index: Option<&Path>, region: &str) -> LibResult<DepthSummary> {
+pub fn depth_native(bam: &Path, index: Option<&Path>, region: &str) -> LibResult<DepthSummary> {
+    colocate_index(bam, index)?;
     let depths = samtools_native::depth_native(bam, region, true, None).map_err(samtools_error)?;
     Ok(depth_summary(depths.iter().map(|entry| entry.depth)))
 }
@@ -104,11 +127,12 @@ pub fn index_native(bam: &Path, output_bai: Option<&Path>) -> LibResult<std::pat
 
 pub fn fastq_native(
     bam: &Path,
-    _index: Option<&Path>,
+    index: Option<&Path>,
     region: &str,
     fastq_1: &Path,
     fastq_2: &Path,
 ) -> LibResult<FastqPairSummary> {
+    colocate_index(bam, index)?;
     let temp_dir = tempfile::tempdir().map_err(samtools_error)?;
     let sliced_bam = temp_dir.path().join("slice.bam");
     let other_fastq = temp_dir.path().join("other.fastq.gz");

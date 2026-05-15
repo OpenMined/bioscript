@@ -5,6 +5,7 @@ use crate::{LibError, LibResult};
 pub const MODULE: &str = "vcf";
 
 pub mod vntyper;
+mod vntyper_motif;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VcfDirection {

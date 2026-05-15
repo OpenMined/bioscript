@@ -1,6 +1,7 @@
 use crate::{LibError, LibResult};
 
 use super::VcfRecord;
+use super::vntyper_motif::motif_correction;
 
 const NEGATIVE_LABEL: &str = "Negative";
 const LOW_DEPTH_SCORE: f64 = 0.00469;
@@ -9,15 +10,41 @@ const ALT_DEPTH_LOW: f64 = 20.0;
 const ALT_DEPTH_MID_LOW: f64 = 21.0;
 const ALT_DEPTH_MID_HIGH: f64 = 100.0;
 const VAR_ACTIVE_REGION_THRESHOLD: f64 = 200.0;
-const MOTIF_POSITION_THRESHOLD: i64 = 60;
-const EXCLUDE_MOTIFS_RIGHT: &[&str] = &["8", "9", "7", "6p", "6"];
-const ALT_FOR_MOTIF_RIGHT_GG: &str = "GG";
-const MOTIFS_FOR_ALT_GG: &[&str] = &[];
-const EXCLUDE_ALTS_COMBINED: &[&str] = &["CCGCC", "CGGCG", "CGGCC"];
-const EXCLUDE_MOTIFS_COMBINED: &[&str] = &["6", "6p", "7"];
 
 pub fn vntyper_kestrel_rows(records: &[VcfRecord]) -> Vec<VcfRecord> {
-    records.iter().map(vntyper_kestrel_row).collect()
+    // Pass 1: per-record base annotation (depth, frameshift, confidence,
+    // alt-filter) without the final motif decision.
+    let mut rows: Vec<VcfRecord> = records.iter().map(vntyper_kestrel_row).collect();
+
+    // Pass 2: faithful port of upstream `motif_correction_and_annotation`.
+    // Upstream is a whole-set operation (left/right split by position,
+    // frameshift/depth-priority dedupe per genomic locus, the legacy GG
+    // `.any()` guard, then the exclude lists). The previous per-row
+    // approximation unconditionally rejected right-motif `G>GG` insertions
+    // whenever `MOTIFS_FOR_ALT_GG` was empty, which dropped the canonical
+    // MUC1 dup frameshift (e.g. 66bf `C-Q` POS 67 `G>GG`).
+    let correction = motif_correction(&rows);
+    for (idx, row) in rows.iter_mut().enumerate() {
+        let is_valid_frameshift =
+            row.get("is_valid_frameshift").map(String::as_str) == Some("True");
+        if let Some(motif) = correction.motif_by_index.get(&idx) {
+            row.insert("Motif".to_owned(), motif.clone());
+        }
+        let survived = correction.surviving.contains(&idx);
+        let motif_pass = survived && is_valid_frameshift;
+        let depth_confidence_pass =
+            row.get("Confidence").map(String::as_str) != Some(NEGATIVE_LABEL);
+        let alt_filter_pass =
+            row.get("alt_filter_pass").map(String::as_str) == Some("True");
+        let passes_vntyper_filters =
+            is_valid_frameshift && depth_confidence_pass && alt_filter_pass && motif_pass;
+        row.insert("motif_filter_pass".to_owned(), title_bool(motif_pass));
+        row.insert(
+            "passes_vntyper_filters".to_owned(),
+            title_bool(passes_vntyper_filters),
+        );
+    }
+    rows
 }
 
 pub fn vntyper_report_json(
@@ -119,14 +146,20 @@ fn vntyper_kestrel_row(record: &VcfRecord) -> VcfRecord {
         Some(alt_depth / region_depth)
     };
     let confidence = confidence(alt_depth, region_depth, depth_score);
-    let depth_confidence_pass = confidence != NEGATIVE_LABEL;
     let alt_filter_pass = alt_filter_pass(row.get("ALT").map(String::as_str), depth_score);
-    let motif_filter = motif_filter(&row, is_valid_frameshift);
-    for (key, value) in &motif_filter.annotations {
-        row.insert((*key).to_owned(), value.clone());
-    }
-    let passes_vntyper_filters =
-        is_valid_frameshift && depth_confidence_pass && alt_filter_pass && motif_filter.passes;
+
+    // Raw motif annotations (upstream's Motif_fasta / POS_fasta). The final
+    // Motif token and motif_filter_pass / passes_vntyper_filters are decided
+    // by the whole-set `motif_correction` pass in `vntyper_kestrel_rows`.
+    let motifs = row
+        .get("Motifs")
+        .or_else(|| row.get("CHROM"))
+        .cloned()
+        .unwrap_or_default();
+    let pos = parse_row_float(&row, "POS") as i64;
+    row.insert("Motifs".to_owned(), motifs.clone());
+    row.insert("Motif_fasta".to_owned(), motifs);
+    row.insert("POS_fasta".to_owned(), pos.to_string());
 
     row.insert(
         "Estimated_Depth_AlternateVariant".to_owned(),
@@ -149,14 +182,6 @@ fn vntyper_kestrel_row(record: &VcfRecord) -> VcfRecord {
         title_bool(is_valid_frameshift),
     );
     row.insert("alt_filter_pass".to_owned(), title_bool(alt_filter_pass));
-    row.insert(
-        "motif_filter_pass".to_owned(),
-        title_bool(motif_filter.passes),
-    );
-    row.insert(
-        "passes_vntyper_filters".to_owned(),
-        title_bool(passes_vntyper_filters),
-    );
     row
 }
 
@@ -194,58 +219,6 @@ fn confidence(alt_depth: f64, region_depth: f64, depth_score: Option<f64>) -> &'
 
 fn alt_filter_pass(alt: Option<&str>, depth_score: Option<f64>) -> bool {
     alt != Some("GG") || depth_score.is_some_and(|score| score >= LOW_DEPTH_SCORE)
-}
-
-struct MotifFilter {
-    passes: bool,
-    annotations: Vec<(&'static str, String)>,
-}
-
-fn motif_filter(row: &VcfRecord, is_valid_frameshift: bool) -> MotifFilter {
-    let motifs = row
-        .get("Motifs")
-        .or_else(|| row.get("CHROM"))
-        .cloned()
-        .unwrap_or_default();
-    let parts = motifs.split('-').collect::<Vec<_>>();
-    if parts.len() != 2 {
-        return MotifFilter {
-            passes: is_valid_frameshift,
-            annotations: Vec::new(),
-        };
-    }
-
-    let pos = parse_row_float(row, "POS") as i64;
-    let is_right_motif = pos >= MOTIF_POSITION_THRESHOLD;
-    let motif = if is_right_motif { parts[0] } else { parts[1] }.to_owned();
-    let alt = row.get("ALT").map(String::as_str).unwrap_or_default();
-
-    let mut passes = is_valid_frameshift;
-    if is_right_motif && EXCLUDE_MOTIFS_RIGHT.contains(&motif.as_str()) {
-        passes = false;
-    }
-    if is_right_motif
-        && alt == ALT_FOR_MOTIF_RIGHT_GG
-        && !MOTIFS_FOR_ALT_GG.contains(&motif.as_str())
-    {
-        passes = false;
-    }
-    if EXCLUDE_ALTS_COMBINED.contains(&alt) {
-        passes = false;
-    }
-    if EXCLUDE_MOTIFS_COMBINED.contains(&motif.as_str()) {
-        passes = false;
-    }
-
-    MotifFilter {
-        passes,
-        annotations: vec![
-            ("Motifs", motifs.clone()),
-            ("Motif_fasta", motifs),
-            ("POS_fasta", pos.to_string()),
-            ("Motif", motif),
-        ],
-    }
 }
 
 fn flags(row: &VcfRecord, depth_score: Option<f64>) -> String {
