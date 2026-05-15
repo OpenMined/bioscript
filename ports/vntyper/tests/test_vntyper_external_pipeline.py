@@ -390,6 +390,7 @@ class VntyperExternalPipelineTests(unittest.TestCase):
             )
 
             self.assertEqual([call[0] for call in calls], ["kestrel"])
+            self.assertEqual(calls[-1][4]["min_kmer_count"], 5)
             self.assertEqual(calls[-1][4]["max_haplotypes"], 2)
             self.assertTrue(Path(result.kestrel_tsv).exists())
             with open(result.report_json, "r", encoding="utf-8") as handle:

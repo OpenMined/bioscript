@@ -212,6 +212,7 @@ class ToolCommandTests(unittest.TestCase):
                 self.assertEqual(args[0], [("REF1", "ACGT", "f1f8f4bf413b16ad135722aa4591043e")])
                 self.assertEqual(args[1], ["reads.fastq"])
                 self.assertEqual(args[2], 4)
+                self.assertEqual(args[15], 5)
                 return "##fileformat=VCFv4.2\n#CHROM\tPOS\n"
 
             fake_native = SimpleNamespace(kestrel_call_fastq_references_native=call_fastq_references)

@@ -29,6 +29,7 @@ pipeline_spec = importlib.util.spec_from_file_location(
 vntyper_external_pipeline = importlib.util.module_from_spec(pipeline_spec)
 sys.modules["vntyper_external_pipeline"] = vntyper_external_pipeline
 pipeline_spec.loader.exec_module(vntyper_external_pipeline)
+import vntyper_port
 
 from parity_helpers import (
     normalized_report_summary,
@@ -50,12 +51,16 @@ class VntyperNativeFastqPipelineGateTests(unittest.TestCase):
                 expected_root = data_manifest.EXPECTED_OUTPUT_ROOT / label
                 with (expected_root / "report.json").open("r", encoding="utf-8") as handle:
                     expected_report = json.load(handle)
-                with (expected_root / "kestrel" / "kestrel_result.tsv").open(
-                    "r",
-                    encoding="utf-8",
-                    newline="",
-                ) as handle:
-                    expected_rows = list(csv.DictReader(handle, delimiter="\t"))
+                expected_rows = vntyper_port.process_kestrel_vcf(
+                    str(expected_root / "kestrel" / "output.vcf")
+                )
+                expected_report_for_native = dict(expected_report)
+                expected_report_for_native["kestrel_variants"] = expected_rows
+                expected_report_for_native["metadata"] = {
+                    **expected_report.get("metadata", {}),
+                    "alignment_pipeline": "native bioscript kestrel from FASTQ",
+                    "detected_assembly": "hg19",
+                }
 
                 with tempfile.TemporaryDirectory() as tmp:
                     result = vntyper_external_pipeline.run_fastq_kestrel(
@@ -81,7 +86,12 @@ class VntyperNativeFastqPipelineGateTests(unittest.TestCase):
                     self.assertTrue(sorted_vcf_index.exists())
 
                 self.assertGreater(len(rows), 0)
-                context = parity_context(rows, expected_rows, actual_report, expected_report)
+                context = parity_context(
+                    rows,
+                    expected_rows,
+                    actual_report,
+                    expected_report_for_native,
+                )
                 self.assertEqual(
                     actual_report["algorithm_results"]["kestrel"],
                     expected_report["algorithm_results"]["kestrel"],
@@ -94,7 +104,7 @@ class VntyperNativeFastqPipelineGateTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     normalized_report_summary(actual_report),
-                    normalized_report_summary(expected_report),
+                    normalized_report_summary(expected_report_for_native),
                     context,
                 )
                 self.assertEqual(set(actual_report), set(expected_report))

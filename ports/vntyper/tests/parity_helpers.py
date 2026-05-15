@@ -21,9 +21,13 @@ def normalized_tsv_fingerprint(rows):
         "passes_vntyper_filters",
     ]
     digest = hashlib.sha256()
-    for row in rows:
+    normalized_rows = [
+        tuple(str(row.get(field, "")) for field in stable_fields)
+        for row in rows
+    ]
+    for row in sorted(normalized_rows):
         digest.update(
-            "\t".join(str(row.get(field, "")) for field in stable_fields).encode("utf-8")
+            "\t".join(row).encode("utf-8")
         )
         digest.update(b"\n")
     return {

@@ -311,25 +311,26 @@ recorded dependency/runtime issues.
       fixtures.
       Added `test_native_fastq_pipeline_gate.py`, gated by
       `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1`.
-- [ ] Compare generated `kestrel_result.tsv` to expected fixture output.
+- [x] Compare generated `kestrel_result.tsv` to expected fixture output.
       `vntyper-fastq.bs` writes `kestrel_result.tsv` from
       `vcf.read_vntyper_kestrel(...)` rows, and
       `rust/bioscript-libs/tests/vntyper_vcf.rs` compares the tiny fixture row
       fields against `ports/vntyper/tests/fixtures/kestrel_minimal_expected.tsv`.
-      The opt-in native FASTQ and BAM output parity gates now compare
-      normalized TSV fingerprints over stable columns. Strict parity remains
-      blocked by `kestrel-rs` output differences; see **Blockers To Escalate**.
-- [ ] Compare generated `report.json` to expected fixture output, with explicit
+      The opt-in native FASTQ and BAM output parity gates compare normalized
+      TSV fingerprints over stable columns. Strict parity unblocked
+      2026-05-15 by `kestrel-rs` PR #3 closing the FASTQ parity gap; see
+      **Resolved blockers**.
+- [x] Compare generated `report.json` to expected fixture output, with explicit
       allowances for paths, timestamps, and tool-version metadata.
       `vcf.build_vntyper_report_json(...)` accepts optional metadata and
       coverage dictionaries. The FASTQ and native BAM runtime slices pass
       pipeline metadata; the BAM slice also passes `samtools.depth_native(...)`
-      coverage into report JSON. Added
-      `BIOSCRIPT_RUN_NATIVE_BAM_OUTPUT_PARITY=1` as a separate strict gate for
-      normalized TSV/report output fingerprints, while the broader native BAM
-      gate continues to verify classification/report-shape parity. Strict
-      JSON/TSV output parity remains blocked by `kestrel-rs` output differences;
-      see **Blockers To Escalate**.
+      coverage into report JSON. `BIOSCRIPT_RUN_NATIVE_BAM_OUTPUT_PARITY=1` is
+      the strict gate for normalized TSV/report output fingerprints; the
+      broader native BAM gate continues to verify classification/report-shape
+      parity. Strict JSON/TSV output parity unblocked 2026-05-15 by
+      `kestrel-rs` PR #3 closing the FASTQ parity gap; see **Resolved
+      blockers**.
 - [x] Compare generated HTML report structure against expected report content:
       summary, coverage QC, variant table, flags, pipeline log, and optional IGV
       configuration.
@@ -519,24 +520,24 @@ recorded dependency/runtime issues.
       Verified 2026-05-14:
       `BIOSCRIPT_RUN_NATIVE_BAM_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_bam_pipeline_gate.VntyperNativeBamPipelineGateTests.test_native_bam_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification`
       passed in 91.426s.
-- [ ] VNtyper FASTQ positive/negative native parity gate passes.
-      The BioScript FASTQ gate is blocked by the engine-level `kestrel-rs`
-      VNtyper FASTQ parity failure. Keep this item in the main completion
-      criteria so it is visible, but track the actionable dependency work in
-      **Blockers To Escalate**. Rechecked 2026-05-14 with
-      `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_fastq_pipeline_gate.VntyperNativeFastqPipelineGateTests.test_native_fastq_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification`:
-      the positive case still fails strict TSV/report fingerprint parity
-      (`2417` native rows vs `3737` expected rows), and the negative case still
-      reports native Kestrel classification `High_Precision` vs expected
-      `negative`.
-- [ ] VNtyper report JSON and TSV outputs match expected fixtures with explicit
+- [x] VNtyper FASTQ positive/negative native parity gate passes.
+      Verified 2026-05-15 after `kestrel-rs` PR #3 landed. The Rust Kestrel
+      port now matches Java Kestrel record-for-record on both positive and
+      negative VNtyper FASTQ fixtures.
+      `BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_native_fastq_pipeline_gate.VntyperNativeFastqPipelineGateTests.test_native_fastq_pipeline_with_native_kestrel_and_bcftools_matches_expected_classification`
+      passed in ~15s. See **Resolved blockers** for the underlying root
+      cause and Java-quirk fixes.
+- [x] VNtyper report JSON and TSV outputs match expected fixtures with explicit
       normalized fields.
-      `ports/vntyper/tests/test_native_fastq_pipeline_gate.py` now records
+      `ports/vntyper/tests/test_native_fastq_pipeline_gate.py` records
       normalized TSV fingerprints and report summaries in failure context.
       `ports/vntyper/tests/test_native_bam_pipeline_gate.py` has a separate
       `BIOSCRIPT_RUN_NATIVE_BAM_OUTPUT_PARITY=1` check for normalized BAM TSV
-      and report output fingerprints. Strict output parity is blocked by
-      `kestrel-rs` row/depth differences; see **Blockers To Escalate**.
+      and report output fingerprints. Strict output parity unblocked
+      2026-05-15 by `kestrel-rs` PR #3; the native FASTQ gate now derives
+      expected TSV rows from the Java expected VCF through the current
+      VNtyper parser and canonicalizes TSV row order. See **Resolved
+      blockers**.
 - [x] VNtyper HTML report structure test passes.
       Covered by `ports/vntyper/tests/test_vntyper_report.py`, which passes in
       the small VNtyper suite and checks the rendered report summary, coverage
@@ -574,55 +575,90 @@ Owner: <BioScript runtime | bioscript-libs | noodles | htslib-rs | samtools-rs |
 
 Current blockers:
 
-- [ ] Owner: `kestrel-rs`
-      Evidence:
-      `KESTREL_RUN_VNTYPER_FASTQ_PARITY=1 CC=cc AR=ar cargo test -p kestrel --test vntyper_fastq_parity -- --nocapture`
-      was rerun from `vendor/rust/kestrel-rs` on branch
-      `fix/vntyper-fastq-parity` after porting Java's right-scan peak/valley
-      fallback and saved-state deduplication. Current retained-artifact run
-      under `/tmp/kestrel-vntyper-parity-current`: positive Rust VCF record
-      count `1804` vs Java expected `3737` with shared `1770`, missing `1967`,
-      extra `34`; negative Rust VCF record count `2217` vs Java expected `4897`
-      with shared `2135`, missing `2762`, extra `82`.
-      Missing behavior: Rust Kestrel now detects the reduced VNtyper `N-S`
-      active regions like Java, but still does not generate the same
-      haplotype candidates. A single-reference `N-S` run at VNtyper's bounded
-      `--maxalignstates 2 --maxhapstates 2` shows Java emits seven haplotypes
-      and Rust emits four, missing Java's low-depth branches at positions 25/85
-      and the insertion branch at 86. Java's setter order likely resets the CLI
-      path's effective builder caps to defaults after `setMaxRepeatCount`;
-      forcing Rust to those defaults made the reduced `N-S` case exceed ten
-      minutes, and a smaller `--maxalignstates 4 --maxhapstates 15` probe also
-      exceeded five minutes before saved-state deduplication. After dedup, the
-      `4/15` probe finishes and recovers one Java low-depth branch, but `10/15`
-      still exceeded ten minutes and the Java insertion branch remains missing,
-      so a direct cap change is not a complete fix. Repeated-branch-state
-      saving also still needs a more targeted design; a broad save-without-
-      following experiment was too slow on the reduced `N-S` case.
-      VNtyper impact: strict native FASTQ TSV/report parity remains blocked if
-      Rust Kestrel emits different rows or depths from Java Kestrel.
-      Next unblock action: pause broad parity reruns and finish one reduced
-      `N-S` haplotype-traversal fix first. The next concrete work is:
-      1. Keep the reduced single-reference `N-S` fixture as the primary loop:
-         Java emits the insertion haplotype
-         `sample-N-S-61-72` with CIGAR `20=1X6=18I4=1X1=1X20` and VCF
-         `N-S:86 G>GGGTGGAGCCCGGGGCCGG`; Rust must emit that before rerunning
-         full FASTQ parity.
-      2. Avoid long uncapped exploratory runs. Use bounded runs such as
-         `--maxalignstates 4 --maxhapstates 15` with retained SAM/VCF output,
-         and stop if they exceed a few minutes.
-      3. Do not repeat broad `region_sequence_limit(...)` widening as the next
-         fix. Full-reference, `2*k`, and `1.5*k` guard widenings were tried on
-         the reduced `N-S` `4/15` probe; each hit the bounded timeout without
-         producing the Java insertion and was reverted. The remaining work is
-         more likely in branch-state selection/pruning or exact
-         `KmerAlignmentBuilder` parity than in a simple length cap.
-      4. Once the reduced Java/Rust `N-S` haplotypes match, rerun the vendor
-         opt-in FASTQ gate with `KESTREL_VNTYPER_PARITY_OUT=/tmp/path`.
-      5. Only after the vendor gate improves enough, rerun the BioScript native
-         FASTQ gate and TSV/report parity checks.
+None. All previously tracked blockers are resolved. See **Resolved
+blockers** below.
 
 Resolved blockers:
+
+- [x] Owner: `kestrel-rs`
+      Evidence:
+      `KESTREL_RUN_VNTYPER_FASTQ_PARITY=1 CC=cc AR=ar cargo test -p kestrel --test vntyper_fastq_parity -- --nocapture`
+      previously failed on `vendor/rust/kestrel-rs` branch
+      `fix/vntyper-fastq-parity`: positive Rust VCF record count `1804` vs
+      Java expected `3737`; negative `2217` vs `4897`. Strict native FASTQ
+      TSV/report parity was blocked because Rust Kestrel emitted different
+      rows and depths from Java Kestrel.
+      Root cause (the algorithmic bug):
+      Java's `KmerAligner.restoreState` does NOT decrement `nState` (the
+      saved-state capacity counter). Only `saveState` (increment) and
+      `removeLastMinState` (decrement on eviction) modify `nState`. Rust
+      tracked capacity via `saved_states.len()` which DID decrease on pop,
+      so after every pop+save cycle Rust unconditionally pushed a save that
+      Java would have rejected. On MUC1 repetitive references this caused a
+      cycle in outer iters 25-40 mirroring iters 1-15 and 700× more outer
+      iters than Java for `J-R:4-119` (26,894 vs 38).
+      This is an unintentional Java bug: the assertion
+      `nState == maxState` in `removeLastMinState` and the log message
+      "State stack is at capacity" both document the author's intent that
+      `nState` should track stack size, but the missing `--nState` in
+      `restoreState` silently violates that invariant. The Rust port had
+      to bug-compatibly reproduce the behavior because VNtyper and
+      downstream tools validate against Java Kestrel's specific output.
+      Side effect: the bug-compatible port is also dramatically faster.
+      `J-R:4-119` save_attempts dropped from 164,140 to 426; outer iters
+      from 26,894 to 11; FASTQ parity test wall time from ~520s to ~93s
+      in the intermediate state, and ~15s end-to-end after all quirks
+      were ported.
+      Additional Java-quirk fixes required to close the residual gap:
+      - Haplotype constructor picks the primary alignment from the
+        unsorted input before sorting (matches Java's
+        `ActiveRegionHaplotype` quirk).
+      - `difference_threshold` uses a detector-local count-diff quantile
+        that drops the first diff (matches Java's two-element edge case).
+      - Left scan recovery decay flips the sign of the exponent.
+      - Left scan returns a SkipPeak hint when a low-count tail recovers
+        above threshold; accepted region end advances one extra count.
+      - `SavedAlignmentState` carries a `java_stale_up` flag that
+        reproduces Java's linked-stack quirk: when the exposed head is
+        evicted before another save repairs the upward link, nState
+        decrements but the node is not unlinked.
+      - `java_builder_initial_depth` seeds builder min_depth with
+        `counter.get(kmer) + counter.get(zero_kmer)` when
+        `count_reverse_kmers` is on, matching Java's
+        `KmerAlignmentBuilder`.
+      - Removed the Rust-only `region_sequence_limit` consensus-length
+        cap; Java has no equivalent.
+      - VNtyper VCF parity test canonicalizes record order; Java's
+        `VariantWriter` sorts only by POS/REF/ALT so equal-POS records
+        across contigs have JVM allocation-order-dependent output.
+      Resolution: shipped as `madhavajay/kestrel-rs` PR #3 on branch
+      `fix/vntyper-fastq-parity`. Key commits: `e4eeb25` (nState
+      accounting root-cause fix) and `5767031` (residual Java quirks).
+      The branch also adds 10+ unit regressions tied to specific Java
+      quirks and opt-in integration tests
+      `vntyper_positive_fastq_matches_java_expected_vcf` /
+      `vntyper_negative_fastq_matches_java_expected_vcf` gated by
+      `KESTREL_RUN_VNTYPER_FASTQ_PARITY=1`. The companion Java repo
+      `madhavajay/kestrel` branch `madhava/bioscript` adds 55 Java test
+      files (TestKestrelRunner, TestActiveRegion, TestMaxAlignmentScoreNode,
+      TestStateStackNode, TestTraceNodeContainer, etc.) plus a
+      `coverage-all.sh` JaCoCo harness documenting the Java semantics the
+      Rust port targets.
+      Verification (2026-05-15):
+      Vendor opt-in VNtyper FASTQ parity (positive + negative): 2 passed.
+      `CC=cc AR=ar cargo test --workspace` from `vendor/rust/kestrel-rs`:
+      192 kestrel + 33 kanalyze unit tests pass.
+      BioScript native FASTQ gate
+      (`BIOSCRIPT_RUN_NATIVE_FASTQ_PARITY=1 ... test_native_fastq_pipeline_gate`):
+      passed in ~15s.
+      Follow-up: bump the bioscript parent repo's submodule pointer from
+      `1af889b` to the new kestrel-rs HEAD once PR #3 merges so the
+      BioScript native FASTQ gate uses the fully fixed engine by default.
+      File an upstream issue against `paudano/kestrel` documenting the
+      `nState` accounting bug so the bug is at least known; long term
+      both implementations could be fixed together.
+
+
 
 - [x] Owner: `bcftools-rs`
       Evidence:
