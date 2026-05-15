@@ -11,7 +11,14 @@ fn batch_lookup_preserves_input_order_after_coordinate_sorting() {
          rs1\t1\t10\tAG\n",
     )
     .unwrap();
-    let store = GenotypeStore::from_file(&path).unwrap();
+    let store = GenotypeStore::from_file_with_options(
+        &path,
+        &GenotypeLoadOptions {
+            assembly: Some(Assembly::Grch38),
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
 
     let results = store
         .lookup_variants(&[

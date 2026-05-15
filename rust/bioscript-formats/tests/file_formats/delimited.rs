@@ -14,7 +14,14 @@ fn delimited_parser_handles_comments_blank_lines_csv_and_split_alleles() {
     )
     .unwrap();
 
-    let store = GenotypeStore::from_file(&path).unwrap();
+    let store = GenotypeStore::from_file_with_options(
+        &path,
+        &GenotypeLoadOptions {
+            assembly: Some(Assembly::Grch38),
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
 
     assert_eq!(store.get("rs73885319").unwrap().as_deref(), Some("AG"));
     assert_eq!(store.get("rs60910145").unwrap().as_deref(), Some("--"));
@@ -55,7 +62,14 @@ fn delimited_parser_uses_comment_headers_aliases_quotes_and_extra_columns() {
     )
     .unwrap();
 
-    let store = GenotypeStore::from_file(&path).unwrap();
+    let store = GenotypeStore::from_file_with_options(
+        &path,
+        &GenotypeLoadOptions {
+            assembly: Some(Assembly::Grch38),
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
 
     assert_eq!(store.get("rsQuoted").unwrap().as_deref(), Some("AT"));
     assert_eq!(store.get("rsSlash").unwrap().as_deref(), Some("ID"));
@@ -87,7 +101,14 @@ fn delimited_parser_handles_space_delimited_rows_without_headers_and_inline_comm
     )
     .unwrap();
 
-    let store = GenotypeStore::from_file(&path).unwrap();
+    let store = GenotypeStore::from_file_with_options(
+        &path,
+        &GenotypeLoadOptions {
+            assembly: Some(Assembly::Grch38),
+            ..GenotypeLoadOptions::default()
+        },
+    )
+    .unwrap();
 
     assert_eq!(store.get("rsSpace").unwrap().as_deref(), Some("CT"));
     let observation = store

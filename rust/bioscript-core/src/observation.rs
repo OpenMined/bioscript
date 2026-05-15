@@ -94,12 +94,13 @@ pub struct ObservationRecord {
     pub facets: Option<String>,
 }
 
-pub const OBSERVATION_TSV_HEADERS: [&str; 29] = [
+pub const OBSERVATION_TSV_HEADERS: [&str; 30] = [
     "participant_id",
     "assay_id",
     "assay_version",
     "variant_key",
     "rsid",
+    "gene",
     "assembly",
     "chrom",
     "pos_start",

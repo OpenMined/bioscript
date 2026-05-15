@@ -1,4 +1,4 @@
-use bioscript_core::{RuntimeError, VariantObservation, VariantSpec};
+use bioscript_core::{Assembly, GenomicLocus, RuntimeError, VariantObservation, VariantSpec};
 
 use super::{
     describe_query, lookup_indexed_vcf_variants, scan_delimited_variants, scan_vcf_variants,
@@ -39,7 +39,7 @@ impl RsidMapBackend {
             }
         }
 
-        if let Some(locus) = variant.grch38.as_ref().or(variant.grch37.as_ref())
+        if let Some(locus) = delimited_locus_for_assembly(variant, self.assembly)
             && let Some((value, matched_rsid, source)) = self.locus_values.get(&(
                 locus.chrom.trim_start_matches("chr").to_ascii_lowercase(),
                 locus.start,
@@ -57,6 +57,19 @@ impl RsidMapBackend {
             });
         }
 
+        if variant.has_coordinates()
+            && self.assembly.is_none()
+            && matches!(
+                self.format,
+                GenotypeSourceFormat::Text | GenotypeSourceFormat::Zip
+            )
+        {
+            return Err(RuntimeError::Unsupported(format!(
+                "delimited genotype input assembly is unknown; refusing coordinate lookup for {}",
+                describe_query(variant)
+            )));
+        }
+
         let evidence = if variant.has_coordinates() {
             format!(
                 "no matching rsid or locus found for {}",
@@ -70,6 +83,17 @@ impl RsidMapBackend {
             evidence: vec![evidence],
             ..VariantObservation::default()
         })
+    }
+}
+
+pub(crate) fn delimited_locus_for_assembly(
+    variant: &VariantSpec,
+    assembly: Option<Assembly>,
+) -> Option<&GenomicLocus> {
+    match assembly {
+        Some(Assembly::Grch37) => variant.grch37.as_ref(),
+        Some(Assembly::Grch38) => variant.grch38.as_ref(),
+        None => None,
     }
 }
 

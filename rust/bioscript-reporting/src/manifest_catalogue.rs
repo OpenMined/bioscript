@@ -111,10 +111,17 @@ fn catalogue_row_task(
             idx + 2
         ));
     }
+    let mut tags = catalogue_tags.to_vec();
+    if let Some(gene) = columns.value(row, "gene").filter(|value| !value.is_empty()) {
+        let gene_tag = format!("gene:{gene}");
+        if !tags.iter().any(|tag| tag == &gene_tag) {
+            tags.push(gene_tag);
+        }
+    }
     let manifest = VariantManifest {
         path: PathBuf::from(format!("{catalogue_path}#{variant_id}")),
         name,
-        tags: catalogue_tags.to_vec(),
+        tags,
         spec,
     };
     Ok(VariantManifestTask {

@@ -229,6 +229,16 @@ fn render_app_observation_json(input: AppObservationJson) -> serde_json::Value {
         weak_indel_match,
         zygosity,
     } = input;
+    let gene = if gene.is_empty() {
+        manifest_gene_from_tags(&manifest).unwrap_or_default()
+    } else {
+        gene
+    };
+    let source = if source.is_null() {
+        manifest_default_source(&row, &manifest)
+    } else {
+        source
+    };
     serde_json::json!({
         "participant_id": row.get("participant_id").cloned().unwrap_or_default(),
         "assay_id": assay_id,
@@ -266,6 +276,34 @@ fn render_app_observation_json(input: AppObservationJson) -> serde_json::Value {
             serde_json::Value::Null
         },
         "facets": observation_facets(non_reportable_status, &observed_alt_alleles),
+    })
+}
+
+fn manifest_gene_from_tags(manifest: &VariantManifest) -> Option<String> {
+    manifest.tags.iter().find_map(|tag| {
+        tag.strip_prefix("gene:")
+            .filter(|gene| !gene.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn manifest_default_source(
+    row: &BTreeMap<String, String>,
+    manifest: &VariantManifest,
+) -> serde_json::Value {
+    let rsid = row
+        .get("matched_rsid")
+        .filter(|rsid| !rsid.is_empty())
+        .or_else(|| row.get("rsid").filter(|rsid| !rsid.is_empty()))
+        .or_else(|| manifest.spec.rsids.first().filter(|rsid| !rsid.is_empty()));
+    let Some(rsid) = rsid else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "kind": "database",
+        "label": "dbSNP / NCBI SNP",
+        "url": format!("https://www.ncbi.nlm.nih.gov/snp/{rsid}"),
+        "fields": ["identifiers.rsids"],
     })
 }
 
