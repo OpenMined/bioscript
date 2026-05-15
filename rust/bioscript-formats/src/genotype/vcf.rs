@@ -429,6 +429,6 @@ pub(crate) fn extract_vcf_sample_genotype(
     genotype_from_vcf_gt(sample_gt, reference, &alternate_refs)
 }
 
-pub(crate) fn detect_vcf_assembly(path: &Path, probe_lines: &[String]) -> Option<Assembly> {
+pub fn detect_vcf_assembly(path: &Path, probe_lines: &[String]) -> Option<Assembly> {
     detect_assembly(&path.to_string_lossy().to_ascii_lowercase(), probe_lines)
 }

@@ -54,6 +54,35 @@ pub(super) fn inspect_head_via_js_reader(
     }
 }
 
+pub(super) fn detect_vcf_assembly_via_js_reader(
+    read_at: js_sys::Function,
+    total_len: u64,
+    input_name: &str,
+) -> Option<bioscript_core::Assembly> {
+    use crate::js_reader::JsReader;
+    use std::{
+        io::{BufRead, BufReader},
+        path::Path,
+    };
+
+    let reader = JsReader::new(read_at, total_len, "vcf-assembly");
+    let bgzf_reader = noodles::bgzf::io::Reader::new(reader);
+    let mut lines = BufReader::new(bgzf_reader).lines();
+    let mut probe_lines = Vec::new();
+    for _ in 0..256 {
+        let line = match lines.next() {
+            Some(Ok(line)) => line,
+            Some(Err(_)) | None => break,
+        };
+        let reached_samples = line.starts_with("#CHROM");
+        probe_lines.push(line);
+        if reached_samples {
+            break;
+        }
+    }
+    bioscript_formats::detect_vcf_assembly(Path::new(input_name), &probe_lines)
+}
+
 /// Build the `SexInference` the CLI produces when `--sample-sex` is passed,
 /// without dragging in the bioscript-cli crate. Mirrors
 /// `bioscript_cli::report_options::explicit_sample_sex_inference`.

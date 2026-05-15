@@ -36,8 +36,8 @@ pub use types::{
 };
 use types::{CramBackend, DelimitedBackend, QueryBackend, RsidMapBackend, VcfBackend};
 pub use vcf::{
-    choose_variant_locus_for_assembly, imputed_reference_observation, observe_vcf_snp_with_reader,
-    observe_vcf_variant_with_reader,
+    choose_variant_locus_for_assembly, detect_vcf_assembly, imputed_reference_observation,
+    observe_vcf_snp_with_reader, observe_vcf_variant_with_reader,
 };
 use vcf::{lookup_indexed_vcf_variants, scan_vcf_variants};
 pub(crate) use vcf_tokens::genotype_from_vcf_gt;

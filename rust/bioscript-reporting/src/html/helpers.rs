@@ -3,7 +3,7 @@ pub(super) fn render_table_start(out: &mut String, table_id: &str, headers: &[&s
     let escaped_id = html_escape(table_id);
     let _ = write!(
         out,
-        "<div class=\"table-tools\"><input type=\"search\" placeholder=\"Filter table\" data-filter-for=\"{escaped_id}\" oninput=\"applyTableFilters('{escaped_id}')\"></div><div class=\"table-wrap\"><table id=\"{escaped_id}\"><thead><tr>"
+        "<div class=\"table-tools\"><input type=\"search\" placeholder=\"Filter table\" data-filter-for=\"{escaped_id}\" oninput=\"scheduleTableFilter('{escaped_id}')\"></div><div class=\"table-wrap\"><table id=\"{escaped_id}\"><thead><tr>"
     );
     for (index, header) in headers.iter().enumerate() {
         let _ = write!(
