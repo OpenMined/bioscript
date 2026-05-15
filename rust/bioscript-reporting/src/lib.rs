@@ -8,6 +8,7 @@ mod matching;
 mod observation;
 mod report_json;
 mod rows;
+mod runner;
 
 pub use analysis::{
     AnalysisOutputFormat, AnalysisOutputJsonInput, analysis_observations_relative_file,
@@ -37,4 +38,8 @@ pub use report_json::{
 };
 pub use rows::{
     MANIFEST_ROW_TSV_HEADERS, render_manifest_rows_tsv, render_manifest_trace_tsv, variant_row,
+};
+pub use runner::{
+    NoopReportAnalysisRunner, ReportAnalysisRunner, ReportInputContext, ReportRunOptions,
+    ReportRunResult, ReportVariantLookup, ReportWorkspace, run_report,
 };

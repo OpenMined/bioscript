@@ -7,15 +7,17 @@ pub(crate) struct BamReportLookup<R: std::io::Read + std::io::Seek> {
     pub(crate) label: String,
 }
 
-impl<R: std::io::Read + std::io::Seek> report_workspace::VariantLookup for BamReportLookup<R> {
-    fn lookup_variants(
-        &self,
-        specs: &[VariantSpec],
-    ) -> Result<Vec<VariantObservation>, RuntimeError> {
+impl<R: std::io::Read + std::io::Seek> bioscript_reporting::ReportVariantLookup
+    for BamReportLookup<R>
+{
+    fn lookup_variants(&self, specs: &[VariantSpec]) -> Result<Vec<VariantObservation>, String> {
         let mut reader = self.reader.borrow_mut();
         let mut out = Vec::with_capacity(specs.len());
         for spec in specs {
-            out.push(observe_bam_variant(&mut reader, &self.label, spec)?);
+            out.push(
+                observe_bam_variant(&mut reader, &self.label, spec)
+                    .map_err(|err| err.to_string())?,
+            );
         }
         Ok(out)
     }
