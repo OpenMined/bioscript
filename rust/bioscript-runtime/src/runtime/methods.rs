@@ -1,7 +1,7 @@
 use std::fs;
 
 use bioscript_core::RuntimeError;
-use bioscript_formats::{GenotypeLoadOptions, GenotypeStore};
+use bioscript_formats::{GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore};
 use monty::MontyObject;
 
 use super::{
@@ -39,12 +39,53 @@ impl BioscriptRuntime {
         )?)?;
         let loader = self.resolved_loader_options()?;
         let inner_store = if let Some(bytes) = self.read_virtual_binary_file(&path) {
-            GenotypeStore::from_bytes(
-                path.file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("input"),
-                &bytes,
-            )?
+            if bytes.is_empty()
+                && matches!(
+                    loader.format,
+                    Some(GenotypeSourceFormat::Cram | GenotypeSourceFormat::Bam)
+                )
+                && !self.config.preloaded_observations.is_empty()
+            {
+                GenotypeStore::empty()
+            } else {
+                // The report pipeline virtualizes the genotype input as in-memory
+                // bytes. CRAM/BAM cannot be decoded by the text/zip/vcf
+                // `from_bytes` path — route them to the byte-backed alignment
+                // backend, pulling the reference + index from the loader's
+                // virtualized companion files. (Regression: pre-rewrite these
+                // were real file paths handled by `from_file_with_options`.)
+                match alignment_bytes_kind(&bytes).or(match loader.format {
+                    Some(GenotypeSourceFormat::Cram | GenotypeSourceFormat::Bam) => loader.format,
+                    _ => None,
+                }) {
+                    Some(kind) => {
+                        let index = self.virtual_alignment_aux(loader.input_index.as_ref())?;
+                        let (reference, reference_index) =
+                            if matches!(kind, GenotypeSourceFormat::Cram) {
+                                (
+                                    self.virtual_alignment_aux(loader.reference_file.as_ref())?,
+                                    self.virtual_alignment_aux(loader.reference_index.as_ref())?,
+                                )
+                            } else {
+                                (Vec::new(), Vec::new())
+                            };
+                        GenotypeStore::from_alignment_bytes(
+                            kind,
+                            bytes,
+                            index,
+                            reference,
+                            reference_index,
+                            &loader,
+                        )
+                    }
+                    None => GenotypeStore::from_bytes(
+                        path.file_name()
+                            .and_then(|value| value.to_str())
+                            .unwrap_or("input"),
+                        &bytes,
+                    )?,
+                }
+            }
         } else {
             GenotypeStore::from_file_with_options(&path, &loader)?
         };
@@ -73,6 +114,26 @@ impl BioscriptRuntime {
             format!("path={}", path.display()),
         );
         Ok(genotype_file_object(handle))
+    }
+
+    /// Read a virtualized alignment companion (reference / `.fai` / `.crai` /
+    /// `.bai`). Prefers the virtual binary file; falls back to the real
+    /// filesystem so the CLI keeps working when the report did not virtualize
+    /// the companion.
+    fn virtual_alignment_aux(
+        &self,
+        path: Option<&std::path::PathBuf>,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let path = path.ok_or_else(|| {
+            RuntimeError::InvalidArguments(
+                "alignment input requires --reference-file/--input-index".to_owned(),
+            )
+        })?;
+        if let Some(bytes) = self.read_virtual_binary_file(path) {
+            return Ok(bytes);
+        }
+        std::fs::read(path)
+            .map_err(|err| RuntimeError::Io(format!("failed to read {}: {err}", path.display())))
     }
 
     pub(super) fn resolved_loader_options(&self) -> Result<GenotypeLoadOptions, RuntimeError> {
@@ -424,6 +485,22 @@ impl BioscriptRuntime {
         }
         host_write_text(self, &args[1..], kwargs)
     }
+}
+
+/// Sniff CRAM/BAM by magic bytes. CRAM files start with `CRAM`; BAM files
+/// start with `BAM\x01` (after bgzf this is the decompressed magic, but
+/// htslib BAMs are bgzf whose first block decompresses to it — the report
+/// hands us the raw `.bam`, whose bgzf wrapper starts `\x1f\x8b`; noodles'
+/// indexed reader handles the bgzf, so detect BAM via the gzip magic plus
+/// the `.bam`-style content, while CRAM is the literal `CRAM` magic).
+fn alignment_bytes_kind(bytes: &[u8]) -> Option<GenotypeSourceFormat> {
+    if bytes.starts_with(b"CRAM") {
+        return Some(GenotypeSourceFormat::Cram);
+    }
+    if bytes.starts_with(b"BAM\x01") {
+        return Some(GenotypeSourceFormat::Bam);
+    }
+    None
 }
 
 fn tsv_rows_object(text: &str) -> MontyObject {

@@ -310,6 +310,19 @@ fn loader_with_inspection(
     inspection: &bioscript_formats::FileInspection,
 ) -> GenotypeLoadOptions {
     let mut loader = base.clone();
+    if loader.format.is_none() {
+        loader.format = match inspection.detected_kind {
+            bioscript_formats::DetectedKind::AlignmentBam => {
+                Some(GenotypeSourceFormat::Bam)
+            }
+            bioscript_formats::DetectedKind::AlignmentCram => {
+                Some(GenotypeSourceFormat::Cram)
+            }
+            bioscript_formats::DetectedKind::Vcf => Some(GenotypeSourceFormat::Vcf),
+            bioscript_formats::DetectedKind::GenotypeText => Some(GenotypeSourceFormat::Text),
+            _ => None,
+        };
+    }
     loader.assembly = inspection.assembly.or(loader.assembly);
     loader.inferred_sex = inspection
         .inferred_sex

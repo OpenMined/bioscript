@@ -9,7 +9,9 @@ use zip::ZipArchive;
 
 use bioscript_core::{RuntimeError, VariantObservation, VariantSpec};
 
+mod alignment_bytes;
 mod backends;
+mod bam_backend;
 mod cache;
 mod common;
 mod cram_backend;
@@ -20,6 +22,7 @@ mod types;
 mod vcf;
 mod vcf_tokens;
 
+pub use bam_backend::observe_bam_variant;
 pub(crate) use cache::{match_cached_observation, required_cache_miss};
 pub(crate) use common::{describe_query, normalize_genotype, variant_sort_key};
 pub use cram_backend::{
@@ -33,10 +36,13 @@ use io::{
     detect_source_format, is_bgzf_path, looks_like_vcf_lines, read_lines_from_reader,
     select_zip_entry,
 };
+use types::{
+    AlignmentBytesBackend, BamBackend, CramBackend, DelimitedBackend, QueryBackend, RsidMapBackend,
+    VcfBackend,
+};
 pub use types::{
     BackendCapabilities, GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind,
 };
-use types::{CramBackend, DelimitedBackend, QueryBackend, RsidMapBackend, VcfBackend};
 pub use vcf::{
     choose_variant_locus_for_assembly, detect_vcf_assembly, imputed_reference_observation,
     observe_vcf_snp_with_reader, observe_vcf_variant_with_reader,
@@ -116,10 +122,7 @@ impl GenotypeStore {
             GenotypeSourceFormat::Zip => Self::from_zip_file(path, options),
             GenotypeSourceFormat::Vcf => Ok(Self::from_vcf_file(path, options)),
             GenotypeSourceFormat::Cram => Self::from_cram_file(path, options),
-            GenotypeSourceFormat::Bam => Err(RuntimeError::Unsupported(format!(
-                "BAM alignment lookup is not implemented yet for {}",
-                path.display()
-            ))),
+            GenotypeSourceFormat::Bam => Ok(Self::from_bam_file(path, options)),
         }
     }
 
@@ -236,6 +239,40 @@ impl GenotypeStore {
         })
     }
 
+    fn from_bam_file(path: &Path, options: &GenotypeLoadOptions) -> Self {
+        Self {
+            backend: QueryBackend::Bam(BamBackend {
+                path: path.to_path_buf(),
+                options: options.clone(),
+            }),
+        }
+    }
+
+    /// Build an in-memory CRAM/BAM store. `kind` is `Cram` or `Bam`; `index`
+    /// is the `.crai`/`.bai` bytes; `reference`/`reference_index` are the
+    /// FASTA + `.fai` bytes (CRAM only — pass empty for BAM). Used by the
+    /// report pipeline, which virtualizes the genotype input.
+    #[must_use]
+    pub fn from_alignment_bytes(
+        kind: GenotypeSourceFormat,
+        data: Vec<u8>,
+        index: Vec<u8>,
+        reference: Vec<u8>,
+        reference_index: Vec<u8>,
+        options: &GenotypeLoadOptions,
+    ) -> Self {
+        Self {
+            backend: QueryBackend::AlignmentBytes(AlignmentBytesBackend {
+                kind,
+                data,
+                index,
+                reference,
+                reference_index,
+                options: options.clone(),
+            }),
+        }
+    }
+
     fn from_vcf_reader<R: BufRead>(reader: R, label: &str) -> Result<Self, RuntimeError> {
         loaders::from_vcf_reader(reader, label)
     }
@@ -278,10 +315,12 @@ impl GenotypeStore {
                 rsid_lookup: true,
                 locus_lookup: true,
             },
-            QueryBackend::Cram(_) => BackendCapabilities {
-                rsid_lookup: false,
-                locus_lookup: true,
-            },
+            QueryBackend::Cram(_) | QueryBackend::Bam(_) | QueryBackend::AlignmentBytes(_) => {
+                BackendCapabilities {
+                    rsid_lookup: false,
+                    locus_lookup: true,
+                }
+            }
             QueryBackend::Cached { .. } => {
                 // The cache itself answers both rsid and locus queries (we
                 // match by either), so unioning with the fallback gives the
@@ -308,6 +347,8 @@ impl GenotypeStore {
             QueryBackend::Delimited(backend) => backend.backend_name(),
             QueryBackend::Vcf(backend) => backend.backend_name(),
             QueryBackend::Cram(backend) => backend.backend_name(),
+            QueryBackend::Bam(backend) => backend.backend_name(),
+            QueryBackend::AlignmentBytes(backend) => backend.backend_name(),
             QueryBackend::Cached { .. } => "cached",
         }
     }
@@ -318,6 +359,18 @@ impl GenotypeStore {
             QueryBackend::Delimited(backend) => backend.get(rsid),
             QueryBackend::Vcf(backend) => backend.get(rsid),
             QueryBackend::Cram(backend) => backend
+                .lookup_variant(&VariantSpec {
+                    rsids: vec![rsid.to_owned()],
+                    ..VariantSpec::default()
+                })
+                .map(|obs| obs.genotype),
+            QueryBackend::Bam(backend) => backend
+                .lookup_variant(&VariantSpec {
+                    rsids: vec![rsid.to_owned()],
+                    ..VariantSpec::default()
+                })
+                .map(|obs| obs.genotype),
+            QueryBackend::AlignmentBytes(backend) => backend
                 .lookup_variant(&VariantSpec {
                     rsids: vec![rsid.to_owned()],
                     ..VariantSpec::default()
@@ -357,6 +410,8 @@ impl GenotypeStore {
             QueryBackend::Delimited(backend) => backend.lookup_variant(variant),
             QueryBackend::Vcf(backend) => backend.lookup_variant(variant),
             QueryBackend::Cram(backend) => backend.lookup_variant(variant),
+            QueryBackend::Bam(backend) => backend.lookup_variant(variant),
+            QueryBackend::AlignmentBytes(backend) => backend.lookup_variant(variant),
             QueryBackend::Cached {
                 observations,
                 fallback,
@@ -421,6 +476,12 @@ impl GenotypeStore {
             return backend.lookup_variants(variants);
         }
         if let QueryBackend::Cram(backend) = &self.backend {
+            return backend.lookup_variants(variants);
+        }
+        if let QueryBackend::Bam(backend) = &self.backend {
+            return backend.lookup_variants(variants);
+        }
+        if let QueryBackend::AlignmentBytes(backend) = &self.backend {
             return backend.lookup_variants(variants);
         }
         let mut indexed: Vec<(usize, &VariantSpec)> = variants.iter().enumerate().collect();
@@ -1123,11 +1184,17 @@ mod tests {
             detect_source_format(&bam, None).unwrap(),
             GenotypeSourceFormat::Bam
         ));
+        let bam_store = GenotypeStore::from_file(&bam).unwrap();
+        assert_eq!(bam_store.backend_name(), "bam");
         assert!(
-            GenotypeStore::from_file(&bam)
+            bam_store
+                .lookup_variant(&VariantSpec {
+                    rsids: vec!["rs1".to_owned()],
+                    ..VariantSpec::default()
+                })
                 .unwrap_err()
                 .to_string()
-                .contains("BAM alignment lookup is not implemented yet")
+                .contains("without --input-index")
         );
         assert!(!looks_like_vcf_lines(&["rsid\tgenotype".to_owned()]));
 
