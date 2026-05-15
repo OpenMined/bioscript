@@ -25,36 +25,61 @@ The overall goal right now is `test-vntyper.sh` as the single command for
 proving Java-Kestrel and BioScript/Rust-Kestrel are interchangeable end to
 end. The two engines must produce the same test output for the same input.
 
-- [ ] `./test-vntyper.sh --java` runs VNtyper through the Java Kestrel
+Status 2026-05-15: the tool is built and working. FASTQ parity is exact
+(Java and Rust agree byte-for-byte on the canonical TSV fingerprint for
+both fixtures). The tool also surfaced a real BAM-path gap that is now
+recorded under **Current blockers** (`samtools-rs` FASTQ extraction emits
+a slightly different read set than external `samtools fastq`).
+
+- [x] `./test-vntyper.sh --java` runs VNtyper through the Java Kestrel
       reference pipeline against the representative BAM/FASTQ fixtures and
       prints the test output (classification, TSV rows, report JSON
       summary) to the terminal.
-- [ ] `./test-vntyper.sh --rust` runs VNtyper through BioScript (Rust
+      Implemented by `ports/vntyper/tests/run_parity_pipeline.py`
+      (`--engine java`), driven from `test-vntyper.sh`. Verified
+      2026-05-15: `./test-vntyper.sh --java --fastq` prints negative
+      (rows=4897) and positive (rows=3737) classification + fingerprint.
+- [x] `./test-vntyper.sh --rust` runs VNtyper through BioScript (Rust
       kestrel-rs via `_native.so`) against the same fixtures and prints
       the matching test output in the same shape.
-- [ ] `./test-vntyper.sh --java --rust` runs both back to back and shows a
+      Same helper with `--engine rust`. Verified 2026-05-15: FASTQ
+      negative/positive TSV sha256 match Java exactly.
+- [x] `./test-vntyper.sh --java --rust` runs both back to back and shows a
       side-by-side diff that is empty when parity holds. Exit non-zero if
       the two outputs differ.
-- [ ] What "same output" means is explicit in the script: classification,
+      `ports/vntyper/tests/diff_parity_outputs.py` prints a case-by-case
+      MATCH/DIFF table and returns non-zero on divergence; the shell
+      summary propagates the failure. Verified: FASTQ run is all MATCH
+      and exits 0; BAM run is DIFF and exits 1.
+- [x] What "same output" means is explicit in the script: classification,
       canonicalized TSV rows over the stable columns, and report JSON
       with documented allowances for paths, timestamps, and tool-version
       metadata. No silent skips.
-- [ ] Each step prints what it ran, where the log is, wall time, and
+      `run_parity_pipeline.py` emits the `normalized_tsv_fingerprint` and
+      `normalized_report_summary` from `parity_helpers.py`;
+      `diff_parity_outputs.py` scrubs only the engine/pipeline label and
+      wall-time fields and documents that in its module docstring.
+- [x] Each step prints what it ran, where the log is, wall time, and
       pass/fail, so the human reading the terminal can see Java vs Rust
       output without having to grep logs by hand.
-- [ ] Cover both inputs: `--bam` and `--fastq`. Java-only FASTQ is not a
-      thing in this repo — for FASTQ, "Java" means the BioScript external
-      Java-Kestrel path, not a separate Java-only entry point. Spell this
-      out in `--help` and in the summary table.
-- [ ] Reuse the existing opt-in gates as the test plumbing: external Java
-      BAM parity, native Rust BAM/FASTQ parity, and the strict
-      TSV/report fingerprint gate. Do not invent a second test path
-      alongside them.
-- [ ] When parity fails, the script points at the smallest reproducer:
-      which fixture, which engine, which field diverged. The diff should
-      be obvious enough to file a follow-up against `kestrel-rs`,
-      `bcftools-rs`, `samtools-rs`, or the BioScript port without
-      re-running anything.
+      `run_step` in `test-vntyper.sh` prints the command, log path, wall
+      time, PASS/FAIL, and a tail on failure; `show_engine_output` prints
+      each engine's per-case classification/rows/sha + top passing rows.
+- [x] Cover both inputs: `--bam` and `--fastq`. For FASTQ, "Java" means
+      the same coordinator with the Java engine selected, not a separate
+      Java-only entry point. Spelled out in `--help` and the script
+      header. (Earlier note that there is "no Java-only FASTQ gate" was
+      wrong: `run_fastq_kestrel(..., use_native_kestrel=False)` runs Java
+      Kestrel directly on the FASTQ pair, and the tool uses it.)
+- [x] Reuse the existing pipeline as the test plumbing: the helper calls
+      the same `run_bam_pipeline` / `run_fastq_kestrel` the opt-in gate
+      tests call, just with the engine selected by flag. No second
+      pipeline path was introduced.
+- [x] When parity fails, the script points at the smallest reproducer:
+      which fixture, which engine, which field diverged. Verified: the
+      BAM run prints per-case `kestrel_variant_count`, `row_count`, and
+      `sha256` diffs, which isolates the gap to `samtools-rs` FASTQ
+      extraction (see **Current blockers**) without re-running anything.
 
 ## Work Rule: Keep Porting Until Only Blockers Remain
 
@@ -385,16 +410,22 @@ recorded dependency/runtime issues.
 
 ## Engine Parity Gaps To Close Or Escalate
 
-- [x] `samtools-rs`: verify FASTQ extraction matches the VNtyper command chain
+- [~] `samtools-rs`: verify FASTQ extraction matches the VNtyper command chain
       `view -P | sort -n | fastq -1/-2/-0/-s` for representative fixtures.
-- [x] `samtools-rs`: if counts differ from real samtools, reduce to a small
+      Reopened 2026-05-15: `test-vntyper.sh --java --rust --bam` shows a
+      residual per-read routing difference on the negative/positive BAM
+      fixtures. Tracked under **Current blockers** (owner `samtools-rs` /
+      `htslib-rs`).
+- [~] `samtools-rs`: if counts differ from real samtools, reduce to a small
       fixture and fix in the engine crate or document an intentional difference.
-      Fixed in the shared vendored `htslib-rs` FASTQ split helper by grouping
-      BAM records by qname and routing missing mates to the singleton output.
-      Added the reduced regression
-      `test_view_bam_as_fastq_split_routes_missing_mates_to_singletons`.
-      Verified with
-      `BIOSCRIPT_RUN_SAMTOOLS_ORACLE=1 PYTHONPATH=python:ports/vntyper/bioscript python -m unittest ports.vntyper.tests.test_samtools_fastq_oracle`.
+      A prior pass fixed the shared vendored `htslib-rs` FASTQ split helper by
+      grouping BAM records by qname and routing missing mates to the singleton
+      output (regression
+      `test_view_bam_as_fastq_split_routes_missing_mates_to_singletons`,
+      verified against the samtools oracle counts). That closed the
+      aggregate-count gap but a residual ~0.5% read-set difference remains
+      on the VNtyper MUC1 BAM slice — see **Current blockers** for the
+      exact read counts and next unblock action.
 - [x] `kestrel-rs`: run VNtyper FASTQ positive/negative fixtures and compare
       VCF records against Java Kestrel expected outputs.
       Attempted 2026-05-14 via
@@ -612,8 +643,36 @@ Owner: <BioScript runtime | bioscript-libs | noodles | htslib-rs | samtools-rs |
 
 Current blockers:
 
-None. All previously tracked blockers are resolved. See **Resolved
-blockers** below.
+- [ ] Owner: `samtools-rs` (or the shared `htslib-rs` FASTQ split helper)
+      Evidence:
+      `./test-vntyper.sh --java --rust --bam` exits non-zero. For the
+      negative BAM fixture, external `samtools fastq` (Java path) extracts
+      R1=19690 / R2=19644 reads while native `samtools-rs` (Rust path)
+      extracts R1=19781 / R2=19745 reads. That ~0.5% read-set difference
+      propagates downstream to Kestrel: Java emits 4806 rows, Rust 4900
+      (positive fixture: 3717 vs 3739). Reproduce the read-count delta
+      directly:
+      `zcat /tmp/vntyper-run-*/java-bam/java/negative/negative_R1.fastq.gz | wc -l`
+      vs the matching `rust-bam/rust/negative/negative_R1.fastq.gz`.
+      Isolation: FASTQ→Kestrel parity is exact for both engines
+      (`./test-vntyper.sh --java --rust --fastq` is all MATCH, identical
+      TSV sha256), so the Kestrel engines are proven equivalent and the
+      BAM divergence is entirely the BAM→FASTQ extraction step.
+      Missing behavior: `samtools-rs` `view -P | sort -n | fastq
+      -1 -2 -0 -s` must select and route the exact same read set
+      (including singleton/`-0`/`-s` routing) as upstream `samtools` for
+      the VNtyper MUC1 BAM slice. The earlier "[x] samtools-rs FASTQ
+      extraction matches" claim under **Engine Parity Gaps** was verified
+      against the samtools oracle counts but a residual per-read routing
+      difference remains on these fixtures.
+      VNtyper impact: the BAM entry point cannot claim Java↔Rust output
+      parity; only the FASTQ entry point can. Strict BAM TSV/report
+      fingerprint parity stays blocked.
+      Next unblock action: reduce to a minimal BAM (a few hundred MUC1
+      reads) where `samtools fastq` and `samtools-rs` disagree, add it as
+      a `samtools-rs` (or `htslib-rs`) regression, and fix the read
+      selection/mate-routing in the engine crate. Then re-run
+      `./test-vntyper.sh --java --rust --bam` to confirm all-MATCH.
 
 Resolved blockers:
 
