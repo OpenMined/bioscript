@@ -45,6 +45,7 @@ KESTREL_TSV_COLUMNS = [
 NATIVE_KESTREL_MAX_HAPLOTYPES = vntyper_config.NATIVE_KESTREL_MAX_HAPLOTYPES
 NATIVE_KESTREL_MAX_SAVED_STATES = vntyper_config.NATIVE_KESTREL_MAX_SAVED_STATES
 NATIVE_KESTREL_MAX_BASES = vntyper_config.NATIVE_KESTREL_MAX_BASES
+NATIVE_KESTREL_MIN_KMER_COUNT = vntyper_config.NATIVE_KESTREL_MIN_KMER_COUNT
 
 
 @dataclass(frozen=True)
@@ -291,6 +292,7 @@ def run_native_kestrel(
         output_vcf,
         kmer_size=20,
         sample_name=plan.participant_id,
+        min_kmer_count=NATIVE_KESTREL_MIN_KMER_COUNT,
         max_haplotypes=NATIVE_KESTREL_MAX_HAPLOTYPES,
         max_saved_states=NATIVE_KESTREL_MAX_SAVED_STATES,
         max_bases=NATIVE_KESTREL_MAX_BASES,
