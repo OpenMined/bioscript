@@ -68,11 +68,7 @@ pub(crate) fn scan_delimited_variants(
 
         let delimiter = detect_delimiter(&probe_lines);
         if detected_assembly.is_none() {
-            let mut label = backend
-                .path
-                .to_string_lossy()
-                .to_ascii_lowercase()
-                .to_string();
+            let mut label = backend.path.to_string_lossy().to_ascii_lowercase();
             if let Some(entry_name) = backend.zip_entry_name.as_ref() {
                 label.push('\n');
                 label.push_str(&entry_name.to_ascii_lowercase());
