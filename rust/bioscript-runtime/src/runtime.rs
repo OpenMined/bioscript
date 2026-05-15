@@ -10,6 +10,7 @@ use bioscript_core::RuntimeError;
 use monty::{LimitedTracker, MontyObject, MontyRun, NameLookupResult, PrintWriter, RunProgress};
 
 mod args;
+mod genotype_load;
 mod host_io;
 mod methods;
 mod objects;
