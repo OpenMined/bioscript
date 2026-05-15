@@ -304,7 +304,7 @@ pub fn run_package_report_from_bam(
         bam_len as u64,
         input_name,
         &options.inspect_options(false),
-        false,
+        options.detect_sex,
     );
 
     let bai_index = bioscript_formats::alignment::parse_bai_bytes(bai_bytes)
