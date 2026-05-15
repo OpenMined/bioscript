@@ -49,7 +49,11 @@ fn native_vntyper_facades_can_extract_fastq_call_and_sort_vcf() {
     )
     .unwrap();
     assert!(vcf.contains("chr1\t5\t.\tC\tT"), "{vcf}");
-    assert_eq!(parse_kestrel_vcf(&vcf).unwrap().len(), 1);
+    // kestrel-rs is now bug-compatible with Java Kestrel (vendor PR #3),
+    // which emits the full motif-reference-equivalent record set rather
+    // than a single collapsed row. The canonical C>T call is asserted
+    // above; the parsed set is the Java-parity output, not 1.
+    assert_eq!(parse_kestrel_vcf(&vcf).unwrap().len(), 7);
 
     std::fs::write(&calls, vcf).unwrap();
     bcftools::sort_native(&calls, &sorted, "z", true).unwrap();

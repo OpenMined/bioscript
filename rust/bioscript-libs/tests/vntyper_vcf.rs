@@ -55,9 +55,9 @@ fn builds_vntyper_kestrel_call_rows_for_fixture() {
     assert_eq!(
         selected,
         vec![
-            "MUC1\t100\tC\tCGGCA\t120.0\t10000.0\t0.012\tHigh_Precision*\tTrue\tTrue\tTrue",
-            "MUC1\t160\tATG\tA\t50.0\t10000.0\t0.005\tLow_Precision\tTrue\tTrue\tTrue",
-            "MUC1\t220\tC\tCGG\t5.0\t10000.0\t0.0005\tNegative\tFalse\tTrue\tFalse",
+            "C-Q\t100\tC\tCGGCA\t120.0\t10000.0\t0.012\tHigh_Precision*\tTrue\tTrue\tTrue",
+            "C-Q\t160\tATG\tA\t50.0\t10000.0\t0.005\tLow_Precision\tTrue\tTrue\tTrue",
+            "C-Q\t220\tC\tCGG\t5.0\t10000.0\t0.0005\tNegative\tFalse\tTrue\tFalse",
         ]
     );
 }

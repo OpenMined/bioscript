@@ -172,8 +172,22 @@ fn vntyper_fastq_bioscript_program_runs_through_runtime() {
     assert!(plan.contains("first_variant_alt"));
     assert!(plan.contains("first_variant_confidence"));
     assert!(plan.contains("Low_Precision"));
-    assert!(plan.contains("\tT"));
-    assert!(output_dir.join("positive/kestrel/output.vcf").exists());
+    // The summary reports the variant at the expected substitution locus
+    // (reference AAAAC..., reads AAAAT... => chr1:5 ref C). kestrel-rs is
+    // now bug-compatible with Java Kestrel and emits the full
+    // motif-equivalent record set, so the *first* selected alt is no
+    // longer guaranteed to be the C>T row (here it is C>A). Assert the
+    // stable locus in the summary and the canonical C>T call in the
+    // deterministic engine VCF instead of a brittle "\tT" substring.
+    assert!(plan.contains("\tchr1\t"), "PLAN={plan}");
+    assert!(plan.contains("\t5\t"), "PLAN={plan}");
+    let output_vcf = output_dir.join("positive/kestrel/output.vcf");
+    assert!(output_vcf.exists());
+    let vcf_text = fs::read_to_string(&output_vcf).unwrap();
+    assert!(
+        vcf_text.contains("chr1\t5\t.\tC\tT"),
+        "expected canonical C>T call in kestrel VCF: {vcf_text}"
+    );
     assert!(
         output_dir
             .join("positive/kestrel/output.sorted.vcf.gz")
