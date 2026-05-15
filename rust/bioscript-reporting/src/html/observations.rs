@@ -1,4 +1,8 @@
-fn render_observation_table(
+use super::helpers::{
+    class_cell, html_escape, json_field_as_tsv, render_table_start, table_column_class, value_str,
+};
+use std::fmt::Write as _;
+pub(super) fn render_observation_table(
     out: &mut String,
     observations: &[serde_json::Value],
     show_participant_id: bool,
@@ -47,19 +51,23 @@ fn render_observation_table(
         !json_field_as_tsv(observation.get("match_quality")).is_empty()
             || !json_field_as_tsv(observation.get("match_notes")).is_empty()
     });
-    let show_imputed_reference_note = observations.iter().any(observation_is_imputed_vcf_reference);
+    let show_imputed_reference_note = observations
+        .iter()
+        .any(observation_is_imputed_vcf_reference);
     let show_weak_indel_note = observations.iter().any(observation_is_weak_indel_match);
     let headers = all_headers
         .iter()
         .copied()
         .filter(|header| show_participant_id || *header != "participant_id")
         .filter(|header| {
-            show_counts || !matches!(*header, "ref_count" | "alt_count" | "depth" | "allele_balance")
+            show_counts
+                || !matches!(
+                    *header,
+                    "ref_count" | "alt_count" | "depth" | "allele_balance"
+                )
         })
         .filter(|header| show_genotype_quality || *header != "genotype_quality")
-        .filter(|header| {
-            show_match_quality || !matches!(*header, "match_quality" | "match_notes")
-        })
+        .filter(|header| show_match_quality || !matches!(*header, "match_quality" | "match_notes"))
         .filter(|header| show_facets || *header != "facets")
         .collect::<Vec<_>>();
     render_table_start(out, "observations-table", &headers);
@@ -85,7 +93,7 @@ fn render_observation_table(
     }
 }
 
-fn observation_filter_group(observation: &serde_json::Value) -> &'static str {
+pub(super) fn observation_filter_group(observation: &serde_json::Value) -> &'static str {
     match observation_row_class(observation) {
         "row-reference" => "reference",
         "row-missing" => "missing",
@@ -93,7 +101,7 @@ fn observation_filter_group(observation: &serde_json::Value) -> &'static str {
     }
 }
 
-fn render_observation_filters(out: &mut String) {
+pub(super) fn render_observation_filters(out: &mut String) {
     out.push_str("<div class=\"level-filter\"><span class=\"muted\">Observations:</span>");
     for (outcome, label) in [
         ("variant", "Show variants"),
@@ -110,13 +118,13 @@ fn render_observation_filters(out: &mut String) {
     out.push_str("</div>");
 }
 
-fn observation_has_quantitative_depth(observation: &serde_json::Value) -> bool {
+pub(super) fn observation_has_quantitative_depth(observation: &serde_json::Value) -> bool {
     ["ref_count", "alt_count", "depth", "allele_balance"]
         .iter()
         .any(|key| !json_field_as_tsv(observation.get(*key)).is_empty())
 }
 
-fn observation_row_class(observation: &serde_json::Value) -> &'static str {
+pub(super) fn observation_row_class(observation: &serde_json::Value) -> &'static str {
     let outcome = observation
         .get("outcome")
         .and_then(serde_json::Value::as_str)
@@ -140,7 +148,11 @@ fn observation_row_class(observation: &serde_json::Value) -> &'static str {
     }
 }
 
-fn render_observation_cell(out: &mut String, observation: &serde_json::Value, header: &str) {
+pub(super) fn render_observation_cell(
+    out: &mut String,
+    observation: &serde_json::Value,
+    header: &str,
+) {
     let cell_class = table_column_class(header);
     if header == "outcome" {
         let mut value = json_field_as_tsv(observation.get(header));
@@ -149,11 +161,16 @@ fn render_observation_cell(out: &mut String, observation: &serde_json::Value, he
         {
             value.push('*');
         }
-        let _ = write!(out, "<td class=\"{}\">{}</td>", cell_class, html_escape(&value));
+        let _ = write!(
+            out,
+            "<td class=\"{}\">{}</td>",
+            cell_class,
+            html_escape(&value)
+        );
         return;
     }
     if header == "ref_alt" {
-        class_cell(out, &observation_ref_alt(observation), "mono");
+        ref_alt_cell(out, observation);
         return;
     }
     if header == "allele_balance" {
@@ -166,7 +183,9 @@ fn render_observation_cell(out: &mut String, observation: &serde_json::Value, he
         return;
     }
     if header == "source" {
-        let source = observation.get("source").unwrap_or(&serde_json::Value::Null);
+        let source = observation
+            .get("source")
+            .unwrap_or(&serde_json::Value::Null);
         let url = source
             .get("url")
             .and_then(serde_json::Value::as_str)
@@ -211,7 +230,16 @@ fn render_observation_cell(out: &mut String, observation: &serde_json::Value, he
     );
 }
 
-fn observation_is_imputed_vcf_reference(observation: &serde_json::Value) -> bool {
+fn ref_alt_cell(out: &mut String, observation: &serde_json::Value) {
+    let value = observation_ref_alt(observation);
+    let escaped_value = html_escape(&value);
+    let _ = write!(
+        out,
+        "<td class=\"mono ref-alt-cell\" title=\"{escaped_value}\"><span class=\"truncate-cell\">{escaped_value}</span></td>"
+    );
+}
+
+pub(super) fn observation_is_imputed_vcf_reference(observation: &serde_json::Value) -> bool {
     observation
         .get("evidence_raw")
         .and_then(serde_json::Value::as_str)
@@ -220,14 +248,14 @@ fn observation_is_imputed_vcf_reference(observation: &serde_json::Value) -> bool
         })
 }
 
-fn observation_is_weak_indel_match(observation: &serde_json::Value) -> bool {
+pub(super) fn observation_is_weak_indel_match(observation: &serde_json::Value) -> bool {
     observation
         .get("match_quality")
         .and_then(serde_json::Value::as_str)
         == Some("weak")
 }
 
-fn observation_ref_alt(observation: &serde_json::Value) -> String {
+pub(super) fn observation_ref_alt(observation: &serde_json::Value) -> String {
     let ref_allele = observation
         .get("ref")
         .and_then(serde_json::Value::as_str)
@@ -243,7 +271,7 @@ fn observation_ref_alt(observation: &serde_json::Value) -> String {
     }
 }
 
-fn highlight_allele(value: &str, allele: &str) -> String {
+pub(super) fn highlight_allele(value: &str, allele: &str) -> String {
     if value.is_empty() || allele.is_empty() {
         return html_escape(value);
     }

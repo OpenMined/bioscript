@@ -1001,11 +1001,9 @@ if __name__ == "__main__":
     let output = fs::read_to_string(dir.join("outputs/batch.txt")).unwrap();
     assert!(output.contains("CT"), "{output}");
     assert!(output.contains("AG"), "{output}");
+    assert!(output.contains("None"), "{output}");
     assert!(output.contains("VariantObservation"), "{output}");
-    assert!(
-        output.contains("no matching rsid or locus found"),
-        "{output}"
-    );
+    assert!(output.contains("no matching"), "{output}");
     let timings = runtime.timing_snapshot();
     assert!(
         timings

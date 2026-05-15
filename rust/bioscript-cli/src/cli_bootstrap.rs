@@ -57,13 +57,15 @@ fn run_cli() -> Result<(), String> {
     Ok(())
 }
 
-const USAGE: &str = "usage: bioscript <script.py|manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--input-file <path>] [--output-file <path>] [--participant-id <id>] [--trace-report <path>] [--timing-report <path>] [--filter key=value] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript report <manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> --input-file <path> [--input-file <path>...] --output-dir <dir> [--html] [--open] [--root <dir>] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--allow-md5-mismatch] [--detect-sex] [--sample-sex male|female|unknown] [--analysis-max-duration-ms N]\n       bioscript review <manifest.yaml|package.yaml|package.zip> --cases <cases.yaml> --output-dir <dir> [--html] [--root <dir>] [--filter key=value]\n       bioscript import-package <package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--output-dir <dir>]\n       bioscript validate-variants <path> [--report <file>]\n       bioscript validate-panels <path> [--report <file>]\n       bioscript validate-assays <path> [--report <file>]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|cram] [--cache-dir <path>]\n       bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--detect-sex]";
+const USAGE: &str = "usage: bioscript <script.py|manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--input-file <path>] [--output-file <path>] [--observations-file <path>] [--asset id=path] [--participant-id <id>] [--trace-report <path>] [--timing-report <path>] [--filter key=value] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript report <manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> --input-file <path> [--input-file <path>...] --output-dir <dir> [--html] [--open] [--root <dir>] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--allow-md5-mismatch] [--detect-sex] [--sample-sex male|female|unknown] [--analysis-max-duration-ms N]\n       bioscript review <manifest.yaml|package.yaml|package.zip> --cases <cases.yaml> --output-dir <dir> [--html] [--root <dir>] [--filter key=value]\n       bioscript import-package <package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--output-dir <dir>]\n       bioscript validate-variants <path> [--report <file>]\n       bioscript validate-panels <path> [--report <file>]\n       bioscript validate-assays <path> [--report <file>]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|cram] [--cache-dir <path>]\n       bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--detect-sex]";
 
 struct CliOptions {
     script_path: Option<PathBuf>,
     root: Option<PathBuf>,
     input_file: Option<String>,
     output_file: Option<String>,
+    observations_file: Option<String>,
+    asset_paths: BTreeMap<String, String>,
     participant_id: Option<String>,
     trace_report: Option<PathBuf>,
     timing_report: Option<PathBuf>,
@@ -107,6 +109,8 @@ fn default_cli_options() -> CliOptions {
         root: None,
         input_file: None,
         output_file: None,
+        observations_file: None,
+        asset_paths: BTreeMap::new(),
         participant_id: None,
         trace_report: None,
         timing_report: None,
@@ -167,6 +171,24 @@ fn parse_cli_path_arg(
                 return Err("--output-file requires a path".to_owned());
             };
         options.output_file = Some(value);
+    } else if arg == "--observations-file" {
+            let Some(value) = args.next() else {
+                return Err("--observations-file requires a path".to_owned());
+            };
+        options.observations_file = Some(value);
+    } else if arg == "--asset" {
+            let Some(value) = args.next() else {
+                return Err("--asset requires id=path".to_owned());
+            };
+        let Some((id, path)) = value.split_once('=') else {
+            return Err("--asset requires id=path".to_owned());
+        };
+        let id = id.trim();
+        let path = path.trim();
+        if id.is_empty() || path.is_empty() {
+            return Err("--asset requires non-empty id=path".to_owned());
+        }
+        options.asset_paths.insert(id.to_owned(), path.to_owned());
     } else if arg == "--participant-id" {
             let Some(value) = args.next() else {
                 return Err("--participant-id requires a value".to_owned());
@@ -380,6 +402,15 @@ fn run_cli_script(
     if let Some(output_file) = options.output_file {
         inputs.push(("output_file", monty::MontyObject::String(output_file)));
     }
+    if let Some(observations_file) = options.observations_file {
+        inputs.push((
+            "observations_file",
+            monty::MontyObject::String(observations_file),
+        ));
+    }
+    if !options.asset_paths.is_empty() {
+        inputs.push(("asset_paths", monty_string_dict(&options.asset_paths)));
+    }
     if let Some(participant_id) = options.participant_id {
         inputs.push(("participant_id", monty::MontyObject::String(participant_id)));
     }
@@ -418,6 +449,20 @@ fn parse_script_global_filter(
     Ok((key, monty::MontyObject::String(value.to_owned())))
 }
 
+fn monty_string_dict(values: &BTreeMap<String, String>) -> monty::MontyObject {
+    monty::MontyObject::Dict(
+        values
+            .iter()
+            .map(|(key, value)| {
+                (
+                    monty::MontyObject::String(key.clone()),
+                    monty::MontyObject::String(value.clone()),
+                )
+            })
+            .collect(),
+    )
+}
+
 fn write_timing_report(path: &PathBuf, timings: &[StageTiming]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| {
@@ -439,4 +484,163 @@ fn write_timing_report(path: &PathBuf, timings: &[StageTiming]) -> Result<(), St
     }
     fs::write(path, output)
         .map_err(|err| format!("failed to write timing report {}: {err}", path.display()))
+}
+
+#[cfg(test)]
+mod cli_bootstrap_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!(
+            "bioscript-cli-bootstrap-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn parse_cli_options_consumes_paths_loader_limits_and_filters() {
+        let options = parse_cli_options(vec![
+            "script.bs".to_owned(),
+            "--root".to_owned(),
+            "root".to_owned(),
+            "--input-file".to_owned(),
+            "input.txt".to_owned(),
+            "--output-file".to_owned(),
+            "output.txt".to_owned(),
+            "--participant-id".to_owned(),
+            "p1".to_owned(),
+            "--trace-report".to_owned(),
+            "trace.tsv".to_owned(),
+            "--timing-report".to_owned(),
+            "timing.tsv".to_owned(),
+            "--filter".to_owned(),
+            "tag=pgx".to_owned(),
+            "--cache-dir".to_owned(),
+            "cache".to_owned(),
+            "--input-format".to_owned(),
+            "text".to_owned(),
+            "--input-index".to_owned(),
+            "input.idx".to_owned(),
+            "--reference-file".to_owned(),
+            "ref.fa".to_owned(),
+            "--reference-index".to_owned(),
+            "ref.fa.fai".to_owned(),
+            "--max-duration-ms".to_owned(),
+            "250".to_owned(),
+            "--max-memory-bytes".to_owned(),
+            "1024".to_owned(),
+            "--max-allocations".to_owned(),
+            "2000".to_owned(),
+            "--max-recursion-depth".to_owned(),
+            "50".to_owned(),
+            "--auto-index".to_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(options.script_path, Some(PathBuf::from("script.bs")));
+        assert_eq!(options.root, Some(PathBuf::from("root")));
+        assert_eq!(options.input_file.as_deref(), Some("input.txt"));
+        assert_eq!(options.output_file.as_deref(), Some("output.txt"));
+        assert_eq!(options.participant_id.as_deref(), Some("p1"));
+        assert_eq!(options.trace_report, Some(PathBuf::from("trace.tsv")));
+        assert_eq!(options.timing_report, Some(PathBuf::from("timing.tsv")));
+        assert_eq!(options.filters, vec!["tag=pgx"]);
+        assert_eq!(options.cache_dir, Some(PathBuf::from("cache")));
+        assert_eq!(options.loader.format, Some(GenotypeSourceFormat::Text));
+        assert_eq!(options.loader.input_index, Some(PathBuf::from("input.idx")));
+        assert_eq!(options.loader.reference_file, Some(PathBuf::from("ref.fa")));
+        assert_eq!(
+            options.loader.reference_index,
+            Some(PathBuf::from("ref.fa.fai"))
+        );
+        assert!(options.auto_index);
+    }
+
+    #[test]
+    fn parse_cli_options_reports_missing_values_and_unexpected_arguments() {
+        for (flag, message) in [
+            ("--root", "--root requires"),
+            ("--input-file", "--input-file requires"),
+            ("--output-file", "--output-file requires"),
+            ("--participant-id", "--participant-id requires"),
+            ("--trace-report", "--trace-report requires"),
+            ("--timing-report", "--timing-report requires"),
+            ("--filter", "--filter requires"),
+            ("--cache-dir", "--cache-dir requires"),
+            ("--input-format", "--input-format requires"),
+            ("--input-index", "--input-index requires"),
+            ("--reference-file", "--reference-file requires"),
+            ("--reference-index", "--reference-index requires"),
+            ("--max-duration-ms", "--max-duration-ms requires"),
+            ("--max-memory-bytes", "--max-memory-bytes requires"),
+            ("--max-allocations", "--max-allocations requires"),
+            ("--max-recursion-depth", "--max-recursion-depth requires"),
+        ] {
+            assert!(parse_err(vec![flag.to_owned()]).contains(message));
+        }
+        assert!(parse_err(vec![
+            "script.bs".to_owned(),
+            "extra.bs".to_owned(),
+        ])
+        .contains("unexpected argument"));
+        assert!(parse_err(vec![
+            "--input-format".to_owned(),
+            "bad".to_owned(),
+        ])
+        .contains("invalid --input-format"));
+        assert!(parse_err(vec![
+            "--max-duration-ms".to_owned(),
+            "bad".to_owned(),
+        ])
+        .contains("invalid --max-duration-ms"));
+    }
+
+    #[test]
+    fn write_timing_report_creates_parent_and_sanitizes_tabs() {
+        let dir = temp_dir("timing");
+        let path = dir.join("nested/timing.tsv");
+        write_timing_report(
+            &path,
+            &[
+                StageTiming {
+                    stage: "stage1".to_owned(),
+                    duration_ms: 12,
+                    detail: "a\tb".to_owned(),
+                },
+                StageTiming {
+                    stage: "stage2".to_owned(),
+                    duration_ms: 0,
+                    detail: "ok".to_owned(),
+                },
+            ],
+        )
+        .unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("stage\tduration_ms\tdetail\n"));
+        assert!(text.contains("stage1\t12\ta b"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn prepare_cli_indexes_noops_when_auto_index_is_disabled() {
+        let mut options = default_cli_options();
+        let timings = prepare_cli_indexes(Path::new("."), &mut options).unwrap();
+        assert!(timings.is_empty());
+        assert!(options.loader.input_index.is_none());
+    }
+
+    fn parse_err(args: Vec<String>) -> String {
+        match parse_cli_options(args) {
+            Ok(_) => panic!("expected CLI parse to fail"),
+            Err(err) => err,
+        }
+    }
 }

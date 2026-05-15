@@ -1,203 +1,35 @@
 use super::*;
 
-/// Per-variant CRAM lookup that satisfies the workspace's `VariantLookup`
-/// trait. Holds the IndexedReader in a `RefCell` so &self lookup methods can
-/// mutably read while still being object-safe.
-pub(super) struct CramReportLookup<R: std::io::Read + std::io::Seek> {
-    pub(super) reader: std::cell::RefCell<noodles::cram::io::indexed_reader::IndexedReader<R>>,
-    pub(super) label: String,
-}
+#[path = "report_lookup/alignment.rs"]
+mod alignment;
 
-impl<R: std::io::Read + std::io::Seek> report_workspace::VariantLookup for CramReportLookup<R> {
-    fn lookup_variant(&self, spec: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
-        let mut reader = self.reader.borrow_mut();
-        observe_cram_variant(&mut reader, &self.label, spec)
-    }
-
-    fn lookup_variants(
-        &self,
-        specs: &[VariantSpec],
-    ) -> Result<Vec<VariantObservation>, RuntimeError> {
-        let mut reader = self.reader.borrow_mut();
-        let mut out = Vec::with_capacity(specs.len());
-        for spec in specs {
-            out.push(observe_cram_variant(&mut reader, &self.label, spec)?);
-        }
-        Ok(out)
-    }
-}
-
-/// Build a minimal 23andMe-style text from the observations we already
-/// computed. Format: `rsid\tchrom\tpos\tgenotype` per line. The runtime's
-/// delimited-text loader reads this back as a `RsidMap`/`Delimited` backend
-/// so analysis scripts can call `bioscript.load_genotypes(input_file)` and
-/// have rsid lookups answered from the cached table.
-#[allow(dead_code)]
-fn synthesize_genotype_text_from_observations(observations: &[serde_json::Value]) -> String {
-    let mut out = String::from("# rsid\tchromosome\tposition\tgenotype\n");
-    for observation in observations {
-        let rsid = observation
-            .get("rsid")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
-        if rsid.is_empty() {
-            continue;
-        }
-        let chrom = observation
-            .get("chrom")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
-        let pos = observation
-            .get("pos_start")
-            .and_then(|v| {
-                v.as_i64()
-                    .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
-            })
-            .unwrap_or(0);
-        let genotype = observation
-            .get("genotype_display")
-            .and_then(serde_json::Value::as_str)
-            .filter(|s| !s.is_empty() && *s != "??")
-            .unwrap_or("--");
-        out.push_str(&format!("{rsid}\t{chrom}\t{pos}\t{genotype}\n"));
-    }
-    out
-}
-
-fn observe_cram_variant<R: std::io::Read + std::io::Seek>(
-    reader: &mut noodles::cram::io::indexed_reader::IndexedReader<R>,
-    label: &str,
-    variant: &VariantSpec,
-) -> Result<VariantObservation, RuntimeError> {
-    let assembly = variant
-        .grch38
-        .as_ref()
-        .map(|_| Assembly::Grch38)
-        .or_else(|| variant.grch37.as_ref().map(|_| Assembly::Grch37));
-    let locus = variant
-        .grch38
-        .as_ref()
-        .or(variant.grch37.as_ref())
-        .ok_or_else(|| {
-            RuntimeError::Io(format!(
-                "variant {} has no GRCh37/GRCh38 locus",
-                variant
-                    .rsids
-                    .first()
-                    .map(|s| s.as_str())
-                    .unwrap_or("variant")
-            ))
-        })?;
-    let locus = GenomicLocus {
-        chrom: locus.chrom.clone(),
-        start: locus.start,
-        end: locus.end,
-    };
-    let kind = variant.kind.unwrap_or(VariantKind::Snp);
-    match kind {
-        VariantKind::Snp => {
-            let ref_char = variant
-                .reference
-                .as_deref()
-                .and_then(|s| s.chars().next())
-                .ok_or_else(|| {
-                    RuntimeError::Io(format!(
-                        "variant {} missing reference allele",
-                        variant
-                            .rsids
-                            .first()
-                            .map(|s| s.as_str())
-                            .unwrap_or("variant")
-                    ))
-                })?;
-            let alt_char = variant
-                .alternate
-                .as_deref()
-                .and_then(|s| s.chars().next())
-                .ok_or_else(|| {
-                    RuntimeError::Io(format!(
-                        "variant {} missing alternate allele",
-                        variant
-                            .rsids
-                            .first()
-                            .map(|s| s.as_str())
-                            .unwrap_or("variant")
-                    ))
-                })?;
-            bioscript_formats::observe_cram_snp_with_reader(
-                reader,
-                label,
-                &locus,
-                ref_char,
-                alt_char,
-                variant.rsids.first().cloned(),
-                assembly,
-            )
-        }
-        VariantKind::Insertion | VariantKind::Indel => {
-            let reference = variant.reference.as_deref().ok_or_else(|| {
-                RuntimeError::Io(format!(
-                    "variant {} missing reference allele",
-                    variant
-                        .rsids
-                        .first()
-                        .map(|s| s.as_str())
-                        .unwrap_or("variant")
-                ))
-            })?;
-            let alternate = variant.alternate.as_deref().ok_or_else(|| {
-                RuntimeError::Io(format!(
-                    "variant {} missing alternate allele",
-                    variant
-                        .rsids
-                        .first()
-                        .map(|s| s.as_str())
-                        .unwrap_or("variant")
-                ))
-            })?;
-            bioscript_formats::observe_cram_indel_with_reader(
-                reader,
-                label,
-                &locus,
-                reference,
-                alternate,
-                variant.rsids.first().cloned(),
-                assembly,
-            )
-        }
-        other => Err(RuntimeError::Io(format!(
-            "variant {} kind {:?} not supported on CRAM via wasm",
-            variant
-                .rsids
-                .first()
-                .map(|s| s.as_str())
-                .unwrap_or("variant"),
-            other
-        ))),
-    }
-}
+pub(crate) use alignment::{BamReportLookup, CramReportLookup};
 
 pub(super) struct VcfReportLookup<R: std::io::Read + std::io::Seek> {
     pub(super) reader: std::cell::RefCell<
         noodles::csi::io::IndexedReader<noodles::bgzf::io::Reader<R>, noodles::tabix::Index>,
     >,
     pub(super) label: String,
+    /// Assembly resolved from the VCF header (via `inspect_head_via_js_reader`).
+    /// Matches the CLI's `lookup_indexed_vcf_variants` flow which calls
+    /// `detect_vcf_assembly_from_path`. Without this the wasm picks GRCh38
+    /// over GRCh37 for any panel variant that declares both loci, then
+    /// misses the variant in a GRCh37-coded VCF (NA06985.clean.vcf.gz etc.)
+    /// and falls through to "imputed reference".
+    pub(super) detected_assembly: Option<Assembly>,
 }
 
-impl<R: std::io::Read + std::io::Seek> report_workspace::VariantLookup for VcfReportLookup<R> {
-    fn lookup_variant(&self, spec: &VariantSpec) -> Result<VariantObservation, RuntimeError> {
-        let mut reader = self.reader.borrow_mut();
-        observe_vcf_variant(&mut reader, &self.label, spec)
-    }
-
-    fn lookup_variants(
-        &self,
-        specs: &[VariantSpec],
-    ) -> Result<Vec<VariantObservation>, RuntimeError> {
+impl<R: std::io::Read + std::io::Seek> bioscript_reporting::ReportVariantLookup
+    for VcfReportLookup<R>
+{
+    fn lookup_variants(&self, specs: &[VariantSpec]) -> Result<Vec<VariantObservation>, String> {
         let mut reader = self.reader.borrow_mut();
         let mut out = Vec::with_capacity(specs.len());
         for spec in specs {
-            out.push(observe_vcf_variant(&mut reader, &self.label, spec)?);
+            out.push(
+                observe_vcf_variant(&mut reader, &self.label, spec, self.detected_assembly)
+                    .map_err(|err| err.to_string())?,
+            );
         }
         Ok(out)
     }
@@ -210,26 +42,32 @@ fn observe_vcf_variant<R: std::io::Read + std::io::Seek>(
     >,
     label: &str,
     variant: &VariantSpec,
+    detected_assembly: Option<Assembly>,
 ) -> Result<VariantObservation, RuntimeError> {
-    let assembly = variant
-        .grch38
-        .as_ref()
-        .map(|_| Assembly::Grch38)
-        .or_else(|| variant.grch37.as_ref().map(|_| Assembly::Grch37));
-    let raw_locus = variant
-        .grch38
-        .as_ref()
-        .or(variant.grch37.as_ref())
-        .ok_or_else(|| {
-            RuntimeError::Io(format!(
-                "variant {} has no GRCh37/GRCh38 locus",
-                variant
-                    .rsids
-                    .first()
-                    .map(|s| s.as_str())
-                    .unwrap_or("variant")
-            ))
-        })?;
+    // Use the existing CLI helper so wasm picks the same locus the path-based
+    // path does: detected GRCh37 → grch37 first; detected GRCh38 → grch38
+    // first; None → grch37 first (CLI default for variant-only VCFs).
+    let raw_locus =
+        bioscript_formats::choose_variant_locus_for_assembly(variant, detected_assembly)
+            .ok_or_else(|| {
+                RuntimeError::Io(format!(
+                    "variant {} has no GRCh37/GRCh38 locus",
+                    variant
+                        .rsids
+                        .first()
+                        .map(|s| s.as_str())
+                        .unwrap_or("variant")
+                ))
+            })?;
+    let assembly = detected_assembly.or_else(|| {
+        if variant.grch37.as_ref().is_some_and(|l| l == &raw_locus) {
+            Some(Assembly::Grch37)
+        } else if variant.grch38.as_ref().is_some_and(|l| l == &raw_locus) {
+            Some(Assembly::Grch38)
+        } else {
+            None
+        }
+    });
     let locus = GenomicLocus {
         chrom: raw_locus.chrom.clone(),
         start: raw_locus.start,
@@ -244,15 +82,15 @@ fn observe_vcf_variant<R: std::io::Read + std::io::Seek>(
         assembly,
     )?;
     // Mirror the CLI report flow's `impute_vcf_missing_as_reference: true`
-    // default: when the VCF has no record at this locus, treat the genotype
-    // as homozygous reference.
+    // default. The full-file VCF scanner only marks a variant resolved when a
+    // row actually matches the query. Unrelated rows in the indexed window
+    // must not block reference imputation for absent variant-only calls.
     if observation.genotype.is_none()
-        && observation
-            .evidence
-            .iter()
-            .any(|line| line.contains("no VCF record at"))
-    {
-        if let Some(imputed) = bioscript_formats::imputed_reference_observation(
+        && !observation.evidence.iter().any(|line| {
+            line.contains("tabix index has no contig")
+                || line.contains("has no GRCh37/GRCh38 locus")
+        })
+        && let Some(imputed) = bioscript_formats::imputed_reference_observation(
             "vcf",
             label,
             variant,
@@ -260,9 +98,9 @@ fn observe_vcf_variant<R: std::io::Read + std::io::Seek>(
             assembly,
             None,
             &observation.evidence.join(" | "),
-        ) {
-            return Ok(imputed);
-        }
+        )
+    {
+        return Ok(imputed);
     }
     Ok(observation)
 }

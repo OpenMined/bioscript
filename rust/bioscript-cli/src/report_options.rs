@@ -235,10 +235,8 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
         )
     })?;
 
-    let assay_id = app_assay_id(&options.manifest_path)?;
-    let manifest_metadata = report_manifest_metadata(&options.manifest_path)?;
-    let findings = load_manifest_findings(&options.root, &options.manifest_path)?;
-    let provenance = load_manifest_provenance_links(&options.root, &options.manifest_path)?;
+    let manifest_workspace = bioscript_reporting::FilesystemManifestWorkspace::new(&options.root);
+    let manifest_path = options.manifest_path.display().to_string();
     let mut observations = Vec::new();
     let mut analyses = Vec::new();
     let mut reports = Vec::new();
@@ -257,51 +255,39 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
             input_inspection.inferred_sex = Some(explicit_sample_sex_inference(sample_sex));
         }
         let input_loader = loader_with_inspection(&options.loader, &input_inspection);
-        let rows = run_manifest_rows_for_report(
-            &options.root,
-            &options.manifest_path,
-            input_file,
-            &participant_id,
-            &input_loader,
-            &options.filters,
-        )?;
-        let input_observations = rows
-            .iter()
-            .map(|row| {
-                app_observation_from_manifest_row(
-                    &options.root,
-                    row,
-                    &assay_id,
-                    input_inspection.inferred_sex.as_ref(),
-                    input_inspection.assembly,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        observations.extend(input_observations.clone());
-        let analysis_options = ReportAnalysisOptions {
+        let store = GenotypeStore::from_file_with_options(input_file, &input_loader)
+            .map_err(|err| err.to_string())?;
+        let analysis_runner = CliReportAnalysisRunner {
             runtime_root: &options.root,
             input_file,
             participant_id: &participant_id,
             loader: &input_loader,
             output_dir: &options.output_dir,
-            filters: &options.filters,
             max_duration_ms: options.analysis_max_duration_ms,
         };
-        let input_analyses =
-            run_manifest_analyses_for_report(&options.manifest_path, &analysis_options)?;
-        analyses.extend(input_analyses.clone());
-        let matched_findings = match_app_findings(&findings, &input_observations, &input_analyses);
-        reports.push(app_report_json(AppReportJsonInput {
-            assay_id: &assay_id,
-            participant_id: &participant_id,
-            input_file,
-            observations: &input_observations,
-            analyses: &input_analyses,
-            findings: &matched_findings,
-            provenance: &provenance,
-            input_inspection: Some(&input_inspection),
-            manifest_metadata: &manifest_metadata,
-        }));
+        let input_file_name = input_file
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let input_file_path = input_file.display().to_string();
+        let run = bioscript_reporting::run_report(
+            &manifest_workspace,
+            &manifest_path,
+            &store,
+            &analysis_runner,
+            bioscript_reporting::ReportInputContext {
+                participant_id: &participant_id,
+                input_file_name,
+                input_file_path: &input_file_path,
+                input_inspection: Some(&input_inspection),
+            },
+            bioscript_reporting::ReportRunOptions {
+                filters: &options.filters,
+            },
+        )?;
+        observations.extend(run.observations);
+        analyses.extend(run.analyses);
+        reports.push(run.report);
     }
 
     write_app_observations(
@@ -374,5 +360,269 @@ fn open_html_report(path: &Path) -> Result<(), String> {
             "failed to open html report {}: opener exited with {status}",
             path.display()
         ))
+    }
+}
+
+#[cfg(test)]
+mod app_report_option_tests {
+    use super::*;
+    use bioscript_core::Assembly;
+    use bioscript_formats::{
+        DetectedKind, DetectionConfidence, FileContainer, FileInspection, InferredSex,
+        SexDetectionConfidence, SexInference,
+    };
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn args(items: &[&str]) -> std::vec::IntoIter<String> {
+        items
+            .iter()
+            .map(|item| (*item).to_owned())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    fn inspection() -> FileInspection {
+        FileInspection {
+            path: PathBuf::from("sample.vcf"),
+            container: FileContainer::Plain,
+            detected_kind: DetectedKind::Vcf,
+            confidence: DetectionConfidence::Authoritative,
+            source: None,
+            assembly: Some(Assembly::Grch37),
+            phased: Some(false),
+            selected_entry: None,
+            has_index: Some(false),
+            index_path: None,
+            reference_matches: None,
+            inferred_sex: Some(SexInference {
+                sex: InferredSex::Male,
+                confidence: SexDetectionConfidence::High,
+                method: "fixture".to_owned(),
+                evidence: vec!["test".to_owned()],
+            }),
+            evidence: Vec::new(),
+            warnings: Vec::new(),
+            duration_ms: 0,
+        }
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!(
+            "bioscript-app-report-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn output_format_and_sample_sex_parsers_accept_aliases_and_reject_unknowns() {
+        assert_eq!(parse_app_output_format("tsv").unwrap(), AppOutputFormat::Tsv);
+        assert_eq!(parse_app_output_format("json").unwrap(), AppOutputFormat::Json);
+        assert_eq!(
+            parse_app_output_format("jsonl").unwrap(),
+            AppOutputFormat::Jsonl
+        );
+        assert_eq!(parse_app_output_format("both").unwrap(), AppOutputFormat::Both);
+        assert!(parse_app_output_format("xml").unwrap_err().contains("unsupported"));
+
+        assert_eq!(parse_sample_sex("male").unwrap(), InferredSex::Male);
+        assert_eq!(parse_sample_sex("M").unwrap(), InferredSex::Male);
+        assert_eq!(parse_sample_sex("female").unwrap(), InferredSex::Female);
+        assert_eq!(parse_sample_sex("f").unwrap(), InferredSex::Female);
+        assert_eq!(parse_sample_sex("unknown").unwrap(), InferredSex::Unknown);
+        assert_eq!(parse_sample_sex("U").unwrap(), InferredSex::Unknown);
+        assert!(parse_sample_sex("other").unwrap_err().contains("unsupported"));
+    }
+
+    #[test]
+    fn cli_state_consumes_flags_and_finishes_with_normalized_paths() {
+        let mut state = AppReportCliState::new().unwrap();
+        let mut iter = args(&[
+            "panel.yaml",
+            "--input-file",
+            "sample.vcf",
+            "--output-dir",
+            "out",
+            "--root",
+            ".",
+            "--html",
+            "--filter",
+            "tag=pgx",
+            "--detect-sex",
+            "--sample-sex",
+            "female",
+            "--observations-format",
+            "both",
+            "--reports-format",
+            "json",
+            "--analysis-max-duration-ms",
+            "2500",
+            "--input-format",
+            "vcf",
+            "--input-index",
+            "sample.vcf.tbi",
+            "--reference-file",
+            "ref.fa",
+            "--reference-index",
+            "ref.fa.fai",
+            "--allow-md5-mismatch",
+        ]);
+        while let Some(arg) = iter.next() {
+            state.consume_arg(&arg, &mut iter).unwrap();
+        }
+
+        let options = state.finish().unwrap();
+        assert_eq!(options.manifest_path, PathBuf::from("./panel.yaml"));
+        assert_eq!(options.input_files, vec![PathBuf::from("./sample.vcf")]);
+        assert_eq!(options.output_dir, PathBuf::from("./out"));
+        assert!(options.html);
+        assert!(!options.open_report);
+        assert_eq!(options.filters, vec!["tag=pgx"]);
+        assert_eq!(options.observations_format, AppOutputFormat::Both);
+        assert_eq!(options.reports_format, AppOutputFormat::Json);
+        assert_eq!(options.analysis_max_duration_ms, 2500);
+        assert!(options.detect_sex);
+        assert_eq!(options.sample_sex, Some(InferredSex::Female));
+        assert_eq!(options.loader.format, Some(GenotypeSourceFormat::Vcf));
+        assert_eq!(
+            options.loader.input_index,
+            Some(PathBuf::from("./sample.vcf.tbi"))
+        );
+        assert!(options.loader.allow_reference_md5_mismatch);
+    }
+
+    #[test]
+    fn cli_state_reports_required_argument_errors() {
+        let missing_manifest = finish_err(AppReportCliState::new().unwrap());
+        assert!(missing_manifest.contains("usage: bioscript report"));
+
+        let mut state = AppReportCliState::new().unwrap();
+        let mut iter = args(&["manifest.yaml"]);
+        while let Some(arg) = iter.next() {
+            state.consume_arg(&arg, &mut iter).unwrap();
+        }
+        assert!(finish_err(state).contains("at least one --input-file"));
+
+        let mut state = AppReportCliState::new().unwrap();
+        let mut iter = args(&["manifest.yaml", "--input-file", "sample.txt"]);
+        while let Some(arg) = iter.next() {
+            state.consume_arg(&arg, &mut iter).unwrap();
+        }
+        assert!(finish_err(state).contains("--output-dir"));
+
+        let mut state = AppReportCliState::new().unwrap();
+        let mut iter = args(&["--analysis-max-duration-ms", "not-a-number"]);
+        let arg = iter.next().unwrap();
+        assert!(state.consume_arg(&arg, &mut iter).unwrap_err().contains("invalid"));
+    }
+
+    #[test]
+    fn loader_and_path_helpers_preserve_explicit_settings() {
+        let base = GenotypeLoadOptions {
+            assembly: Some(Assembly::Grch38),
+            inferred_sex: None,
+            ..GenotypeLoadOptions::default()
+        };
+        let loader = loader_with_inspection(&base, &inspection());
+        assert_eq!(loader.assembly, Some(Assembly::Grch37));
+        assert_eq!(loader.inferred_sex, Some(InferredSex::Male));
+
+        let explicit = explicit_sample_sex_inference(InferredSex::Unknown);
+        assert_eq!(explicit.sex, InferredSex::Unknown);
+        assert_eq!(explicit.method, "explicit_sample_sex");
+
+        let root = Path::new("/tmp/bioscript-root");
+        assert_eq!(absolutize(root, Path::new("a/b")), root.join("a/b"));
+        assert_eq!(
+            absolutize(root, Path::new("/already/absolute")),
+            PathBuf::from("/already/absolute")
+        );
+    }
+
+    #[test]
+    fn run_app_report_generates_outputs_for_text_input_and_explicit_sex() {
+        let dir = temp_dir("generate");
+        let manifest = dir.join("variant.yaml");
+        fs::write(
+            &manifest,
+            r#"
+schema: bioscript:variant:1.0
+version: "1.0"
+name: rs1
+gene: ABC
+identifiers:
+  rsids: [rs1]
+coordinates:
+  grch38:
+    chrom: "X"
+    pos: 100
+alleles:
+  kind: snv
+  ref: A
+  alts: [G]
+findings:
+  - schema: bioscript:trait:1.0
+    summary: Variant present
+    binding:
+      source: variant
+      variant: variant.yaml
+      key: outcome
+      value: variant
+"#,
+        )
+        .unwrap();
+        let input = dir.join("sample.txt");
+        fs::write(&input, "rsid\tgenotype\nrs1\tG\n").unwrap();
+        let output = dir.join("out");
+
+        run_app_report(vec![
+            manifest.display().to_string(),
+            "--input-file".to_owned(),
+            input.display().to_string(),
+            "--output-dir".to_owned(),
+            output.display().to_string(),
+            "--root".to_owned(),
+            dir.display().to_string(),
+            "--html".to_owned(),
+            "--input-format".to_owned(),
+            "text".to_owned(),
+            "--sample-sex".to_owned(),
+            "male".to_owned(),
+            "--observations-format".to_owned(),
+            "both".to_owned(),
+            "--reports-format".to_owned(),
+            "both".to_owned(),
+        ])
+        .unwrap();
+
+        assert!(fs::read_to_string(output.join("observations.tsv"))
+            .unwrap()
+            .contains("sample"));
+        assert!(fs::read_to_string(output.join("observations.jsonl"))
+            .unwrap()
+            .contains("detected_sex=male"));
+        assert!(fs::read_to_string(output.join("reports.jsonl"))
+            .unwrap()
+            .contains("Variant present"));
+        assert!(fs::read_to_string(output.join("reports.json"))
+            .unwrap()
+            .contains("report-set"));
+        assert!(fs::read_to_string(output.join("index.html"))
+            .unwrap()
+            .contains("<!doctype html>"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn finish_err(state: AppReportCliState) -> String {
+        match state.finish() {
+            Ok(_) => panic!("expected report CLI state to fail"),
+            Err(err) => err,
+        }
     }
 }

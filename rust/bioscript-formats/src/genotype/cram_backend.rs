@@ -24,7 +24,9 @@ pub(crate) use indel::len_as_i64;
 pub(crate) use indel::{
     classify_expected_indel, indel_at_anchor, record_overlaps_locus, spans_position,
 };
-pub use reader::{observe_cram_indel_with_reader, observe_cram_snp_with_reader};
+pub use reader::{
+    observe_cram_deletion_with_reader, observe_cram_indel_with_reader, observe_cram_snp_with_reader,
+};
 
 const DEFAULT_MPILEUP_MIN_BASE_QUALITY: u8 = 13;
 const DEFAULT_MPILEUP_MIN_MAPPING_QUALITY: u8 = 0;

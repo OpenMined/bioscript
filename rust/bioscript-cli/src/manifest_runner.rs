@@ -12,7 +12,11 @@ fn run_manifest(
     manifest_path: &Path,
     options: &ManifestRunOptions<'_>,
 ) -> Result<(), String> {
-    let schema = manifest_schema(manifest_path)?;
+    let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(runtime_root);
+    let schema = bioscript_reporting::report_manifest_schema(
+        &workspace,
+        &manifest_path.display().to_string(),
+    )?;
     let resolved_input = options
         .input_file
         .map(|value| resolve_cli_path(runtime_root, value));
@@ -22,8 +26,8 @@ fn run_manifest(
     let resolved_trace = options
         .trace_report
         .map(|value| resolve_cli_path_buf(runtime_root, value));
-    match schema.as_str() {
-        "bioscript:variant:1.0" | "bioscript:variant" => {
+    match bioscript_reporting::report_manifest_kind(&schema)? {
+        bioscript_reporting::ReportManifestKind::Variant => {
             let manifest = load_variant_manifest(manifest_path)?;
             let row = run_variant_manifest(
                 runtime_root,
@@ -39,7 +43,44 @@ fn run_manifest(
             )?;
             Ok(())
         }
-        "bioscript:panel:1.0" => {
+        bioscript_reporting::ReportManifestKind::VariantCatalogue => {
+            let input_file = resolved_input
+                .as_deref()
+                .ok_or("manifest execution requires --input-file")?;
+            let store = GenotypeStore::from_file_with_options(Path::new(input_file), options.loader)
+                .map_err(|err| err.to_string())?;
+            let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(runtime_root);
+            let tasks = bioscript_reporting::collect_variant_manifest_tasks(
+                &workspace,
+                &manifest_path.display().to_string(),
+                options.filters,
+            )?;
+            let observations = store
+                .lookup_variants(
+                    &tasks
+                        .iter()
+                        .map(|task| task.manifest.spec.clone())
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|err| err.to_string())?;
+            let rows = tasks
+                .into_iter()
+                .zip(observations)
+                .map(|(task, observation)| {
+                    variant_row(
+                        runtime_root,
+                        Path::new(&task.manifest_path),
+                        &task.manifest.name,
+                        &task.manifest.tags,
+                        &observation,
+                        options.participant_id,
+                    )
+                })
+                .collect::<Vec<_>>();
+            write_manifest_outputs(&rows, resolved_output.as_deref(), resolved_trace.as_deref())?;
+            Ok(())
+        }
+        bioscript_reporting::ReportManifestKind::Panel => {
             let manifest = load_panel_manifest(manifest_path)?;
             let rows = run_panel_manifest(
                 runtime_root,
@@ -52,7 +93,7 @@ fn run_manifest(
             write_manifest_outputs(&rows, resolved_output.as_deref(), resolved_trace.as_deref())?;
             Ok(())
         }
-        "bioscript:assay:1.0" => {
+        bioscript_reporting::ReportManifestKind::Assay => {
             let manifest = load_assay_manifest(manifest_path)?;
             let rows = run_assay_manifest(
                 runtime_root,
@@ -65,7 +106,6 @@ fn run_manifest(
             write_manifest_outputs(&rows, resolved_output.as_deref(), resolved_trace.as_deref())?;
             Ok(())
         }
-        other => Err(format!("unsupported manifest schema '{other}'")),
     }
 }
 
@@ -126,30 +166,42 @@ fn run_panel_manifest_with_store(
     let mut variant_entries = Vec::new();
 
     for (member_index, member) in panel.members.iter().enumerate() {
-        let Some(path) = &member.path else {
-            return Err("remote panel members are not executable yet".to_owned());
-        };
-        let resolved = resolve_manifest_path(runtime_root, &panel.path, path)?;
-        if member.kind == "variant" {
-            let manifest = load_variant_manifest(&resolved)?;
-            if !matches_filters(&manifest, &resolved, filters) {
-                continue;
+        match bioscript_reporting::panel_executable_member(&member.kind, member.path.as_deref())? {
+            bioscript_reporting::ExecutablePanelMember::Variant(path) => {
+                let resolved = resolve_manifest_path(runtime_root, &panel.path, path)?;
+                let manifest = load_variant_manifest(&resolved)?;
+                if !matches_filters(&manifest, &resolved, filters) {
+                    continue;
+                }
+                variant_entries.push((member_index, resolved, manifest));
             }
-            variant_entries.push((member_index, resolved, manifest));
-        } else if member.kind == "assay" {
-            let assay = load_assay_manifest(&resolved)?;
-            rows_by_member[member_index] = run_assay_manifest_with_store(
-                runtime_root,
-                &assay,
-                store,
-                participant_id,
-                filters,
-            )?;
-        } else {
-            return Err(format!(
-                "panel member kind '{}' is not executable",
-                member.kind
-            ));
+            bioscript_reporting::ExecutablePanelMember::VariantCatalogue(path) => {
+                let resolved = resolve_manifest_path(runtime_root, &panel.path, path)?;
+                let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(runtime_root);
+                let tasks = bioscript_reporting::collect_variant_manifest_tasks(
+                    &workspace,
+                    &resolved.display().to_string(),
+                    filters,
+                )?;
+                for task in tasks {
+                    variant_entries.push((
+                        member_index,
+                        PathBuf::from(&task.manifest_path),
+                        task.manifest,
+                    ));
+                }
+            }
+            bioscript_reporting::ExecutablePanelMember::Assay(path) => {
+                let resolved = resolve_manifest_path(runtime_root, &panel.path, path)?;
+                let assay = load_assay_manifest(&resolved)?;
+                rows_by_member[member_index] = run_assay_manifest_with_store(
+                    runtime_root,
+                    &assay,
+                    store,
+                    participant_id,
+                    filters,
+                )?;
+            }
         }
     }
 
@@ -203,21 +255,28 @@ fn run_assay_manifest_with_store(
     let mut entries = Vec::new();
 
     for member in &assay.members {
-        if member.kind != "variant" {
-            return Err(format!(
-                "assay member kind '{}' is not executable",
-                member.kind
-            ));
+        match bioscript_reporting::assay_executable_member(&member.kind, member.path.as_deref())? {
+            bioscript_reporting::ExecutableAssayMember::Variant(path) => {
+                let resolved = resolve_manifest_path(runtime_root, &assay.path, path)?;
+                let manifest = load_variant_manifest(&resolved)?;
+                if !matches_filters(&manifest, &resolved, filters) {
+                    continue;
+                }
+                entries.push((resolved, manifest));
+            }
+            bioscript_reporting::ExecutableAssayMember::VariantCatalogue(path) => {
+                let resolved = resolve_manifest_path(runtime_root, &assay.path, path)?;
+                let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(runtime_root);
+                let tasks = bioscript_reporting::collect_variant_manifest_tasks(
+                    &workspace,
+                    &resolved.display().to_string(),
+                    filters,
+                )?;
+                for task in tasks {
+                    entries.push((PathBuf::from(&task.manifest_path), task.manifest));
+                }
+            }
         }
-        let Some(path) = &member.path else {
-            return Err("remote assay members are not executable yet".to_owned());
-        };
-        let resolved = resolve_manifest_path(runtime_root, &assay.path, path)?;
-        let manifest = load_variant_manifest(&resolved)?;
-        if !matches_filters(&manifest, &resolved, filters) {
-            continue;
-        }
-        entries.push((resolved, manifest));
     }
 
     let observations = store
@@ -255,64 +314,18 @@ fn variant_row(
     observation: &bioscript_core::VariantObservation,
     participant_id: Option<&str>,
 ) -> BTreeMap<String, String> {
-    let mut row = BTreeMap::new();
-    row.insert("kind".to_owned(), "variant".to_owned());
-    row.insert("name".to_owned(), name.to_owned());
-    row.insert(
-        "path".to_owned(),
-        path.strip_prefix(runtime_root)
-            .unwrap_or(path)
-            .display()
-            .to_string(),
-    );
-    row.insert("tags".to_owned(), tags.join(","));
-    row.insert("backend".to_owned(), observation.backend.clone());
-    row.insert(
-        "participant_id".to_owned(),
-        participant_id.unwrap_or_default().to_owned(),
-    );
-    row.insert(
-        "matched_rsid".to_owned(),
-        observation.matched_rsid.clone().unwrap_or_default(),
-    );
-    row.insert(
-        "assembly".to_owned(),
-        observation
-            .assembly
-            .map(|value| match value {
-                bioscript_core::Assembly::Grch37 => "grch37".to_owned(),
-                bioscript_core::Assembly::Grch38 => "grch38".to_owned(),
-            })
-            .unwrap_or_default(),
-    );
-    row.insert(
-        "genotype".to_owned(),
-        observation.genotype.clone().unwrap_or_default(),
-    );
-    row.insert(
-        "ref_count".to_owned(),
-        observation
-            .ref_count
-            .map_or_else(String::new, |value| value.to_string()),
-    );
-    row.insert(
-        "alt_count".to_owned(),
-        observation
-            .alt_count
-            .map_or_else(String::new, |value| value.to_string()),
-    );
-    row.insert(
-        "depth".to_owned(),
-        observation
-            .depth
-            .map_or_else(String::new, |value| value.to_string()),
-    );
-    row.insert(
-        "raw_counts".to_owned(),
-        serde_json::to_string(&observation.raw_counts).unwrap_or_default(),
-    );
-    row.insert("evidence".to_owned(), observation.evidence.join(" | "));
-    row
+    let row_path = path
+        .strip_prefix(runtime_root)
+        .unwrap_or(path)
+        .display()
+        .to_string();
+    bioscript_reporting::variant_row(
+        &row_path,
+        name,
+        tags,
+        observation,
+        participant_id.unwrap_or_default(),
+    )
 }
 
 fn write_manifest_outputs(
@@ -320,7 +333,7 @@ fn write_manifest_outputs(
     output_file: Option<&Path>,
     trace_report: Option<&Path>,
 ) -> Result<(), String> {
-    let text = render_rows_as_tsv(rows);
+    let text = bioscript_reporting::render_manifest_rows_tsv(rows);
     if let Some(output_file) = output_file {
         if let Some(parent) = output_file.parent() {
             fs::create_dir_all(parent).map_err(|err| {
@@ -338,16 +351,7 @@ fn write_manifest_outputs(
             fs::create_dir_all(parent)
                 .map_err(|err| format!("failed to create trace dir {}: {err}", parent.display()))?;
         }
-        let mut trace = String::from("step\tline\tcode\n");
-        for (idx, row) in rows.iter().enumerate() {
-            let _ = writeln!(
-                trace,
-                "{}\t{}\t{}",
-                idx + 1,
-                idx + 1,
-                row.get("path").cloned().unwrap_or_default()
-            );
-        }
+        let trace = bioscript_reporting::render_manifest_trace_tsv(rows);
         fs::write(trace_report, trace)
             .map_err(|err| format!("failed to write trace {}: {err}", trace_report.display()))?;
     }
@@ -369,49 +373,12 @@ fn resolve_cli_path_buf(root: &Path, value: &Path) -> PathBuf {
     }
 }
 
-fn render_rows_as_tsv(rows: &[BTreeMap<String, String>]) -> String {
-    let headers = [
-        "kind",
-        "name",
-        "path",
-        "tags",
-        "participant_id",
-        "backend",
-        "matched_rsid",
-        "assembly",
-        "genotype",
-        "ref_count",
-        "alt_count",
-        "depth",
-        "evidence",
-    ];
-    let mut out = headers.join("\t");
-    out.push('\n');
-    for row in rows {
-        let line = headers
-            .iter()
-            .map(|header| {
-                row.get(*header)
-                    .cloned()
-                    .unwrap_or_default()
-                    .replace('\t', " ")
-            })
-            .collect::<Vec<_>>()
-            .join("\t");
-        out.push_str(&line);
-        out.push('\n');
-    }
-    out
-}
-
 fn matches_filters(manifest: &VariantManifest, path: &Path, filters: &[String]) -> bool {
-    filters.iter().all(|filter| match filter.split_once('=') {
-        Some(("kind", value)) => value == "variant",
-        Some(("name", value)) => manifest.name.contains(value),
-        Some(("path", value)) => path.display().to_string().contains(value),
-        Some(("tag", value)) => manifest.tags.iter().any(|tag| tag == value),
-        Some(_) | None => false,
-    })
+    bioscript_reporting::matches_variant_manifest_filters(
+        manifest,
+        &path.display().to_string(),
+        filters,
+    )
 }
 
 fn resolve_manifest_path(
@@ -419,47 +386,13 @@ fn resolve_manifest_path(
     manifest_path: &Path,
     relative: &str,
 ) -> Result<PathBuf, String> {
-    let base_dir = manifest_path
-        .parent()
-        .ok_or_else(|| format!("manifest has no parent: {}", manifest_path.display()))?;
-    let joined = base_dir.join(relative);
-    let canonical_root = runtime_root
-        .canonicalize()
-        .map_err(|err| format!("failed to resolve root {}: {err}", runtime_root.display()))?;
-    let canonical_base = base_dir.canonicalize().map_err(|err| {
-        format!(
-            "failed to resolve manifest dir {}: {err}",
-            base_dir.display()
-        )
-    })?;
-    let canonical_joined = joined
-        .canonicalize()
-        .map_err(|err| format!("failed to resolve {}: {err}", joined.display()))?;
-    let boundary = if canonical_base.starts_with(&canonical_root) {
-        &canonical_root
-    } else {
-        &canonical_base
-    };
-    if !canonical_joined.starts_with(boundary) {
-        return Err(format!(
-            "manifest member path escapes bioscript root: {}",
-            canonical_joined.display()
-        ));
-    }
-    Ok(canonical_joined)
+    bioscript_reporting::resolve_filesystem_manifest_path(runtime_root, manifest_path, relative)
 }
 
 fn manifest_schema(path: &Path) -> Result<String, String> {
-    let text = fs::read_to_string(path)
-        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-    let value: serde_yaml::Value = serde_yaml::from_str(&text)
-        .map_err(|err| format!("failed to parse YAML {}: {err}", path.display()))?;
-    value
-        .as_mapping()
-        .and_then(|mapping| mapping.get(serde_yaml::Value::String("schema".to_owned())))
-        .and_then(serde_yaml::Value::as_str)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| format!("{} is missing schema", path.display()))
+    let root = path.parent().unwrap_or_else(|| Path::new("."));
+    let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(root);
+    bioscript_reporting::report_manifest_schema(&workspace, &path.display().to_string())
 }
 
 fn normalize_loader_paths(root: &Path, loader: &mut GenotypeLoadOptions) {

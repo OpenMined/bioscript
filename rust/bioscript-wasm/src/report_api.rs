@@ -1,54 +1,42 @@
 use std::{
     collections::BTreeMap,
-    fmt::Write as _,
     path::{Path, PathBuf},
     time::Duration,
 };
 
 use bioscript_core::{
-    Assembly, GenomicLocus, OBSERVATION_TSV_HEADERS, RuntimeError, VariantKind, VariantObservation,
-    VariantSpec,
+    Assembly, GenomicLocus, RuntimeError, VariantKind, VariantObservation, VariantSpec,
 };
 use bioscript_formats::{
-    GenotypeLoadOptions, GenotypeStore, InferredSex, InspectOptions, SexDetectionConfidence,
-    SexInference, inspect_bytes as inspect_bytes_rs,
+    GenotypeLoadOptions, GenotypeStore, InspectOptions, SexInference,
+    inspect_bytes as inspect_bytes_rs,
 };
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig};
-use bioscript_schema::{
-    AssayManifest, PanelInterpretation, PanelManifest, VariantManifest, load_assay_manifest_text,
-    load_panel_manifest_text, load_variant_manifest_text,
-};
+use bioscript_schema::{PanelInterpretation, VariantManifest, load_variant_manifest_text};
 use monty::{MontyObject, ResourceLimits};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 #[path = "report_helpers.rs"]
 mod report_helpers;
+#[path = "report_input_inspection.rs"]
+mod report_input_inspection;
 #[path = "report_lookup.rs"]
 mod report_lookup;
-#[path = "report_render.rs"]
-mod report_render;
 #[path = "report_workspace.rs"]
 mod report_workspace;
 
 use report_helpers::*;
-use report_lookup::{CramReportLookup, VcfReportLookup};
-use report_render::{
-    AppReportJsonInput, app_report_json, match_app_findings, render_app_html_document,
+use report_input_inspection::{
+    detect_vcf_assembly_via_js_reader, explicit_sex_from_options, inspect_head_via_js_reader,
+    vcf_sex_via_js_reader,
 };
+use report_lookup::{BamReportLookup, CramReportLookup, VcfReportLookup};
 use report_workspace::PackageWorkspace;
-
-include!("../../bioscript-cli/src/report_matching.rs");
-include!("../../bioscript-cli/src/report_html_sections.rs");
-include!("../../bioscript-cli/src/report_html_analysis.rs");
-include!("../../bioscript-cli/src/report_html_provenance.rs");
-include!("../../bioscript-cli/src/report_html_observations.rs");
-include!("../../bioscript-cli/src/report_html_pgx.rs");
-include!("../../bioscript-cli/src/report_html_helpers.rs");
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PackageFileInput {
+pub(super) struct PackageFileInput {
     path: String,
     contents: String,
     #[serde(default)]
@@ -57,13 +45,39 @@ struct PackageFileInput {
 
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ReportOptionsInput {
+pub(super) struct ReportOptionsInput {
     #[serde(default = "default_analysis_max_duration_ms")]
     analysis_max_duration_ms: u64,
     #[serde(default)]
     detect_sex: bool,
     #[serde(default)]
     filters: Vec<String>,
+    #[serde(default)]
+    output_dir: Option<String>,
+    #[serde(default)]
+    input_file_path: Option<String>,
+    #[serde(default)]
+    input_index_path: Option<String>,
+    #[serde(default)]
+    reference_file_path: Option<String>,
+    #[serde(default)]
+    reference_index_path: Option<String>,
+    /// Optional explicit sample sex (mirrors the CLI's `--sample-sex` flag).
+    /// When set, takes precedence over inference: the report carries
+    /// `method=explicit_sample_sex` like the CLI.
+    #[serde(default)]
+    sample_sex: Option<String>,
+}
+
+impl ReportOptionsInput {
+    fn inspect_options(&self, detect_sex: bool) -> InspectOptions {
+        InspectOptions {
+            input_index: self.input_index_path.as_ref().map(PathBuf::from),
+            reference_file: self.reference_file_path.as_ref().map(PathBuf::from),
+            reference_index: self.reference_index_path.as_ref().map(PathBuf::from),
+            detect_sex,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -101,83 +115,45 @@ pub fn run_package_report_bytes(
     };
     let workspace = PackageWorkspace::new(package_files)?;
     let participant_id = participant_id_from_name(input_name);
-    let assay_id = app_assay_id(Path::new(manifest_path))?;
-    let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
-    let findings = workspace.load_manifest_findings(manifest_path)?;
-    let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
-    let inspect_options = InspectOptions {
-        input_index: None,
-        reference_file: None,
-        reference_index: None,
-        detect_sex: options.detect_sex,
-    };
+    let input_file_path = options.input_file_path.as_deref().unwrap_or(input_name);
+    let inspect_options = options.inspect_options(options.detect_sex);
     let input_inspection = inspect_bytes_rs(input_name, input_bytes, &inspect_options)
         .map_err(|err| JsError::new(&format!("inspect input failed: {err:?}")))?;
-    let mut loader = GenotypeLoadOptions::default();
-    loader.assembly = input_inspection.assembly;
-    loader.inferred_sex = input_inspection
-        .inferred_sex
-        .as_ref()
-        .map(|inference| inference.sex);
+    let loader = GenotypeLoadOptions {
+        assembly: input_inspection.assembly,
+        inferred_sex: input_inspection
+            .inferred_sex
+            .as_ref()
+            .map(|inference| inference.sex),
+        ..Default::default()
+    };
     let store = GenotypeStore::from_bytes(input_name, input_bytes)
         .map_err(|err| JsError::new(&format!("load genotypes failed: {err:?}")))?;
-    let manifest_output =
-        workspace.run_manifest_rows(manifest_path, &store, &participant_id, &options.filters)?;
-    let observations = manifest_output
-        .rows
-        .iter()
-        .map(|row| {
-            workspace.app_observation_from_manifest_row(
-                row,
-                &assay_id,
-                input_inspection.inferred_sex.as_ref(),
-                input_inspection.assembly,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let analyses = workspace.run_manifest_analyses(
-        manifest_path,
+    let analysis_runner = report_workspace::WasmReportAnalysisRunner {
+        workspace: &workspace,
         input_name,
         input_bytes,
-        &manifest_output.observations,
-        &participant_id,
-        &loader,
-        &options,
-    )?;
-    let matched_findings = match_app_findings(&findings, &observations, &analyses);
-    let reports = vec![app_report_json(AppReportJsonInput {
-        assay_id: &assay_id,
         participant_id: &participant_id,
-        input_file_name: input_name,
-        observations: &observations,
-        analyses: &analyses,
-        findings: &matched_findings,
-        provenance: &provenance,
-        input_inspection: Some(&input_inspection),
-        manifest_metadata: &manifest_metadata,
-    })];
-    let observations_tsv = render_app_observations_tsv(&observations)?;
-    let analysis_jsonl = render_jsonl(&analyses)?;
-    let reports_jsonl = render_jsonl(&reports)?;
-    let html = render_app_html_document(&observations, &reports)?;
-    let text_output = format!(
-        "observations: observations.tsv\nanalysis: analysis.jsonl\nreports: reports.jsonl\nhtml: index.html\n"
-    );
-    serde_json::to_string(&ReportRunOutput {
-        artifacts: vec![
-            artifact(
-                "observations.tsv",
-                "text/tab-separated-values",
-                observations_tsv,
-            ),
-            artifact("analysis.jsonl", "application/jsonl", analysis_jsonl),
-            artifact("reports.jsonl", "application/jsonl", reports_jsonl),
-            artifact("index.html", "text/html", html),
-        ],
-        duration_ms: (js_sys::Date::now() - started_ms).max(0.0) as u128,
-        text_output,
-    })
-    .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
+        loader: &loader,
+        options: &options,
+    };
+    let run = bioscript_reporting::run_report(
+        &workspace,
+        manifest_path,
+        &store,
+        &analysis_runner,
+        bioscript_reporting::ReportInputContext {
+            participant_id: &participant_id,
+            input_file_name: input_name,
+            input_file_path,
+            input_inspection: Some(&input_inspection),
+        },
+        bioscript_reporting::ReportRunOptions {
+            filters: &options.filters,
+        },
+    )
+    .map_err(|err| JsError::new(&err))?;
+    encode_report_run_output(started_ms, run.artifacts)
 }
 
 /// Mirrors `runPackageReportBytes` but for CRAM input. The CRAM body and
@@ -215,10 +191,14 @@ pub fn run_package_report_from_cram(
     };
     let workspace = PackageWorkspace::new(package_files)?;
     let participant_id = participant_id_from_name(input_name);
-    let assay_id = app_assay_id(Path::new(manifest_path))?;
-    let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
-    let findings = workspace.load_manifest_findings(manifest_path)?;
-    let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
+    let input_file_path = options.input_file_path.as_deref().unwrap_or(input_name);
+    let mut head_inspection = inspect_head_via_js_reader(
+        &cram_read_at,
+        cram_len as u64,
+        input_name,
+        &options.inspect_options(false),
+        false, // sex detection runs separately below via the indexed reader
+    );
 
     let crai_index = bioscript_formats::alignment::parse_crai_bytes(crai_bytes)
         .map_err(|err| JsError::new(&format!("parse crai: {err:?}")))?;
@@ -239,66 +219,139 @@ pub fn run_package_report_from_cram(
 
     let lookup = CramReportLookup {
         reader: std::cell::RefCell::new(indexed),
-        label: input_name.to_owned(),
+        label: input_file_path.to_owned(),
     };
 
-    let mut loader = GenotypeLoadOptions::default();
-    loader.format = Some(bioscript_formats::GenotypeSourceFormat::Cram);
-    loader.allow_reference_md5_mismatch = true;
-    let manifest_output =
-        workspace.run_manifest_rows(manifest_path, &lookup, &participant_id, &options.filters)?;
-    let observations = manifest_output
-        .rows
-        .iter()
-        .map(|row| workspace.app_observation_from_manifest_row(row, &assay_id, None, None))
-        .collect::<Result<Vec<_>, _>>()?;
-    // Analysis scripts call `bioscript.load_genotypes(input_file)` then rsid
-    // lookups via `genotypes.lookup_variants(plan)`. The runtime now layers a
-    // pre-resolved-observation cache over whatever the input file resolves
-    // to (Plan B in genotype/types.rs:QueryBackend::Cached), so for CRAM the
-    // cache hits and we skip re-walking the genome. The input bytes can be
-    // empty since every spec the panel/assays declared is in the cache.
-    let analyses = workspace.run_manifest_analyses(
-        manifest_path,
+    // CRAM sex detection: explicit override wins, otherwise alignment Y/X
+    // coverage analysis through the same reader the variant lookup will use.
+    if let Some(explicit) = explicit_sex_from_options(&options) {
+        head_inspection.inferred_sex = Some(explicit);
+    } else if options.detect_sex {
+        let mut reader_borrow = lookup.reader.borrow_mut();
+        match bioscript_formats::infer_sex_from_alignment_reader(
+            &mut reader_borrow,
+            &lookup.label,
+            true,
+        ) {
+            Ok(inference) => head_inspection.inferred_sex = Some(inference),
+            Err(err) => {
+                head_inspection
+                    .evidence
+                    .push(format!("alignment sex detection failed: {err:?}"));
+            }
+        }
+    }
+
+    let loader = GenotypeLoadOptions {
+        format: Some(bioscript_formats::GenotypeSourceFormat::Cram),
+        allow_reference_md5_mismatch: true,
+        ..Default::default()
+    };
+    let analysis_runner = report_workspace::WasmReportAnalysisRunner {
+        workspace: &workspace,
         input_name,
-        &[],
-        &manifest_output.observations,
-        &participant_id,
-        &loader,
-        &options,
-    )?;
-    let matched_findings = match_app_findings(&findings, &observations, &analyses);
-    let reports = vec![app_report_json(AppReportJsonInput {
-        assay_id: &assay_id,
+        input_bytes: &[],
         participant_id: &participant_id,
-        input_file_name: input_name,
-        observations: &observations,
-        analyses: &analyses,
-        findings: &matched_findings,
-        provenance: &provenance,
-        input_inspection: None,
-        manifest_metadata: &manifest_metadata,
-    })];
-    let observations_tsv = render_app_observations_tsv(&observations)?;
-    let analysis_jsonl = render_jsonl(&analyses)?;
-    let reports_jsonl = render_jsonl(&reports)?;
-    let html = render_app_html_document(&observations, &reports)?;
-    let text_output = "observations: observations.tsv\nanalysis: analysis.jsonl\nreports: reports.jsonl\nhtml: index.html\n".to_owned();
-    serde_json::to_string(&ReportRunOutput {
-        artifacts: vec![
-            artifact(
-                "observations.tsv",
-                "text/tab-separated-values",
-                observations_tsv,
-            ),
-            artifact("analysis.jsonl", "application/jsonl", analysis_jsonl),
-            artifact("reports.jsonl", "application/jsonl", reports_jsonl),
-            artifact("index.html", "text/html", html),
-        ],
-        duration_ms: (js_sys::Date::now() - started_ms).max(0.0) as u128,
-        text_output,
-    })
-    .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
+        loader: &loader,
+        options: &options,
+    };
+    let run = bioscript_reporting::run_report(
+        &workspace,
+        manifest_path,
+        &lookup,
+        &analysis_runner,
+        bioscript_reporting::ReportInputContext {
+            participant_id: &participant_id,
+            input_file_name: input_name,
+            input_file_path,
+            input_inspection: Some(&head_inspection),
+        },
+        bioscript_reporting::ReportRunOptions {
+            filters: &options.filters,
+        },
+    )
+    .map_err(|err| JsError::new(&err))?;
+    encode_report_run_output(started_ms, run.artifacts)
+}
+
+/// Mirrors `runPackageReportBytes` but for BAM input. The BAM body is streamed
+/// via a JS-supplied `readAt` callback and the BAI index is passed inline.
+#[wasm_bindgen(js_name = runPackageReportFromBam)]
+#[allow(clippy::too_many_arguments)]
+pub fn run_package_report_from_bam(
+    manifest_path: &str,
+    package_files_json: &str,
+    input_name: &str,
+    bam_read_at: js_sys::Function,
+    bam_len: f64,
+    bai_bytes: &[u8],
+    options_json: Option<String>,
+) -> Result<String, JsError> {
+    use crate::js_reader::JsReader;
+    let started_ms = js_sys::Date::now();
+    let package_files: Vec<PackageFileInput> = serde_json::from_str(package_files_json)
+        .map_err(|err| JsError::new(&format!("invalid package files JSON: {err}")))?;
+    let options = match options_json {
+        Some(text) if !text.is_empty() => serde_json::from_str(&text)
+            .map_err(|err| JsError::new(&format!("invalid report options JSON: {err}")))?,
+        _ => ReportOptionsInput::default(),
+    };
+    let workspace = PackageWorkspace::new(package_files)?;
+    let participant_id = participant_id_from_name(input_name);
+    let input_file_path = options.input_file_path.as_deref().unwrap_or(input_name);
+    let mut head_inspection = inspect_head_via_js_reader(
+        &bam_read_at,
+        bam_len as u64,
+        input_name,
+        &options.inspect_options(false),
+        false,
+    );
+
+    let bai_index = bioscript_formats::alignment::parse_bai_bytes(bai_bytes)
+        .map_err(|err| JsError::new(&format!("parse bai: {err:?}")))?;
+    let bam_reader = JsReader::new(bam_read_at, bam_len as u64, "bam");
+    let indexed =
+        bioscript_formats::alignment::build_bam_indexed_reader_from_reader(bam_reader, bai_index)
+            .map_err(|err| JsError::new(&format!("build bam reader: {err:?}")))?;
+
+    let lookup = BamReportLookup {
+        reader: std::cell::RefCell::new(indexed),
+        label: input_file_path.to_owned(),
+    };
+
+    if let Some(explicit) = explicit_sex_from_options(&options) {
+        head_inspection.inferred_sex = Some(explicit);
+    }
+
+    let loader = GenotypeLoadOptions {
+        format: Some(bioscript_formats::GenotypeSourceFormat::Bam),
+        ..Default::default()
+    };
+    let analysis_runner = report_workspace::WasmReportAnalysisRunner {
+        workspace: &workspace,
+        input_name,
+        input_bytes: &[],
+        participant_id: &participant_id,
+        loader: &loader,
+        options: &options,
+    };
+    let run = bioscript_reporting::run_report(
+        &workspace,
+        manifest_path,
+        &lookup,
+        &analysis_runner,
+        bioscript_reporting::ReportInputContext {
+            participant_id: &participant_id,
+            input_file_name: input_name,
+            input_file_path,
+            input_inspection: Some(&head_inspection),
+        },
+        bioscript_reporting::ReportRunOptions {
+            filters: &options.filters,
+        },
+    )
+    .map_err(|err| JsError::new(&err))?;
+    encode_report_run_output(started_ms, run.artifacts)
 }
 
 /// Mirrors `runPackageReportBytes` but for a bgzipped, tabix-indexed VCF
@@ -325,74 +378,67 @@ pub fn run_package_report_from_vcf(
     };
     let workspace = PackageWorkspace::new(package_files)?;
     let participant_id = participant_id_from_name(input_name);
-    let assay_id = app_assay_id(Path::new(manifest_path))?;
-    let manifest_metadata = workspace.report_manifest_metadata(manifest_path)?;
-    let findings = workspace.load_manifest_findings(manifest_path)?;
-    let provenance = workspace.load_manifest_provenance_links(manifest_path)?;
-
+    let input_file_path = options.input_file_path.as_deref().unwrap_or(input_name);
+    // Inspect format/source/assembly from the head, but skip the byte-stream
+    // sex detection — we'll do that via tabix-targeted X non-PAR queries
+    // below, which works on indexed VCFs of any size.
+    let mut head_inspection = inspect_head_via_js_reader(
+        &vcf_read_at,
+        vcf_len as u64,
+        input_name,
+        &options.inspect_options(false),
+        false,
+    );
+    if head_inspection.assembly.is_none() {
+        head_inspection.assembly =
+            detect_vcf_assembly_via_js_reader(vcf_read_at.clone(), vcf_len as u64, input_name);
+    }
     let tabix_index = bioscript_formats::alignment::parse_tbi_bytes(tbi_bytes)
         .map_err(|err| JsError::new(&format!("parse tbi: {err:?}")))?;
-    let vcf_reader = JsReader::new(vcf_read_at, vcf_len as u64, "vcf");
+    let vcf_reader = JsReader::new(vcf_read_at.clone(), vcf_len as u64, "vcf");
     let indexed = noodles::csi::io::IndexedReader::new(vcf_reader, tabix_index);
 
     let lookup = VcfReportLookup {
         reader: std::cell::RefCell::new(indexed),
-        label: input_name.to_owned(),
+        label: input_file_path.to_owned(),
+        detected_assembly: head_inspection.assembly,
     };
 
-    let mut loader = GenotypeLoadOptions::default();
-    loader.format = Some(bioscript_formats::GenotypeSourceFormat::Vcf);
-    let manifest_output =
-        workspace.run_manifest_rows(manifest_path, &lookup, &participant_id, &options.filters)?;
-    let observations = manifest_output
-        .rows
-        .iter()
-        .map(|row| workspace.app_observation_from_manifest_row(row, &assay_id, None, None))
-        .collect::<Result<Vec<_>, _>>()?;
-    // Pre-resolved observation cache replaces the synth approach: analysis
-    // scripts hit the cache via QueryBackend::Cached and skip re-opening the
-    // VCF. See report_api.rs:run_package_report_from_cram for the same
-    // pattern and bioscript-formats::genotype::types::QueryBackend::Cached
-    // for the dispatch.
-    let analyses = workspace.run_manifest_analyses(
-        manifest_path,
+    if let Some(explicit) = explicit_sex_from_options(&options) {
+        head_inspection.inferred_sex = Some(explicit);
+    } else if options.detect_sex
+        && let Some(inference) = vcf_sex_via_js_reader(vcf_read_at, vcf_len as u64, input_name)
+    {
+        head_inspection.inferred_sex = Some(inference);
+    }
+
+    let loader = GenotypeLoadOptions {
+        format: Some(bioscript_formats::GenotypeSourceFormat::Vcf),
+        ..Default::default()
+    };
+    let analysis_runner = report_workspace::WasmReportAnalysisRunner {
+        workspace: &workspace,
         input_name,
-        &[],
-        &manifest_output.observations,
-        &participant_id,
-        &loader,
-        &options,
-    )?;
-    let matched_findings = match_app_findings(&findings, &observations, &analyses);
-    let reports = vec![app_report_json(AppReportJsonInput {
-        assay_id: &assay_id,
+        input_bytes: &[],
         participant_id: &participant_id,
-        input_file_name: input_name,
-        observations: &observations,
-        analyses: &analyses,
-        findings: &matched_findings,
-        provenance: &provenance,
-        input_inspection: None,
-        manifest_metadata: &manifest_metadata,
-    })];
-    let observations_tsv = render_app_observations_tsv(&observations)?;
-    let analysis_jsonl = render_jsonl(&analyses)?;
-    let reports_jsonl = render_jsonl(&reports)?;
-    let html = render_app_html_document(&observations, &reports)?;
-    let text_output = "observations: observations.tsv\nanalysis: analysis.jsonl\nreports: reports.jsonl\nhtml: index.html\n".to_owned();
-    serde_json::to_string(&ReportRunOutput {
-        artifacts: vec![
-            artifact(
-                "observations.tsv",
-                "text/tab-separated-values",
-                observations_tsv,
-            ),
-            artifact("analysis.jsonl", "application/jsonl", analysis_jsonl),
-            artifact("reports.jsonl", "application/jsonl", reports_jsonl),
-            artifact("index.html", "text/html", html),
-        ],
-        duration_ms: (js_sys::Date::now() - started_ms).max(0.0) as u128,
-        text_output,
-    })
-    .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
+        loader: &loader,
+        options: &options,
+    };
+    let run = bioscript_reporting::run_report(
+        &workspace,
+        manifest_path,
+        &lookup,
+        &analysis_runner,
+        bioscript_reporting::ReportInputContext {
+            participant_id: &participant_id,
+            input_file_name: input_name,
+            input_file_path,
+            input_inspection: Some(&head_inspection),
+        },
+        bioscript_reporting::ReportRunOptions {
+            filters: &options.filters,
+        },
+    )
+    .map_err(|err| JsError::new(&err))?;
+    encode_report_run_output(started_ms, run.artifacts)
 }

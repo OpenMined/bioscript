@@ -1,4 +1,7 @@
-fn render_provenance_links(out: &mut String, reports: &[serde_json::Value]) {
+use super::helpers::html_escape;
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+pub(super) fn render_provenance_links(out: &mut String, reports: &[serde_json::Value]) {
     let mut links = BTreeMap::<String, String>::new();
     for report in reports {
         collect_provenance_links_from_value(report, &mut links);
@@ -30,7 +33,7 @@ fn render_provenance_links(out: &mut String, reports: &[serde_json::Value]) {
     out.push_str("</ul>");
 }
 
-fn group_provenance_links_by_domain(
+pub(super) fn group_provenance_links_by_domain(
     links: BTreeMap<String, String>,
 ) -> BTreeMap<String, BTreeMap<String, String>> {
     let mut grouped = BTreeMap::<String, BTreeMap<String, String>>::new();
@@ -43,7 +46,7 @@ fn group_provenance_links_by_domain(
     grouped
 }
 
-fn domain_from_url(url: &str) -> Option<String> {
+pub(super) fn domain_from_url(url: &str) -> Option<String> {
     let without_scheme = url.split_once("://")?.1;
     let host = without_scheme.split(['/', '?', '#']).next()?.trim();
     if host.is_empty() {
@@ -52,7 +55,17 @@ fn domain_from_url(url: &str) -> Option<String> {
         Some(host.to_ascii_lowercase())
     }
 }
-fn collect_provenance_links_from_value(
+
+pub(super) fn provenance_value_as_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(value) => Some(value.clone()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+pub(super) fn collect_provenance_links_from_value(
     value: &serde_json::Value,
     links: &mut BTreeMap<String, String>,
 ) {
@@ -65,7 +78,7 @@ fn collect_provenance_links_from_value(
                     .get("name")
                     .or_else(|| object.get("label"))
                     .or_else(|| object.get("source"))
-                    .and_then(value_as_string)
+                    .and_then(provenance_value_as_string)
                     .unwrap_or_default();
                 links.entry(url.to_owned()).or_insert(label);
             }
@@ -81,4 +94,3 @@ fn collect_provenance_links_from_value(
         _ => {}
     }
 }
-

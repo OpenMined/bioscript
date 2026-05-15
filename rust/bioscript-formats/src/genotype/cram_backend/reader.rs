@@ -7,12 +7,12 @@ use noodles::cram;
 
 use bioscript_core::{Assembly, GenomicLocus, RuntimeError, VariantObservation};
 
-use crate::alignment;
+use crate::alignment::{self, AlignmentOpKind};
 
 use super::{
-    classify_expected_indel, describe_copy_number_decision_rule, describe_locus,
-    describe_snp_decision_rule, infer_copy_number_genotype, infer_snp_genotype,
-    record_overlaps_locus, snp_pileup_with_reader,
+    anchor_window, classify_expected_indel, describe_copy_number_decision_rule, describe_locus,
+    describe_snp_decision_rule, indel_at_anchor, infer_copy_number_genotype, infer_snp_genotype,
+    record_overlaps_locus, snp_pileup_with_reader, spans_position,
 };
 
 /// Observe a SNP at `locus` over an already-built CRAM `IndexedReader` and
@@ -55,6 +55,56 @@ pub fn observe_cram_snp_with_reader<R: Read + Seek>(
             reference, alternate, ref_count, alt_count, depth,
         )),
         evidence,
+    })
+}
+
+/// Observe a deletion at `locus` over an already-built CRAM `IndexedReader`.
+pub fn observe_cram_deletion_with_reader<R: Read + Seek>(
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
+    label: &str,
+    locus: &GenomicLocus,
+    deletion_length: usize,
+    reference: &str,
+    alternate: &str,
+    matched_rsid: Option<String>,
+    assembly: Option<Assembly>,
+) -> Result<VariantObservation, RuntimeError> {
+    let anchor_pos = locus.start.saturating_sub(1);
+
+    let mut alt_count = 0u32;
+    let mut ref_count = 0u32;
+    let mut depth = 0u32;
+
+    alignment::for_each_cram_record_with_reader(reader, label, &anchor_window(locus), |record| {
+        if record.is_unmapped || !spans_position(&record, anchor_pos) {
+            return Ok(true);
+        }
+        depth += 1;
+        match indel_at_anchor(&record, anchor_pos) {
+            Some((AlignmentOpKind::Deletion, len)) if len == deletion_length => {
+                alt_count += 1;
+            }
+            _ => ref_count += 1,
+        }
+        Ok(true)
+    })?;
+
+    Ok(VariantObservation {
+        backend: "cram".to_owned(),
+        matched_rsid,
+        assembly,
+        genotype: infer_copy_number_genotype(reference, alternate, ref_count, alt_count, depth),
+        ref_count: Some(ref_count),
+        alt_count: Some(alt_count),
+        depth: Some(depth),
+        raw_counts: BTreeMap::new(),
+        decision: Some(describe_copy_number_decision_rule(
+            reference, alternate, ref_count, alt_count, depth,
+        )),
+        evidence: vec![format!(
+            "observed deletion anchor {}:{} len={} depth={} ref_count={} alt_count={}",
+            locus.chrom, anchor_pos, deletion_length, depth, ref_count, alt_count
+        )],
     })
 }
 

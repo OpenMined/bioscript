@@ -1,73 +1,48 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufReader, Cursor},
+    io::{BufRead, BufReader, Cursor},
     path::Path,
 };
 
 use zip::ZipArchive;
 
-#[cfg(test)]
-use bioscript_core::{Assembly, GenomicLocus, VariantKind};
 use bioscript_core::{RuntimeError, VariantObservation, VariantSpec};
 
 mod backends;
+mod cache;
 mod common;
 mod cram_backend;
 mod delimited;
 mod io;
+mod loaders;
 mod types;
 mod vcf;
 mod vcf_tokens;
 
-#[cfg(test)]
-use common::chrom_sort_key;
+pub(crate) use cache::{match_cached_observation, required_cache_miss};
 pub(crate) use common::{describe_query, normalize_genotype, variant_sort_key};
-#[cfg(test)]
-use cram_backend::{
-    SnpPileupCounts, anchor_window, choose_variant_locus, classify_expected_indel,
-    describe_copy_number_decision_rule, describe_locus, describe_snp_decision_rule,
-    detect_reference_assembly, first_base, indel_at_anchor, infer_copy_number_genotype,
-    infer_snp_genotype, len_as_i64, normalize_pileup_base, record_overlaps_locus, spans_position,
+pub use cram_backend::{
+    observe_cram_deletion_with_reader, observe_cram_indel_with_reader, observe_cram_snp_with_reader,
 };
-pub use cram_backend::{observe_cram_indel_with_reader, observe_cram_snp_with_reader};
 pub(crate) use delimited::{
-    DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row,
+    COMMENT_PREFIXES, DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row,
 };
-#[cfg(test)]
-use delimited::{GENOTYPE_ALIASES, split_csv_line, strip_bom, strip_inline_comment};
 use delimited::{RowParser, scan_delimited_variants};
-#[cfg(test)]
-use delimited::{
-    build_column_indexes, default_column_indexes, find_header_index, looks_like_header_fields,
-    normalize_name,
-};
-#[cfg(test)]
-use io::looks_like_vcf_lines;
 use io::{
-    detect_source_format, is_bgzf_path, read_lines_from_reader, read_zip_entry_limited,
+    detect_source_format, is_bgzf_path, looks_like_vcf_lines, read_lines_from_reader,
     select_zip_entry,
 };
 pub use types::{
     BackendCapabilities, GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind,
 };
 use types::{CramBackend, DelimitedBackend, QueryBackend, RsidMapBackend, VcfBackend};
-#[cfg(test)]
-use vcf::{
-    choose_variant_locus_for_assembly, detect_vcf_assembly, extract_vcf_sample_genotype,
-    normalize_chromosome_name, parse_vcf_record, vcf_row_matches_variant,
-};
 pub use vcf::{
-    imputed_reference_observation, observe_vcf_snp_with_reader, observe_vcf_variant_with_reader,
+    choose_variant_locus_for_assembly, detect_vcf_assembly, imputed_reference_observation,
+    observe_vcf_snp_with_reader, observe_vcf_variant_with_reader,
 };
 use vcf::{lookup_indexed_vcf_variants, scan_vcf_variants};
-use vcf_tokens::genotype_from_vcf_gt;
-#[cfg(test)]
-use vcf_tokens::{
-    is_symbolic_vcf_alt, normalize_sequence_token, vcf_alt_token, vcf_reference_token,
-};
-
-const MAX_ZIP_ENTRY_BYTES: u64 = 128 * 1024 * 1024;
+pub(crate) use vcf_tokens::genotype_from_vcf_gt;
 
 impl GenotypeStore {
     pub fn from_file(path: &Path) -> Result<Self, RuntimeError> {
@@ -89,6 +64,24 @@ impl GenotypeStore {
             backend: QueryBackend::Cached {
                 observations,
                 fallback: Box::new(fallback.backend),
+                require_hit: false,
+            },
+        }
+    }
+
+    /// Wrap an existing store with a required cache of pre-resolved
+    /// observations. Unlike `with_cached_observations`, lookup misses are
+    /// errors. Report analysis uses this to avoid silently producing analysis
+    /// output from a different lookup path than the observations table.
+    pub fn with_required_cached_observations(
+        observations: Vec<VariantObservation>,
+        fallback: GenotypeStore,
+    ) -> Self {
+        Self {
+            backend: QueryBackend::Cached {
+                observations,
+                fallback: Box::new(fallback.backend),
+                require_hit: true,
             },
         }
     }
@@ -102,6 +95,9 @@ impl GenotypeStore {
             backend: QueryBackend::RsidMap(RsidMapBackend {
                 format: GenotypeSourceFormat::Text,
                 values: HashMap::new(),
+                locus_values: HashMap::new(),
+                assembly: None,
+                source_lines: HashMap::new(),
             }),
         }
     }
@@ -115,8 +111,9 @@ impl GenotypeStore {
                 path,
                 GenotypeSourceFormat::Text,
                 None,
+                options,
             )),
-            GenotypeSourceFormat::Zip => Self::from_zip_file(path),
+            GenotypeSourceFormat::Zip => Self::from_zip_file(path, options),
             GenotypeSourceFormat::Vcf => Ok(Self::from_vcf_file(path, options)),
             GenotypeSourceFormat::Cram => Self::from_cram_file(path, options),
             GenotypeSourceFormat::Bam => Err(RuntimeError::Unsupported(format!(
@@ -127,17 +124,19 @@ impl GenotypeStore {
     }
 
     pub fn from_bytes(name: &str, bytes: &[u8]) -> Result<Self, RuntimeError> {
+        // The report pipeline hands us a fixed virtual path (`/input/genotypes`)
+        // with no extension, so we cannot rely on `name` alone for format
+        // detection the way `from_file_with_options` can. Sniff the leading
+        // bytes so a zip/VCF payload is recognised regardless of the name.
         let lower = name.to_ascii_lowercase();
-        if lower.ends_with(".zip") {
+        if lower.ends_with(".zip") || bytes_look_like_zip(bytes) {
             return Self::from_zip_bytes(name, bytes);
         }
-        if lower.ends_with(".vcf") {
-            let lines =
-                read_lines_from_reader(BufReader::new(Cursor::new(bytes)), Path::new(name))?;
-            return Self::from_vcf_lines(lines);
+        let reader = BufReader::new(Cursor::new(bytes));
+        if lower.ends_with(".vcf") || bytes_look_like_vcf(bytes) {
+            return Self::from_vcf_reader(reader, name);
         }
-        let lines = read_lines_from_reader(BufReader::new(Cursor::new(bytes)), Path::new(name))?;
-        Self::from_delimited_lines(GenotypeSourceFormat::Text, lines)
+        Self::from_delimited_reader(GenotypeSourceFormat::Text, reader, name)
     }
 
     fn from_zip_bytes(name: &str, bytes: &[u8]) -> Result<Self, RuntimeError> {
@@ -168,22 +167,22 @@ impl GenotypeStore {
                 "zip archive {name} does not contain a supported genotype file"
             ))
         })?;
-        let mut entry = archive.by_name(&selected).map_err(|err| {
+        let entry = archive.by_name(&selected).map_err(|err| {
             RuntimeError::Io(format!(
                 "failed to open genotype entry {selected} in {name}: {err}"
             ))
         })?;
-        let contents = read_zip_entry_limited(
-            &mut entry,
-            MAX_ZIP_ENTRY_BYTES,
-            &format!("genotype entry {selected} in {name}"),
-        )?;
-        let lines =
-            read_lines_from_reader(BufReader::new(Cursor::new(contents)), Path::new(&selected))?;
+        let label = format!("genotype entry {selected} in {name}");
+        // Stream-decompress directly off the zip reader so we never have to
+        // materialize the entire decompressed entry in memory. GenesForGood
+        // exports decompress to >128MB which used to trip the old
+        // `read_zip_entry_limited` cap; the cap is gone because the streaming
+        // parser keeps memory bounded to the rsid map itself.
+        let reader = BufReader::new(entry);
         if selected.to_ascii_lowercase().ends_with(".vcf") {
-            return Self::from_vcf_lines(lines);
+            return Self::from_vcf_reader(reader, &label);
         }
-        Self::from_delimited_lines(GenotypeSourceFormat::Zip, lines)
+        Self::from_delimited_reader(GenotypeSourceFormat::Zip, reader, &label)
     }
 
     fn from_vcf_file(path: &Path, options: &GenotypeLoadOptions) -> Self {
@@ -195,7 +194,7 @@ impl GenotypeStore {
         }
     }
 
-    fn from_zip_file(path: &Path) -> Result<Self, RuntimeError> {
+    fn from_zip_file(path: &Path, options: &GenotypeLoadOptions) -> Result<Self, RuntimeError> {
         let selected = select_zip_entry(path)?;
         let lower = selected.to_ascii_lowercase();
         if lower.ends_with(".vcf") || lower.ends_with(".vcf.gz") {
@@ -224,6 +223,7 @@ impl GenotypeStore {
             path,
             GenotypeSourceFormat::Zip,
             Some(selected),
+            options,
         ))
     }
 
@@ -236,75 +236,34 @@ impl GenotypeStore {
         })
     }
 
-    fn from_vcf_lines(lines: Vec<String>) -> Result<Self, RuntimeError> {
-        let mut values = HashMap::new();
-
-        for line in lines {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with("##") || trimmed.starts_with("#CHROM") {
-                continue;
-            }
-
-            let fields: Vec<&str> = trimmed.split('\t').collect();
-            if fields.len() < 10 {
-                continue;
-            }
-
-            let rsid = fields[2].trim();
-            if rsid.is_empty() || rsid == "." {
-                continue;
-            }
-
-            let reference = fields[3].trim();
-            let alternates: Vec<&str> = fields[4]
-                .split(',')
-                .map(str::trim)
-                .filter(|alt| !alt.is_empty() && *alt != ".")
-                .collect();
-            if reference.is_empty() || alternates.is_empty() {
-                continue;
-            }
-
-            let sample_gt = fields[9].split(':').next().unwrap_or(".");
-            if let Some(genotype) = genotype_from_vcf_gt(sample_gt, reference, &alternates) {
-                values.insert(rsid.to_owned(), genotype);
-            }
-        }
-
-        Ok(Self::from_rsid_map(GenotypeSourceFormat::Vcf, values))
+    fn from_vcf_reader<R: BufRead>(reader: R, label: &str) -> Result<Self, RuntimeError> {
+        loaders::from_vcf_reader(reader, label)
     }
 
-    fn from_delimited_lines(
+    fn from_delimited_reader<R: BufRead>(
         format: GenotypeSourceFormat,
-        lines: Vec<String>,
+        reader: R,
+        label: &str,
     ) -> Result<Self, RuntimeError> {
-        let delimiter = detect_delimiter(&lines);
-        let mut parser = RowParser::new(delimiter);
-        let mut values = HashMap::new();
-        for line in lines {
-            if let Some((rsid, genotype)) = parser.consume_line(&line)? {
-                values.insert(rsid, genotype);
-            }
-        }
-        Ok(Self::from_rsid_map(format, values))
+        loaders::from_delimited_reader(format, reader, label)
     }
 
-    fn from_rsid_map(format: GenotypeSourceFormat, values: HashMap<String, String>) -> Self {
-        Self {
-            backend: QueryBackend::RsidMap(RsidMapBackend { format, values }),
-        }
+    fn from_vcf_lines(lines: Vec<String>) -> Result<Self, RuntimeError> {
+        loaders::from_vcf_lines(lines)
     }
 
     fn from_delimited_file(
         path: &Path,
         format: GenotypeSourceFormat,
         zip_entry_name: Option<String>,
+        options: &GenotypeLoadOptions,
     ) -> Self {
         Self {
             backend: QueryBackend::Delimited(DelimitedBackend {
                 format,
                 path: path.to_path_buf(),
                 zip_entry_name,
+                options: options.clone(),
             }),
         }
     }
@@ -367,12 +326,19 @@ impl GenotypeStore {
             QueryBackend::Cached {
                 observations,
                 fallback,
+                require_hit,
             } => {
                 if let Some(matched) = observations
                     .iter()
                     .find(|obs| obs.matched_rsid.as_deref().is_some_and(|r| r == rsid))
                 {
                     return Ok(matched.genotype.clone());
+                }
+                if *require_hit {
+                    return Err(required_cache_miss(&VariantSpec {
+                        rsids: vec![rsid.to_owned()],
+                        ..VariantSpec::default()
+                    }));
                 }
                 let inner = GenotypeStore {
                     backend: (**fallback).clone(),
@@ -394,9 +360,13 @@ impl GenotypeStore {
             QueryBackend::Cached {
                 observations,
                 fallback,
+                require_hit,
             } => {
                 if let Some(hit) = match_cached_observation(observations, variant) {
                     return Ok(hit.clone());
+                }
+                if *require_hit {
+                    return Err(required_cache_miss(variant));
                 }
                 let inner = GenotypeStore {
                     backend: (**fallback).clone(),
@@ -413,6 +383,7 @@ impl GenotypeStore {
         if let QueryBackend::Cached {
             observations,
             fallback,
+            require_hit,
         } = &self.backend
         {
             // Resolve cache hits up-front; only round-trip the fallback for
@@ -425,6 +396,9 @@ impl GenotypeStore {
                 if let Some(hit) = match_cached_observation(observations, spec) {
                     results[idx] = Some(hit.clone());
                 } else {
+                    if *require_hit {
+                        return Err(required_cache_miss(spec));
+                    }
                     miss_indices.push(idx);
                     miss_specs.push(spec.clone());
                 }
@@ -460,44 +434,17 @@ impl GenotypeStore {
     }
 }
 
-/// Match a `VariantSpec` against a pre-resolved observation list. Tries rsid
-/// equality first (most common case for `PGx` panels), then falls back to a
-/// chrom+pos+ref+alt match against either `GRCh37` or `GRCh38` loci so cached
-/// observations from a CRAM lookup (which may have been done on one assembly)
-/// can satisfy a script that supplies the spec on the other.
-fn match_cached_observation<'a>(
-    observations: &'a [VariantObservation],
-    spec: &VariantSpec,
-) -> Option<&'a VariantObservation> {
-    if let Some(matched) = observations.iter().find(|obs| {
-        obs.matched_rsid
-            .as_deref()
-            .is_some_and(|rsid| spec.rsids.iter().any(|target| target == rsid))
-    }) {
-        return Some(matched);
-    }
-    let assembly_loci = [spec.grch37.as_ref(), spec.grch38.as_ref()];
-    let target_ref = spec.reference.as_deref();
-    let target_alt = spec.alternate.as_deref();
-    observations.iter().find(|obs| {
-        let Some(loci) = assembly_loci.iter().find_map(|l| *l) else {
-            return false;
-        };
-        let evidence_match = obs
-            .evidence
-            .iter()
-            .any(|line| line.contains(&loci.chrom) && line.contains(&loci.start.to_string()));
-        if !evidence_match {
-            return false;
-        }
-        match (target_ref, target_alt) {
-            (Some(r), Some(a)) => obs
-                .evidence
-                .iter()
-                .any(|line| line.contains(r) && line.contains(a)),
-            _ => true,
-        }
-    })
+fn bytes_look_like_zip(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"PK\x03\x04")
+        || bytes.starts_with(b"PK\x05\x06")
+        || bytes.starts_with(b"PK\x07\x08")
+}
+
+fn bytes_look_like_vcf(bytes: &[u8]) -> bool {
+    let prefix = &bytes[..bytes.len().min(8192)];
+    let text = String::from_utf8_lossy(prefix);
+    let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    looks_like_vcf_lines(&lines)
 }
 
 #[cfg(test)]
@@ -511,12 +458,35 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use bioscript_core::{Assembly, GenomicLocus, VariantKind};
     use noodles::bgzf;
     use noodles::csi;
     use zip::write::SimpleFileOptions;
 
     use crate::alignment::{AlignmentOp, AlignmentOpKind, AlignmentRecord};
-    use crate::genotype::{io::read_plain_lines, vcf::detect_vcf_assembly_from_path};
+    use crate::genotype::{
+        common::chrom_sort_key,
+        cram_backend::{
+            SnpPileupCounts, anchor_window, choose_variant_locus, classify_expected_indel,
+            describe_copy_number_decision_rule, describe_locus, describe_snp_decision_rule,
+            detect_reference_assembly, first_base, indel_at_anchor, infer_copy_number_genotype,
+            infer_snp_genotype, len_as_i64, normalize_pileup_base, record_overlaps_locus,
+            spans_position,
+        },
+        delimited::{
+            GENOTYPE_ALIASES, build_column_indexes, default_column_indexes, find_header_index,
+            looks_like_header_fields, normalize_name, split_csv_line, strip_bom,
+            strip_inline_comment,
+        },
+        io::{looks_like_vcf_lines, read_plain_lines},
+        vcf::{
+            detect_vcf_assembly, detect_vcf_assembly_from_path, extract_vcf_sample_genotype,
+            normalize_chromosome_name, parse_vcf_record, vcf_row_matches_variant,
+        },
+        vcf_tokens::{
+            is_symbolic_vcf_alt, normalize_sequence_token, vcf_alt_token, vcf_reference_token,
+        },
+    };
 
     fn temp_dir(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -556,6 +526,63 @@ mod tests {
             deletion_length: None,
             motifs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn genotype_public_cache_wrappers_and_empty_store_cover_lookup_contracts() {
+        let fallback =
+            GenotypeStore::from_bytes("fallback.txt", b"rsid\tgenotype\nrs2\tCC\n").unwrap();
+        let cached_observation = VariantObservation {
+            matched_rsid: Some("rs1".to_owned()),
+            genotype: Some("AG".to_owned()),
+            ..VariantObservation::default()
+        };
+        let cached =
+            GenotypeStore::with_cached_observations(vec![cached_observation.clone()], fallback);
+        assert_eq!(cached.backend_name(), "cached");
+        assert_eq!(cached.get("rs1").unwrap().as_deref(), Some("AG"));
+        assert_eq!(cached.get("rs2").unwrap().as_deref(), Some("CC"));
+        let observations = cached
+            .lookup_variants(&[
+                VariantSpec {
+                    rsids: vec!["rs1".to_owned()],
+                    ..VariantSpec::default()
+                },
+                VariantSpec {
+                    rsids: vec!["rs2".to_owned()],
+                    ..VariantSpec::default()
+                },
+            ])
+            .unwrap();
+        assert_eq!(observations[0].genotype.as_deref(), Some("AG"));
+        assert_eq!(observations[1].genotype.as_deref(), Some("CC"));
+
+        let required = GenotypeStore::with_required_cached_observations(
+            vec![cached_observation],
+            GenotypeStore::empty(),
+        );
+        assert_eq!(required.get("rs1").unwrap().as_deref(), Some("AG"));
+        assert!(
+            required
+                .get("rs-missing")
+                .unwrap_err()
+                .to_string()
+                .contains("required preloaded genotype observation missing")
+        );
+        assert!(
+            required
+                .lookup_variant(&VariantSpec {
+                    rsids: vec!["rs-missing".to_owned()],
+                    ..VariantSpec::default()
+                })
+                .unwrap_err()
+                .to_string()
+                .contains("required preloaded genotype observation missing")
+        );
+
+        let empty = GenotypeStore::empty();
+        assert!(empty.get("rs-any").unwrap().is_none());
+        assert_eq!(empty.backend_name(), "text");
     }
 
     #[test]
@@ -648,6 +675,32 @@ mod tests {
         assert_eq!(variant_sort_key(&variant).0, 0);
         assert_eq!(describe_query(&variant), "variant_by_locus");
         assert_eq!(describe_query(&VariantSpec::default()), "variant_by_rsid");
+    }
+
+    #[test]
+    fn cached_observation_match_checks_all_variant_assemblies() {
+        let spec = VariantSpec {
+            rsids: vec!["rs60910145".to_owned()],
+            grch37: Some(locus("22", 36_662_034, 36_662_034)),
+            grch38: Some(locus("22", 36_265_988, 36_265_988)),
+            reference: Some("T".to_owned()),
+            alternate: Some("G".to_owned()),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        };
+        let observations = vec![VariantObservation {
+            backend: "cram".to_owned(),
+            matched_rsid: None,
+            assembly: Some(Assembly::Grch38),
+            genotype: Some("TT".to_owned()),
+            evidence: vec!["observed SNP pileup at 22:36265988-36265988 ref=T alt=G".to_owned()],
+            ..VariantObservation::default()
+        }];
+
+        let matched = match_cached_observation(&observations, &spec)
+            .expect("GRCh38 observation should match even when GRCh37 is listed first");
+
+        assert_eq!(matched.genotype.as_deref(), Some("TT"));
     }
 
     #[test]
@@ -1082,6 +1135,10 @@ mod tests {
             format: GenotypeSourceFormat::Text,
             path: text.clone(),
             zip_entry_name: None,
+            options: GenotypeLoadOptions {
+                assembly: Some(Assembly::Grch38),
+                ..GenotypeLoadOptions::default()
+            },
         };
         let variants = vec![
             VariantSpec {
@@ -1112,6 +1169,21 @@ mod tests {
                 .genotype
                 .as_deref(),
             Some("CT")
+        );
+
+        let unknown_assembly_backend = DelimitedBackend {
+            format: GenotypeSourceFormat::Text,
+            path: text.clone(),
+            zip_entry_name: None,
+            options: GenotypeLoadOptions::default(),
+        };
+        let unknown_assembly_err =
+            scan_delimited_variants(&unknown_assembly_backend, &variants[1..2]).unwrap_err();
+        assert!(
+            unknown_assembly_err
+                .to_string()
+                .contains("delimited genotype input assembly is unknown"),
+            "{unknown_assembly_err}"
         );
 
         let zip_path = dir.join("sample.zip");
@@ -1158,8 +1230,9 @@ mod tests {
 
         let unsupported_backend = DelimitedBackend {
             format: GenotypeSourceFormat::Vcf,
-            path: text,
+            path: text.clone(),
             zip_entry_name: None,
+            options: GenotypeLoadOptions::default(),
         };
         let err = scan_delimited_variants(&unsupported_backend, &variants).unwrap_err();
         assert!(
@@ -1360,6 +1433,7 @@ mod tests {
             format: GenotypeSourceFormat::Zip,
             path: zip_path.clone(),
             zip_entry_name: None,
+            options: GenotypeLoadOptions::default(),
         };
         let err = scan_delimited_variants(&bad_zip_backend, &[VariantSpec::default()]).unwrap_err();
         assert!(
@@ -1372,6 +1446,7 @@ mod tests {
             format: GenotypeSourceFormat::Zip,
             path: zip_path,
             zip_entry_name: Some("missing.csv".to_owned()),
+            options: GenotypeLoadOptions::default(),
         };
         let err =
             scan_delimited_variants(&bad_entry_backend, &[VariantSpec::default()]).unwrap_err();
@@ -1384,6 +1459,7 @@ mod tests {
             format: GenotypeSourceFormat::Text,
             path: dir.join("missing.txt"),
             zip_entry_name: None,
+            options: GenotypeLoadOptions::default(),
         };
         let err =
             scan_delimited_variants(&missing_text_backend, &[VariantSpec::default()]).unwrap_err();
@@ -1682,16 +1758,5 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("invalid VCF position"));
-    }
-
-    #[test]
-    fn zip_entry_limited_reader_rejects_oversized_output() {
-        let mut reader = std::io::Cursor::new(b"abcdef".to_vec());
-        let err = read_zip_entry_limited(&mut reader, 5, "test zip entry").unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("test zip entry exceeds decompressed limit of 5 bytes"),
-            "{err}"
-        );
     }
 }

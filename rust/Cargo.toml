@@ -7,6 +7,7 @@ members = [
     "bioscript-formats",
     "bioscript-libs",
     "bioscript-python",
+    "bioscript-reporting",
     "bioscript-runtime",
     "bioscript-schema",
     "bioscript-wasm",

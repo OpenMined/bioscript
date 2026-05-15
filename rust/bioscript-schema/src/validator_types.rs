@@ -157,8 +157,15 @@ pub struct PanelInterpretation {
     pub path: String,
     pub output_format: Option<String>,
     pub derived_from: Vec<String>,
+    pub assets: Vec<PanelInterpretationAsset>,
     pub emits: Vec<PanelInterpretationEmit>,
     pub logic: Option<PanelInterpretationLogic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelInterpretationAsset {
+    pub id: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

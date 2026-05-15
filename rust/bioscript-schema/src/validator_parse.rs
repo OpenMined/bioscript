@@ -82,11 +82,48 @@ fn parse_panel_interpretations(root: &Value) -> Result<Vec<PanelInterpretation>,
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned),
             derived_from: mapping_sequence_of_strings(mapping, "derived_from", idx, key)?,
+            assets: parse_panel_interpretation_assets(mapping, idx, key)?,
             emits: parse_panel_interpretation_emits(mapping, idx)?,
             logic: parse_panel_interpretation_logic(mapping)?,
         });
     }
     Ok(interpretations)
+}
+
+fn parse_panel_interpretation_assets(
+    mapping: &Mapping,
+    interpretation_idx: usize,
+    key: &str,
+) -> Result<Vec<PanelInterpretationAsset>, String> {
+    let Some(items) = mapping
+        .get(Value::String("assets".to_owned()))
+        .and_then(Value::as_sequence)
+    else {
+        return Ok(Vec::new());
+    };
+    let mut assets = Vec::new();
+    for (idx, item) in items.iter().enumerate() {
+        let Some(mapping) = item.as_mapping() else {
+            return Err(format!(
+                "{key}[{interpretation_idx}].assets[{idx}] must be a mapping"
+            ));
+        };
+        assets.push(PanelInterpretationAsset {
+            id: mapping_required_string(
+                mapping,
+                "id",
+                idx,
+                &format!("{key}[{interpretation_idx}].assets"),
+            )?,
+            path: mapping_required_string(
+                mapping,
+                "path",
+                idx,
+                &format!("{key}[{interpretation_idx}].assets"),
+            )?,
+        });
+    }
+    Ok(assets)
 }
 
 fn parse_panel_interpretation_logic(

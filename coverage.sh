@@ -25,7 +25,7 @@ Usage: ./coverage.sh [--full-clean|-c] [--open] [--large] [--all-tests] [--no-li
   --no-lint         Skip cargo fmt and clippy checks
   --focused-test    Run one focused integration test target:
                     file_formats, formats_lib, inspect, prepare, cli, cli_bin, schema, core,
-                    runtime_lib, runtime_security, or runtime_resources
+                    reporting_lib, runtime_lib, runtime_security, or runtime_resources
 
 Environment:
   AUTO_INSTALL_LLVM_COV=0    Do not auto-install cargo-llvm-cov
@@ -83,6 +83,7 @@ PACKAGES=(
   bioscript-cli
   bioscript-core
   bioscript-formats
+  bioscript-reporting
   bioscript-runtime
   bioscript-schema
 )
@@ -176,11 +177,15 @@ if [[ -n "$FOCUSED_TEST" ]]; then
       env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-cli --bin bioscript
       ;;
     schema)
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-schema --lib
       env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-schema --test validate_variants -- --nocapture --test-threads="$TEST_THREADS"
       ;;
     core)
       env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --lib
       env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --test source_size -- --nocapture --test-threads="$TEST_THREADS"
+      ;;
+    reporting_lib)
+      env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-reporting --lib
       ;;
     runtime_lib)
       env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --lib
@@ -206,9 +211,11 @@ else
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-formats --test prepare -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-cli --test cli -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-cli --bin bioscript
+  env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-schema --lib
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-schema --test validate_variants -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --lib
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-core --test source_size -- --nocapture --test-threads="$TEST_THREADS"
+  env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-reporting --lib
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --lib
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test security -- --nocapture --test-threads="$TEST_THREADS"
   env "${COV_ENV[@]}" cargo llvm-cov --no-report -p bioscript-runtime --test resources_coverage -- --nocapture --test-threads="$TEST_THREADS"

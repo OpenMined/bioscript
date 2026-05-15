@@ -8,14 +8,20 @@ use crate::types::{
     NamedVariantSpec, RunVariantYamlRequest, RunVariantYamlResult, observation_result,
 };
 
-/// Runs a BioScript variant YAML assay against a supported genome file.
+/// Runs a `BioScript` variant YAML assay against a supported genome file.
 ///
 /// The native desktop/mobile path uses this instead of the web WASM exports.
 /// It intentionally mirrors the web variant YAML flow: compile YAML through
 /// `bioscript-schema`, choose the preferred assembly-specific variant, and
 /// execute lookup through `bioscript-formats`.
+///
+/// # Errors
+///
+/// Returns an error when the YAML assay cannot be read or compiled, when the
+/// input options are invalid, or when the genome file cannot be loaded or
+/// queried.
 pub fn run_variant_yaml_request(
-    request: RunVariantYamlRequest,
+    request: &RunVariantYamlRequest,
 ) -> Result<RunVariantYamlResult, String> {
     let yaml_path = PathBuf::from(&request.yaml_path);
     let yaml_text = fs::read_to_string(&yaml_path)
@@ -28,7 +34,7 @@ pub fn run_variant_yaml_request(
         &yaml_text,
     )?;
     let selected = select_preferred_assembly_variants(&request.genome_path, variants);
-    let loader = variant_loader(&request)?;
+    let loader = variant_loader(request)?;
 
     let genome_path = PathBuf::from(&request.genome_path);
     let store = GenotypeStore::from_file_with_options(&genome_path, &loader)

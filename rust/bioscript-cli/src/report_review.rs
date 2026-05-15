@@ -13,6 +13,12 @@ struct ReviewCase {
     genotypes: BTreeMap<String, Option<String>>,
 }
 
+struct ReviewCaseReport {
+    observations: Vec<serde_json::Value>,
+    analyses: Vec<serde_json::Value>,
+    report: serde_json::Value,
+}
+
 fn run_review_report(args: Vec<String>) -> Result<(), String> {
     let cwd = env::current_dir().map_err(|err| format!("failed to get cwd: {err}"))?;
     let mut manifest_path: Option<PathBuf> = None;
@@ -81,58 +87,32 @@ fn generate_review_report(options: &ReviewReportOptions) -> Result<(), String> {
         )
     })?;
 
-    let assay_id = app_assay_id(&options.manifest_path)?;
-    let manifest_metadata = report_manifest_metadata(&options.manifest_path)?;
-    let findings = load_manifest_findings(&options.root, &options.manifest_path)?;
-    let provenance = load_manifest_provenance_links(&options.root, &options.manifest_path)?;
+    let manifest_workspace = bioscript_reporting::FilesystemManifestWorkspace::new(&options.root);
+    let manifest_path = options.manifest_path.display().to_string();
     let cases = load_review_cases(&options.cases_path)?;
     let mut observations = Vec::new();
     let mut analyses = Vec::new();
     let mut reports = Vec::new();
+    let review_temp_dir = options.output_dir.join(".review-temp");
+    fs::create_dir_all(&review_temp_dir).map_err(|err| {
+        format!(
+            "failed to create review temp dir {}: {err}",
+            review_temp_dir.display()
+        )
+    })?;
 
     for case in cases {
-        let input_bytes = review_case_genotype_text(&case);
-        let store = GenotypeStore::from_bytes(&format!("{}.txt", case.id), input_bytes.as_bytes())
-            .map_err(|err| err.to_string())?;
-        let input_observations = run_manifest_rows_with_store(
-            &options.root,
-            &options.manifest_path,
-            &store,
-            &case.id,
-            &options.filters,
-        )?
-        .iter()
-        .map(|row| app_observation_from_manifest_row(&options.root, row, &assay_id, None, None))
-        .collect::<Result<Vec<_>, _>>()?;
-        observations.extend(input_observations.clone());
-
-        let input_analyses = run_review_analyses(options, &case, &input_bytes)?;
-        analyses.extend(input_analyses.clone());
-        let matched_findings = match_app_findings(&findings, &input_observations, &input_analyses);
-        let synthetic_input = PathBuf::from(format!("review://{}", case.id));
-        let mut report = app_report_json(AppReportJsonInput {
-            assay_id: &assay_id,
-            participant_id: &case.id,
-            input_file: &synthetic_input,
-            observations: &input_observations,
-            analyses: &input_analyses,
-            findings: &matched_findings,
-            provenance: &provenance,
-            input_inspection: None,
-            manifest_metadata: &manifest_metadata,
-        });
-        if let Some(object) = report.as_object_mut() {
-            object.insert(
-                "review_case".to_owned(),
-                serde_json::json!({
-                    "id": case.id,
-                    "label": case.label,
-                }),
-            );
-        }
-        reports.push(report);
+        let case_report = generate_review_case_report(
+            options,
+            &manifest_workspace,
+            &manifest_path,
+            &review_temp_dir,
+            &case,
+        )?;
+        observations.extend(case_report.observations);
+        analyses.extend(case_report.analyses);
+        reports.push(case_report.report);
     }
-    let review_temp_dir = options.output_dir.join(".review-temp");
     if review_temp_dir.exists() {
         fs::remove_dir_all(&review_temp_dir).map_err(|err| {
             format!(
@@ -158,69 +138,79 @@ fn generate_review_report(options: &ReviewReportOptions) -> Result<(), String> {
     Ok(())
 }
 
-fn run_manifest_rows_with_store(
-    runtime_root: &Path,
-    manifest_path: &Path,
-    store: &GenotypeStore,
-    participant_id: &str,
-    filters: &[String],
-) -> Result<Vec<BTreeMap<String, String>>, String> {
-    match manifest_schema(manifest_path)?.as_str() {
-        "bioscript:variant:1.0" | "bioscript:variant" => {
-            let manifest = load_variant_manifest(manifest_path)?;
-            Ok(vec![run_variant_manifest_with_store(
-                runtime_root,
-                &manifest,
-                store,
-                Some(participant_id),
-            )?])
-        }
-        "bioscript:panel:1.0" => {
-            let manifest = load_panel_manifest(manifest_path)?;
-            run_panel_manifest_with_store(runtime_root, &manifest, store, Some(participant_id), filters)
-        }
-        "bioscript:assay:1.0" => {
-            let manifest = load_assay_manifest(manifest_path)?;
-            run_assay_manifest_with_store(runtime_root, &manifest, store, Some(participant_id), filters)
-        }
-        other => Err(format!("unsupported manifest schema '{other}'")),
-    }
-}
-
-fn run_review_analyses(
+fn generate_review_case_report(
     options: &ReviewReportOptions,
+    manifest_workspace: &bioscript_reporting::FilesystemManifestWorkspace,
+    manifest_path: &str,
+    review_temp_dir: &Path,
     case: &ReviewCase,
-    input_bytes: &str,
-) -> Result<Vec<serde_json::Value>, String> {
-    let temp_dir = options.output_dir.join(".review-temp");
-    fs::create_dir_all(&temp_dir).map_err(|err| {
+) -> Result<ReviewCaseReport, String> {
+    let input_bytes = review_case_genotype_text(case);
+    let store = GenotypeStore::from_bytes(&format!("{}.txt", case.id), input_bytes.as_bytes())
+        .map_err(|err| err.to_string())?;
+    let temp_path = review_temp_dir.join(format!("{}.txt", case.id));
+    fs::write(&temp_path, &input_bytes).map_err(|err| {
         format!(
-            "failed to create review temp dir {}: {err}",
-            temp_dir.display()
+            "failed to write review temp input {}: {err}",
+            temp_path.display()
         )
     })?;
-    let temp_path = temp_dir.join(format!("{}.txt", case.id));
-    fs::write(&temp_path, input_bytes)
-        .map_err(|err| format!("failed to write review temp input {}: {err}", temp_path.display()))?;
     let loader = GenotypeLoadOptions {
         format: Some(GenotypeSourceFormat::Text),
         ..GenotypeLoadOptions::default()
     };
-    let analysis_options = ReportAnalysisOptions {
+    let analysis_runner = CliReportAnalysisRunner {
         runtime_root: &options.root,
         input_file: &temp_path,
         participant_id: &case.id,
         loader: &loader,
         output_dir: &options.output_dir,
-        filters: &options.filters,
         max_duration_ms: 1_000,
     };
-    let result = run_manifest_analyses_for_report(&options.manifest_path, &analysis_options);
+    let synthetic_input = PathBuf::from(format!("review://{}", case.id));
+    let synthetic_input_name = synthetic_input
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let synthetic_input_path = synthetic_input.display().to_string();
+    let run_result = bioscript_reporting::run_report(
+        manifest_workspace,
+        manifest_path,
+        &store,
+        &analysis_runner,
+        bioscript_reporting::ReportInputContext {
+            participant_id: &case.id,
+            input_file_name: synthetic_input_name,
+            input_file_path: &synthetic_input_path,
+            input_inspection: None,
+        },
+        bioscript_reporting::ReportRunOptions {
+            filters: &options.filters,
+        },
+    );
     let cleanup = fs::remove_file(&temp_path);
     if let Err(err) = cleanup {
-        return Err(format!("failed to remove review temp input {}: {err}", temp_path.display()));
+        return Err(format!(
+            "failed to remove review temp input {}: {err}",
+            temp_path.display()
+        ));
     }
-    result
+    let run = run_result?;
+    let mut report = run.report;
+    if let Some(object) = report.as_object_mut() {
+        object.insert(
+            "review_case".to_owned(),
+            serde_json::json!({
+                "id": case.id,
+                "label": case.label,
+            }),
+        );
+    }
+    Ok(ReviewCaseReport {
+        observations: run.observations,
+        analyses: run.analyses,
+        report,
+    })
 }
 
 fn load_review_cases(path: &Path) -> Result<Vec<ReviewCase>, String> {
@@ -287,4 +277,208 @@ fn review_case_genotype_text(case: &ReviewCase) -> String {
         let _ = writeln!(out, "{}\t{}", rsid.replace('\t', " "), genotype.replace('\t', " "));
     }
     out
+}
+
+#[cfg(test)]
+mod review_report_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = env::temp_dir().join(format!(
+            "bioscript-review-report-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn run_review_report_validates_required_arguments() {
+        assert!(run_review_report(Vec::new()).unwrap_err().contains("usage"));
+        assert!(run_review_report(vec!["manifest.yaml".to_owned()])
+            .unwrap_err()
+            .contains("--cases"));
+        assert!(run_review_report(vec![
+            "manifest.yaml".to_owned(),
+            "--cases".to_owned(),
+            "cases.yaml".to_owned(),
+        ])
+        .unwrap_err()
+        .contains("--output-dir"));
+        assert!(run_review_report(vec![
+            "manifest.yaml".to_owned(),
+            "--unknown".to_owned(),
+        ])
+        .unwrap_err()
+        .contains("unexpected argument"));
+        assert!(run_review_report(vec![
+            "first.yaml".to_owned(),
+            "second.yaml".to_owned(),
+        ])
+        .unwrap_err()
+        .contains("unexpected argument"));
+    }
+
+    #[test]
+    fn review_cases_load_labels_variants_and_null_genotypes() {
+        let dir = temp_dir("cases");
+        let cases_path = dir.join("cases.yaml");
+        fs::write(
+            &cases_path,
+            r"
+cases:
+  - id: c1
+    label: First case
+    genotypes:
+      rs1: A/G
+      rs2: null
+  - id: c2
+    variants:
+      rs3: C/T
+",
+        )
+        .unwrap();
+
+        let cases = load_review_cases(&cases_path).unwrap();
+        assert_eq!(cases.len(), 2);
+        assert_eq!(cases[0].label, "First case");
+        assert_eq!(cases[0].genotypes["rs1"], Some("A/G".to_owned()));
+        assert_eq!(cases[0].genotypes["rs2"], None);
+        assert_eq!(cases[1].label, "c2");
+        assert_eq!(cases[1].genotypes["rs3"], Some("C/T".to_owned()));
+
+        let text = review_case_genotype_text(&cases[0]);
+        assert!(text.contains("rs1\tA/G"));
+        assert!(!text.contains("rs2"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn review_case_parser_reports_shape_errors() {
+        let missing_cases = serde_yaml::from_str::<serde_yaml::Value>("not_cases: []").unwrap();
+        let path = temp_dir("errors").join("missing-cases.yaml");
+        fs::write(&path, serde_yaml::to_string(&missing_cases).unwrap()).unwrap();
+        assert!(review_cases_err(&path).contains("missing cases list"));
+        let dir = path.parent().unwrap().to_path_buf();
+
+        let missing_id = serde_yaml::from_str::<serde_yaml::Value>(
+            r"{label: no id, genotypes: {rs1: A/G}}",
+        )
+        .unwrap();
+        assert!(review_case_err(&missing_id).contains("missing id"));
+
+        let missing_genotypes =
+            serde_yaml::from_str::<serde_yaml::Value>(r"{id: c1}").unwrap();
+        assert!(review_case_err(&missing_genotypes).contains("missing genotypes"));
+
+        let bad_key =
+            serde_yaml::from_str::<serde_yaml::Value>(r"{id: c1, genotypes: {1: A/G}}")
+                .unwrap();
+        assert!(review_case_err(&bad_key).contains("non-string genotype key"));
+
+        let bad_value =
+            serde_yaml::from_str::<serde_yaml::Value>(r"{id: c1, genotypes: {rs1: [A, G]}}")
+                .unwrap();
+        assert!(review_case_err(&bad_value).contains("must be string or null"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn review_cases_err(path: &Path) -> String {
+        match load_review_cases(path) {
+            Ok(_) => panic!("expected review cases to fail"),
+            Err(err) => err,
+        }
+    }
+
+    fn review_case_err(value: &serde_yaml::Value) -> String {
+        match review_case_from_yaml(value) {
+            Ok(_) => panic!("expected review case to fail"),
+            Err(err) => err,
+        }
+    }
+
+    #[test]
+    fn generate_review_report_writes_observations_reports_html_and_cleans_temp_input() {
+        let dir = temp_dir("generate");
+        let manifest = dir.join("variant.yaml");
+        fs::write(
+            &manifest,
+            r#"
+schema: bioscript:variant:1.0
+version: "1.0"
+name: rs1
+gene: ABC
+identifiers:
+  rsids: [rs1]
+coordinates:
+  grch38:
+    chrom: "1"
+    pos: 100
+alleles:
+  kind: snv
+  ref: A
+  alts: [G]
+findings:
+  - schema: bioscript:trait:1.0
+    summary: Variant present
+    binding:
+      source: variant
+      variant: variant.yaml
+      key: outcome
+      value: variant
+provenance:
+  sources:
+    - kind: database
+      label: Fixture
+      url: https://example.test/rs1
+"#,
+        )
+        .unwrap();
+        let cases = dir.join("cases.yaml");
+        fs::write(
+            &cases,
+            r"
+cases:
+  - id: case1
+    label: Case One
+    genotypes:
+      rs1: A/G
+  - id: case2
+    genotypes:
+      rs1: null
+",
+        )
+        .unwrap();
+        let output = dir.join("out");
+        let options = ReviewReportOptions {
+            manifest_path: manifest,
+            cases_path: cases,
+            output_dir: output.clone(),
+            root: dir.clone(),
+            html: true,
+            filters: Vec::new(),
+        };
+
+        generate_review_report(&options).unwrap();
+
+        assert!(fs::read_to_string(output.join("observations.tsv"))
+            .unwrap()
+            .contains("case1"));
+        let reports = fs::read_to_string(output.join("reports.jsonl")).unwrap();
+        assert!(reports.contains("\"review_case\""));
+        assert!(reports.contains("\"case1\""));
+        assert!(fs::read_to_string(output.join("index.html"))
+            .unwrap()
+            .contains("<!doctype html>"));
+        assert!(!output.join(".review-temp").exists());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

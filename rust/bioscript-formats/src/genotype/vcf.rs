@@ -20,10 +20,8 @@ use super::{
 mod matching;
 mod reader;
 
-pub use matching::imputed_reference_observation;
-pub(crate) use matching::{
-    choose_variant_locus_for_assembly, normalize_chromosome_name, vcf_row_matches_variant,
-};
+pub use matching::{choose_variant_locus_for_assembly, imputed_reference_observation};
+pub(crate) use matching::{normalize_chromosome_name, vcf_row_matches_variant};
 pub use reader::{observe_vcf_snp_with_reader, observe_vcf_variant_with_reader};
 
 #[derive(Debug, Clone)]
@@ -237,11 +235,10 @@ pub(crate) fn lookup_indexed_vcf_variants(
         )?;
         results[idx] = if backend.options.impute_vcf_missing_as_reference
             && observation.genotype.is_none()
-            && observation
-                .evidence
-                .iter()
-                .any(|line| line.contains("no VCF record at"))
-        {
+            && !observation.evidence.iter().any(|line| {
+                line.contains("tabix index has no contig")
+                    || line.contains("has no GRCh37/GRCh38 locus")
+            }) {
             imputed_reference_observation(
                 backend.backend_name(),
                 &backend.path.display().to_string(),
@@ -432,6 +429,6 @@ pub(crate) fn extract_vcf_sample_genotype(
     genotype_from_vcf_gt(sample_gt, reference, &alternate_refs)
 }
 
-pub(crate) fn detect_vcf_assembly(path: &Path, probe_lines: &[String]) -> Option<Assembly> {
+pub fn detect_vcf_assembly(path: &Path, probe_lines: &[String]) -> Option<Assembly> {
     detect_assembly(&path.to_string_lossy().to_ascii_lowercase(), probe_lines)
 }

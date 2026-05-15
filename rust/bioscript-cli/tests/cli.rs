@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -442,4 +442,158 @@ interpretations:
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("example-rs73885319"));
     assert!(stdout.contains("AG"));
+}
+
+#[test]
+fn report_runs_variant_catalogue_analysis_with_sandboxed_assets() {
+    let root = repo_root();
+    let dir = temp_dir("catalogue-report");
+    let (assay, output_dir) = write_catalogue_report_fixture(&dir);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("report")
+        .arg(&assay)
+        .arg("--input-file")
+        .arg("old/examples/apol1/test_snps.txt")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let participant = "test_snps";
+    let analysis_tsv =
+        fs::read_to_string(output_dir.join(format!("analysis/{participant}/catalogue_status.tsv")))
+            .unwrap();
+    assert!(analysis_tsv.contains("catalogue_assets_loaded"));
+    let observations = fs::read_to_string(output_dir.join("observations.tsv")).unwrap();
+    assert!(observations.contains("example-rs73885319"));
+    assert!(observations.contains("AG"));
+}
+
+fn write_catalogue_report_fixture(dir: &Path) -> (PathBuf, PathBuf) {
+    let catalogue_dir = dir.join("catalogue");
+    fs::create_dir_all(&catalogue_dir).unwrap();
+    write_catalogue_manifest(&catalogue_dir);
+    write_catalogue_tables(&catalogue_dir);
+    write_catalogue_analysis(dir);
+    let assay = write_catalogue_assay(dir);
+    (assay, dir.join("report"))
+}
+
+fn write_catalogue_manifest(catalogue_dir: &Path) {
+    fs::write(
+        catalogue_dir.join("variants.yaml"),
+        r#"
+schema: "bioscript:variant-catalogue:1.0"
+version: "1.0"
+name: "apol1-catalogue"
+variants:
+  source: "variants.tsv"
+  format: "tsv"
+  key: "variant_id"
+  columns:
+    variant_id:
+      role: "id"
+      required: true
+    name:
+      role: "name"
+    rsid:
+      role: "identifier.rsid"
+    kind:
+      role: "alleles.kind"
+    ref:
+      role: "alleles.ref"
+    alts:
+      role: "alleles.alts"
+    grch38_chrom:
+      role: "coordinates.grch38.chrom"
+    grch38_pos:
+      role: "coordinates.grch38.pos"
+      type: "integer"
+provenance:
+  sources:
+    - id: "dbsnp"
+      kind: "database"
+      label: "dbSNP"
+      url_template: "https://www.ncbi.nlm.nih.gov/snp/{rsid}"
+"#,
+    )
+    .unwrap();
+}
+
+fn write_catalogue_tables(catalogue_dir: &Path) {
+    fs::write(
+        catalogue_dir.join("variants.tsv"),
+        "variant_id\tname\trsid\tkind\tref\talts\tgrch38_chrom\tgrch38_pos\napol1-g1-site-1\texample-rs73885319\trs73885319\tsnv\tA\tG\t22\t36265860\n",
+    )
+    .unwrap();
+    fs::write(
+        catalogue_dir.join("findings.tsv"),
+        "variant_id\tlabel\napol1-g1-site-1\tcatalogue_assets_loaded\n",
+    )
+    .unwrap();
+}
+
+fn write_catalogue_analysis(dir: &Path) {
+    fs::write(
+        dir.join("analysis.py"),
+        r#"
+observations = bioscript.read_tsv(bioscript.context["observations_file"])
+variants = bioscript.read_tsv(bioscript.context["assets"]["variants"])
+findings = bioscript.read_tsv(bioscript.context["assets"]["findings"])
+
+status = "missing"
+if len(observations) > 0 and len(variants) > 0 and len(findings) > 0:
+    status = findings[0]["label"]
+
+bioscript.write_tsv(bioscript.context["output_file"], [
+    {
+        "participant_id": bioscript.context["participant_id"],
+        "status": status,
+    }
+])
+"#,
+    )
+    .unwrap();
+}
+
+fn write_catalogue_assay(dir: &Path) -> PathBuf {
+    let assay = dir.join("assay.yaml");
+    fs::write(
+        &assay,
+        r#"
+schema: "bioscript:assay:1.0"
+version: "1.0"
+name: "catalogue-assay"
+members:
+  - kind: "variant-catalogue"
+    path: "catalogue/variants.yaml"
+    version: "1.0"
+analyses:
+  - id: "catalogue_status"
+    kind: "bioscript"
+    path: "analysis.py"
+    output_format: "tsv"
+    derived_from:
+      - "catalogue/variants.yaml"
+    assets:
+      - id: "variants"
+        path: "catalogue/variants.tsv"
+      - id: "findings"
+        path: "catalogue/findings.tsv"
+    emits:
+      - key: "status"
+        label: "Status"
+        value_type: "string"
+        format: "badge"
+"#,
+    )
+    .unwrap();
+    assay
 }

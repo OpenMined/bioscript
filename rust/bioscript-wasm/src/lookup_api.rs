@@ -2,8 +2,8 @@ use std::io::BufReader;
 
 use bioscript_core::{GenomicLocus, VariantKind, VariantObservation, VariantSpec};
 use bioscript_formats::{
-    GenotypeStore, alignment, observe_cram_indel_with_reader, observe_cram_snp_with_reader,
-    observe_vcf_snp_with_reader,
+    GenotypeStore, alignment, observe_cram_deletion_with_reader, observe_cram_indel_with_reader,
+    observe_cram_snp_with_reader, observe_vcf_snp_with_reader,
 };
 use noodles::csi as noodles_csi;
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,8 @@ struct VariantInput {
     assembly: Option<String>,
     #[serde(default)]
     kind: Option<String>,
+    #[serde(default)]
+    deletion_length: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -108,6 +110,30 @@ pub fn lookup_cram_variants(
                     &locus,
                     ref_char,
                     alt_char,
+                    variant.rsid.clone(),
+                    assembly,
+                )
+            }
+            VariantKind::Deletion => {
+                let deletion_length = variant.deletion_length.unwrap_or_else(|| {
+                    usize::try_from(locus.end.saturating_sub(locus.start).saturating_add(1))
+                        .unwrap_or(0)
+                });
+                observe_cram_deletion_with_reader(
+                    &mut indexed,
+                    &variant.name,
+                    &locus,
+                    deletion_length,
+                    if variant.ref_base.is_empty() {
+                        "I"
+                    } else {
+                        &variant.ref_base
+                    },
+                    if variant.alt_base.is_empty() {
+                        "D"
+                    } else {
+                        &variant.alt_base
+                    },
                     variant.rsid.clone(),
                     assembly,
                 )
@@ -290,7 +316,7 @@ fn variant_input_to_spec(variant: &VariantInput) -> Result<VariantSpec, JsError>
         reference: Some(variant.ref_base.clone()),
         alternate: Some(variant.alt_base.clone()),
         kind,
-        deletion_length: None,
+        deletion_length: variant.deletion_length,
         motifs: Vec::new(),
     })
 }

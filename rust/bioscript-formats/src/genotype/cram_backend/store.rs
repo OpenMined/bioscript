@@ -228,3 +228,117 @@ fn cram_lookup_worker_count(job_count: usize) -> usize {
         .unwrap_or_else(|| available.min(DEFAULT_MAX_CRAM_WORKERS))
         .min(job_count)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use bioscript_core::{GenomicLocus, VariantKind};
+
+    use super::*;
+    use crate::genotype::GenotypeLoadOptions;
+
+    fn backend(reference_file: Option<PathBuf>) -> CramBackend {
+        CramBackend {
+            path: PathBuf::from("sample.cram"),
+            options: GenotypeLoadOptions {
+                reference_file,
+                ..GenotypeLoadOptions::default()
+            },
+        }
+    }
+
+    #[test]
+    fn cram_store_reports_missing_reference_and_unsupported_locus_details() {
+        let variant = VariantSpec {
+            rsids: vec!["rs-test".to_owned()],
+            kind: Some(VariantKind::Snp),
+            reference: Some("A".to_owned()),
+            alternate: Some("C".to_owned()),
+            ..VariantSpec::default()
+        };
+
+        let err = backend(None).lookup_variant(&variant).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("without --reference-file"));
+        assert!(message.contains("sample.cram"));
+
+        let observation = backend(Some(PathBuf::from("ref.fa")))
+            .unsupported_locus_observation(&variant, Path::new("ref.fa"));
+        assert_eq!(observation.backend, "cram");
+        assert_eq!(observation.matched_rsid.as_deref(), Some("rs-test"));
+        assert_eq!(observation.evidence.len(), 1);
+        assert!(observation.evidence[0].contains("needs GRCh37/GRCh38 coordinates"));
+    }
+
+    #[test]
+    fn cram_store_rejects_variants_without_coordinates_before_opening_cram() {
+        let store = CramBackend {
+            path: PathBuf::from("sample.cram"),
+            options: GenotypeLoadOptions {
+                reference_file: Some(PathBuf::from("ref.fa")),
+                reference_index: Some(PathBuf::from("ref.fa.fai")),
+                input_index: Some(PathBuf::from("sample.cram.crai")),
+                ..GenotypeLoadOptions::default()
+            },
+        };
+
+        let err = store
+            .lookup_variant(&VariantSpec {
+                rsids: vec!["rs-coordinate-only".to_owned()],
+                kind: Some(VariantKind::Snp),
+                reference: Some("A".to_owned()),
+                alternate: Some("C".to_owned()),
+                ..VariantSpec::default()
+            })
+            .unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("not only rsIDs"));
+        assert!(message.contains("reference index ref.fa.fai"));
+        assert!(message.contains("input index sample.cram.crai"));
+    }
+
+    #[test]
+    fn cram_lookup_worker_count_bounds_requested_and_available_workers() {
+        assert_eq!(cram_lookup_worker_count(0), 1);
+        assert_eq!(cram_lookup_worker_count(1), 1);
+
+        unsafe {
+            env::set_var("BIOSCRIPT_CRAM_THREADS", "2");
+        }
+        assert_eq!(cram_lookup_worker_count(8), 2);
+        assert_eq!(cram_lookup_worker_count(1), 1);
+
+        unsafe {
+            env::set_var("BIOSCRIPT_CRAM_THREADS", "999");
+        }
+        assert_eq!(cram_lookup_worker_count(3), 3);
+
+        unsafe {
+            env::set_var("BIOSCRIPT_CRAM_THREADS", "0");
+        }
+        assert!(cram_lookup_worker_count(2) >= 1);
+
+        unsafe {
+            env::remove_var("BIOSCRIPT_CRAM_THREADS");
+        }
+    }
+
+    #[test]
+    fn cram_lookup_variant_rejects_unsupported_kind_after_locus_resolution() {
+        let store = backend(Some(PathBuf::from("GRCh38.fa")));
+        let err = store
+            .lookup_variant(&VariantSpec {
+                grch38: Some(GenomicLocus {
+                    chrom: "chr1".to_owned(),
+                    start: 10,
+                    end: 10,
+                }),
+                kind: Some(VariantKind::Other),
+                ..VariantSpec::default()
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("does not yet support"));
+    }
+}

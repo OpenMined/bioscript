@@ -14,6 +14,8 @@ use super::{DetectedKind, InspectOptions};
 mod alignment_depth;
 mod classify;
 
+pub use alignment_depth::infer_sex_from_alignment_reader;
+
 pub(crate) use alignment_depth::infer_sex_from_alignment_path;
 use classify::{classify_stats, supports_sex_detection, unsupported_sex_inference};
 
@@ -121,6 +123,20 @@ pub(crate) fn infer_sex_from_path(
     infer_sex_from_reader(BufReader::new(file), kind)
 }
 
+pub fn infer_sex_from_named_reader<R: Read>(
+    name: &str,
+    reader: R,
+    kind: DetectedKind,
+) -> Result<SexInference, RuntimeError> {
+    if !supports_sex_detection(kind) {
+        return Ok(unsupported_sex_inference());
+    }
+    if name.to_ascii_lowercase().ends_with(".vcf.gz") {
+        return infer_sex_from_reader(BufReader::new(MultiGzDecoder::new(reader)), kind);
+    }
+    infer_sex_from_reader(BufReader::new(reader), kind)
+}
+
 pub(crate) fn infer_sex_from_bytes(
     name: &str,
     bytes: &[u8],
@@ -129,14 +145,7 @@ pub(crate) fn infer_sex_from_bytes(
     if !supports_sex_detection(kind) {
         return Ok(unsupported_sex_inference());
     }
-    let lower = name.to_ascii_lowercase();
-    if lower.ends_with(".vcf.gz") {
-        return infer_sex_from_reader(
-            BufReader::new(MultiGzDecoder::new(Cursor::new(bytes))),
-            kind,
-        );
-    }
-    infer_sex_from_reader(BufReader::new(Cursor::new(bytes)), kind)
+    infer_sex_from_named_reader(name, Cursor::new(bytes), kind)
 }
 
 pub(crate) fn infer_sex_from_zip_bytes(
@@ -166,7 +175,7 @@ pub(crate) fn infer_sex_from_zip_bytes(
     infer_sex_from_bytes(selected_entry, &entry_bytes, kind)
 }
 
-pub(crate) fn infer_sex_from_text_lines(
+pub fn infer_sex_from_text_lines(
     lines: &[String],
     kind: DetectedKind,
 ) -> Result<SexInference, RuntimeError> {
@@ -194,11 +203,13 @@ fn infer_sex_from_reader<R: BufRead>(
     let mut stats = SexStats::default();
     let mut probe_lines = Vec::new();
     let mut line = String::new();
+    // Treat any I/O error mid-stream (e.g. truncated bgzf head when the
+    // wasm caller only loaded the first N MiB) as end-of-data: classify
+    // whatever we got rather than failing the whole inspection. The CLI
+    // path streams the full file so this is effectively unchanged for it.
     for _ in 0..64 {
         line.clear();
-        let bytes = reader
-            .read_line(&mut line)
-            .map_err(|err| RuntimeError::Io(format!("failed to scan sex markers: {err}")))?;
+        let bytes = reader.read_line(&mut line).unwrap_or_default();
         if bytes == 0 {
             let delimiter = detect_delimiter(&probe_lines);
             let mut column_indexes = None;
@@ -232,9 +243,7 @@ fn infer_sex_from_reader<R: BufRead>(
     }
     for _ in probe_lines.len()..MAX_SEX_DETECTION_LINES {
         line.clear();
-        let bytes = reader
-            .read_line(&mut line)
-            .map_err(|err| RuntimeError::Io(format!("failed to scan sex markers: {err}")))?;
+        let bytes = reader.read_line(&mut line).unwrap_or_default();
         if bytes == 0 {
             break;
         }
@@ -285,6 +294,25 @@ fn update_genotype_text_stats(
     let rsid = row.rsid.as_deref().unwrap_or_default();
     let chrom = normalize_chrom(row.chrom.as_deref().unwrap_or_default());
     let genotype = row.genotype.as_str();
+    if chrom == "X" {
+        let Some(position) = row.position.and_then(|pos| u32::try_from(pos).ok()) else {
+            return Ok(());
+        };
+        if !is_non_par_x(position) || !is_called_genotype_text(genotype) {
+            return Ok(());
+        }
+        stats.x_non_par_sites += 1;
+        let allele_count = genotype_allele_count(genotype);
+        if allele_count == 1 {
+            stats.x_haploid_gt_sites += 1;
+        } else if allele_count == 2 {
+            stats.x_diploid_gt_sites += 1;
+            if is_genotype_text_het(genotype) {
+                stats.x_het_gt_sites += 1;
+            }
+        }
+        return Ok(());
+    }
     if chrom != "Y" {
         return Ok(());
     }
@@ -338,11 +366,18 @@ fn update_vcf_stats(stats: &mut SexStats, line: &str) {
 }
 
 fn normalize_chrom(value: &str) -> String {
-    value
+    let normalized = value
         .trim()
         .trim_start_matches("chr")
         .trim_start_matches("CHR")
-        .to_ascii_uppercase()
+        .to_ascii_uppercase();
+    match normalized.as_str() {
+        "23" => "X".to_owned(),
+        "24" => "Y".to_owned(),
+        "25" => "XY".to_owned(),
+        "26" | "M" => "MT".to_owned(),
+        _ => normalized,
+    }
 }
 
 fn is_called_genotype_text(value: &str) -> bool {
@@ -353,6 +388,22 @@ fn is_called_genotype_text(value: &str) -> bool {
     value
         .chars()
         .all(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
+}
+
+fn genotype_allele_count(value: &str) -> usize {
+    value
+        .chars()
+        .filter(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
+        .count()
+}
+
+fn is_genotype_text_het(value: &str) -> bool {
+    let alleles: Vec<char> = value
+        .chars()
+        .filter(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
+        .map(|ch| ch.to_ascii_uppercase())
+        .collect();
+    alleles.len() == 2 && alleles[0] != alleles[1]
 }
 
 fn is_called_vcf_gt(value: &str) -> bool {
@@ -411,6 +462,23 @@ fn select_sex_detection_zip_entry<R: std::io::Read + std::io::Seek>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
+    use std::io::Write as _;
+
+    fn zip_bytes(entries: &[(&str, &str)]) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, body) in entries {
+            if name.ends_with('/') {
+                writer.add_directory(*name, options).unwrap();
+            } else {
+                writer.start_file(*name, options).unwrap();
+                writer.write_all(body.as_bytes()).unwrap();
+            }
+        }
+        writer.finish().unwrap().into_inner()
+    }
 
     #[test]
     fn y_fingerprint_detects_male_and_female_text_exports() {
@@ -458,6 +526,44 @@ mod tests {
         assert_eq!(result.sex, InferredSex::Female);
         assert_eq!(result.confidence, SexDetectionConfidence::High);
         assert!(result.evidence.iter().any(|item| item == "called_y_snps=0"));
+    }
+
+    #[test]
+    fn snp_array_numeric_x_and_y_chromosomes_feed_sex_inference() {
+        let mut lines = vec!["rsid\tchromosome\tposition\tallele1\tallele2".to_owned()];
+        lines.extend((0..2000).map(|idx| {
+            let (a, b) = if idx % 4 == 0 { ("A", "G") } else { ("A", "A") };
+            format!("rsX{idx}\t23\t{}\t{a}\t{b}", 3_000_000 + idx)
+        }));
+        lines.extend((0..1000).map(|idx| format!("rsY{idx}\t24\t{}\t0\t0", 3_000_000 + idx)));
+
+        let result = infer_sex_from_text_lines(&lines, DetectedKind::GenotypeText).unwrap();
+        assert_eq!(result.sex, InferredSex::Female);
+        assert_eq!(result.confidence, SexDetectionConfidence::Medium);
+        assert_eq!(result.method, "snp_array_x_y_fingerprint");
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "x_het_gt_sites=500")
+        );
+    }
+
+    #[test]
+    fn snp_array_haploid_non_par_x_detects_male_without_y_rows() {
+        let mut lines = vec!["rsid\tchromosome\tposition\tgenotype".to_owned()];
+        lines.extend((0..2000).map(|idx| format!("rsX{idx}\tX\t{}\tA", 3_000_000 + idx)));
+        lines.extend((0..20).map(|idx| format!("rsDiploidTail{idx}\tX\t{}\tAG", 4_000_000 + idx)));
+
+        let result = infer_sex_from_text_lines(&lines, DetectedKind::GenotypeText).unwrap();
+        assert_eq!(result.sex, InferredSex::Male);
+        assert_eq!(result.confidence, SexDetectionConfidence::Medium);
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "x_haploid_gt_sites=2000")
+        );
     }
 
     #[test]
@@ -543,6 +649,91 @@ mod tests {
                 .evidence
                 .iter()
                 .any(|item| item == "y_to_x_pct=30.00")
+        );
+    }
+
+    #[test]
+    fn sex_inference_bytes_and_zip_paths_cover_entry_selection_and_unsupported_kinds() {
+        let text = "rsid\tchromosome\tposition\tgenotype\nrs11575897\tY\t1\tG\n";
+        let unsupported =
+            infer_sex_from_bytes("sample.txt", text.as_bytes(), DetectedKind::ReferenceFasta)
+                .unwrap();
+        assert_eq!(unsupported.sex, InferredSex::Unknown);
+        assert_eq!(unsupported.method, "unsupported_source_type");
+
+        let result =
+            infer_sex_from_bytes("sample.txt", text.as_bytes(), DetectedKind::GenotypeText)
+                .unwrap();
+        assert_eq!(result.method, "snp_array_x_y_fingerprint");
+
+        let archive = zip_bytes(&[
+            ("__MACOSX/._sample.txt", "ignored"),
+            ("notes.md", "ignored"),
+            ("nested/sample.txt", text),
+        ]);
+        let result =
+            infer_sex_from_zip_bytes(&archive, "nested/sample.txt", DetectedKind::GenotypeText)
+                .unwrap();
+        assert_eq!(result.method, "snp_array_x_y_fingerprint");
+
+        let err = infer_sex_from_zip_bytes(&archive, "missing.txt", DetectedKind::GenotypeText)
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("failed to open zip entry missing.txt")
+        );
+
+        let bad_zip =
+            infer_sex_from_zip_bytes(b"not a zip", "sample.txt", DetectedKind::GenotypeText)
+                .unwrap_err();
+        assert!(bad_zip.to_string().contains("failed to read zip bytes"));
+
+        let mut zip = ZipArchive::new(Cursor::new(archive)).unwrap();
+        assert_eq!(
+            select_sex_detection_zip_entry(&mut zip).unwrap(),
+            "nested/sample.txt"
+        );
+
+        let unsupported_zip = zip_bytes(&[("docs/readme.md", "ignored")]);
+        let mut zip = ZipArchive::new(Cursor::new(unsupported_zip)).unwrap();
+        let err = select_sex_detection_zip_entry(&mut zip).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("does not contain a supported sex detection input")
+        );
+    }
+
+    #[test]
+    fn sex_inference_reader_probe_and_late_stream_paths_handle_vcf_edges() {
+        let mut text = String::new();
+        text.push_str("chrY\tbad\t.\tC\tT\t.\tPASS\t.\tGT\t1\n");
+        text.push_str("chrM\t1\t.\tC\tT\t.\tPASS\t.\tGT\t1\n");
+        for idx in 0..70 {
+            let gt = if idx % 2 == 0 { "0|1" } else { "0|0" };
+            let _ = writeln!(
+                text,
+                "23\t{}\t.\tC\tT\t.\tPASS\t.\tGT\t{gt}:99",
+                3_000_000 + idx
+            );
+        }
+        text.push_str("24\t1\t.\tC\tT\t.\tPASS\t.\tGT\t.\n");
+        text.push_str("chrX\t60000\t.\tC\tT\t.\tPASS\t.\tGT\t0/1\n");
+        text.push_str("chrX\t155000000\t.\tC\tT\t.\tPASS\t.\tGT\t0/1\n");
+
+        let result =
+            infer_sex_from_bytes("sample.vcf", text.as_bytes(), DetectedKind::Vcf).unwrap();
+        assert_eq!(result.sex, InferredSex::Female);
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "x_non_par_sites=70")
+        );
+        assert!(
+            result
+                .evidence
+                .iter()
+                .any(|item| item == "x_het_gt_sites=35")
         );
     }
 }

@@ -51,13 +51,12 @@ impl BioscriptRuntime {
         // Layer pre-resolved observations on top of whatever backend the path
         // resolves to. The report pipeline collects every variant the panel
         // declares before running analyses, so `genotypes.lookup_variants(...)`
-        // hits the cache and we don't re-walk the genome inside Python. On a
-        // miss (script asks about a novel rsid) we fall through to the inner
-        // store — same behavior as before this cache existed.
+        // must hit this cache. A miss is an error: falling through to a second
+        // lookup path can make analysis disagree with the observations table.
         let store = if self.config.preloaded_observations.is_empty() {
             inner_store
         } else {
-            GenotypeStore::with_cached_observations(
+            GenotypeStore::with_required_cached_observations(
                 self.config.preloaded_observations.clone(),
                 inner_store,
             )
@@ -359,6 +358,60 @@ impl BioscriptRuntime {
         host_read_text(self, &args[1..], kwargs)
     }
 
+    pub(super) fn method_read_tsv(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bioscript.read_tsv")?;
+        if args.len() != 2 {
+            return Err(RuntimeError::InvalidArguments(
+                "bioscript.read_tsv expects self and path".to_owned(),
+            ));
+        }
+        let path =
+            self.resolve_existing_user_path(&expect_string_arg(args, 1, "bioscript.read_tsv")?)?;
+        let text = if let Some(content) = self.read_virtual_text_file(&path) {
+            content
+        } else {
+            fs::read_to_string(&path).map_err(|err| {
+                RuntimeError::Io(format!("failed to read {}: {err}", path.display()))
+            })?
+        };
+        Ok(tsv_rows_object(&text))
+    }
+
+    pub(super) fn method_exists(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        reject_kwargs(kwargs, "bioscript.exists")?;
+        if args.len() != 2 {
+            return Err(RuntimeError::InvalidArguments(
+                "bioscript.exists expects self and path".to_owned(),
+            ));
+        }
+        let raw_path = expect_string_arg(args, 1, "bioscript.exists")?;
+        if self.config.virtual_text_files.contains_key(&raw_path)
+            || self.config.virtual_binary_files.contains_key(&raw_path)
+            || self
+                .state
+                .virtual_written_text_files
+                .lock()
+                .expect("virtual file mutex poisoned")
+                .contains_key(&raw_path)
+        {
+            return Ok(MontyObject::Bool(true));
+        }
+        if self.config.virtual_text_files.is_empty() && self.config.virtual_binary_files.is_empty()
+        {
+            let path = self.resolve_user_path(&raw_path)?;
+            return Ok(MontyObject::Bool(path.exists()));
+        }
+        Ok(MontyObject::Bool(false))
+    }
+
     pub(super) fn method_write_text(
         &self,
         args: &[MontyObject],
@@ -371,4 +424,33 @@ impl BioscriptRuntime {
         }
         host_write_text(self, &args[1..], kwargs)
     }
+}
+
+fn tsv_rows_object(text: &str) -> MontyObject {
+    let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+    let Some(header_line) = lines.next() else {
+        return MontyObject::List(Vec::new());
+    };
+    let headers: Vec<&str> = header_line.split('\t').collect();
+    MontyObject::List(
+        lines
+            .map(|line| {
+                let cells: Vec<&str> = line.split('\t').collect();
+                MontyObject::Dict(
+                    headers
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, header)| {
+                            (
+                                MontyObject::String((*header).to_owned()),
+                                MontyObject::String(
+                                    cells.get(idx).copied().unwrap_or_default().to_owned(),
+                                ),
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
 }

@@ -43,6 +43,11 @@ analyses:
       - "g1-site-1.yaml"
       - "g1-site-2.yaml"
       - "g2-site.yaml"
+    assets:
+      - id: "variants"
+        path: "variants.tsv"
+      - id: "findings"
+        path: "findings.tsv"
     emits:
       - key: "apol1_status"
         label: "APOL1 status"
@@ -83,10 +88,26 @@ Rules:
 - `kind` is currently `bioscript`
 - `path` points to a BioScript-compatible Python file
 - `output_format` is optional and defaults to `tsv`; use `json` or `jsonl` when the script writes structured JSON output
-- `derived_from` lists the variant YAML files used by the interpretation
+- `derived_from` lists the variant YAML or variant catalogue files used by the interpretation
+- `assets` is optional and lists local files the analysis script can read through `bioscript.context["assets"]`; `asset_paths` is also injected during migration
 - `emits` is optional but recommended so report generators know which output columns to display and how to label them
 - `logic` is optional; use `logic.description` and `logic.source.url` to document where the script's derivation rules came from
 - Analysis rows may emit `notes` or `report_notes` as a reporting convention. HTML reports render those notes below the analysis table and omit them from the table columns; this avoids a manifest-level template language while still letting the script build human-readable text from computed values.
+
+Analysis scripts receive these injected variables:
+
+- `input_file`: virtual input genotype/VCF/CRAM path, normally `/input/genotypes`
+- `output_file`: virtual output path the script must write, normally under `/output`
+- `participant_id`: current participant/sample identifier
+- `observations_file`: virtual TSV path containing the variant observations already gathered from assay/panel members for this participant
+- `asset_paths`: dict from each `assets[].id` to its virtual path
+
+The preferred API is `bioscript.context`, which includes `participant_id`,
+`input_files`, `pipeline_files`, `assets`, `observations_file`, and
+`output_file`. Scripts should use `bioscript.read_tsv(path)` for TSV assets and
+observation files.
+
+This supports large catalogues where Rust/BioScript first gathers all variant observations, then Python joins those observations to attached TSV assets such as `findings.tsv`, `conditions.tsv`, or `rules.tsv` and emits derived classification rows.
 
 ## Findings
 

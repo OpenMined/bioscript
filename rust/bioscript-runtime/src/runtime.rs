@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
@@ -17,6 +17,7 @@ mod kestrel_native_methods;
 mod lib_methods;
 mod methods;
 mod objects;
+mod paths;
 mod samtools_command_methods;
 mod samtools_native_methods;
 mod state;
@@ -36,6 +37,7 @@ use objects::bioscript_object;
 use objects::{
     genotype_file_object, variant_object, variant_observation_object, variant_plan_object,
 };
+pub(crate) use paths::resolve_optional_loader_path;
 pub use state::{RuntimeConfig, StageTiming};
 use state::{RuntimeState, monty_error};
 use timing::RuntimeInstant;
@@ -149,7 +151,16 @@ impl BioscriptRuntime {
             "__file__",
             MontyObject::String(script_path.display().to_string()),
         ));
-        extra_inputs.push(("bioscript", bioscript_object()));
+        extra_inputs.push((
+            "bioscript",
+            bioscript_object(MontyObject::Dict(
+                self.config
+                    .context
+                    .iter()
+                    .map(|(key, value)| (MontyObject::String(key.clone()), value.clone()))
+                    .collect(),
+            )),
+        ));
 
         let result = self.run_script(
             &instrumented,
@@ -258,63 +269,6 @@ impl BioscriptRuntime {
             });
     }
 
-    fn resolve_user_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
-        let path = Path::new(raw_path);
-        if path.is_absolute() {
-            return Err(RuntimeError::InvalidArguments(format!(
-                "absolute paths are not allowed: {raw_path}"
-            )));
-        }
-        for component in path.components() {
-            match component {
-                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                    return Err(RuntimeError::InvalidArguments(format!(
-                        "path escapes bioscript root: {raw_path}"
-                    )));
-                }
-                Component::CurDir | Component::Normal(_) => {}
-            }
-        }
-        Ok(self.root.join(path))
-    }
-
-    fn resolve_existing_user_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
-        let path = self.resolve_user_path(raw_path)?;
-        if self.virtual_file_exists(raw_path) {
-            return Ok(path);
-        }
-        let canonical = path.canonicalize().map_err(|err| {
-            RuntimeError::Io(format!("failed to resolve {}: {err}", path.display()))
-        })?;
-        self.ensure_under_root(&canonical, raw_path)?;
-        Ok(canonical)
-    }
-
-    fn resolve_user_write_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
-        let path = self.resolve_user_path(raw_path)?;
-        if self.uses_virtual_files() {
-            return Ok(path);
-        }
-        if path.exists() {
-            let canonical = path.canonicalize().map_err(|err| {
-                RuntimeError::Io(format!("failed to resolve {}: {err}", path.display()))
-            })?;
-            self.ensure_under_root(&canonical, raw_path)?;
-            return Ok(canonical);
-        }
-
-        let parent = path.parent().unwrap_or(&self.root);
-        let existing_parent = deepest_existing_ancestor(parent);
-        let canonical_parent = existing_parent.canonicalize().map_err(|err| {
-            RuntimeError::Io(format!(
-                "failed to resolve parent dir {}: {err}",
-                existing_parent.display()
-            ))
-        })?;
-        self.ensure_under_root(&canonical_parent, raw_path)?;
-        Ok(path)
-    }
-
     #[must_use]
     pub fn virtual_written_text_files(&self) -> BTreeMap<String, String> {
         self.state
@@ -358,39 +312,6 @@ impl BioscriptRuntime {
         self.config.virtual_binary_files.get(&key).cloned()
     }
 
-    fn uses_virtual_files(&self) -> bool {
-        !self.config.virtual_text_files.is_empty() || !self.config.virtual_binary_files.is_empty()
-    }
-
-    fn virtual_file_exists(&self, raw_path: &str) -> bool {
-        self.config.virtual_text_files.contains_key(raw_path)
-            || self.config.virtual_binary_files.contains_key(raw_path)
-            || self
-                .state
-                .virtual_written_text_files
-                .lock()
-                .expect("virtual file mutex poisoned")
-                .contains_key(raw_path)
-    }
-
-    fn virtual_key(&self, path: &Path) -> String {
-        path.strip_prefix(&self.root)
-            .unwrap_or(path)
-            .display()
-            .to_string()
-            .replace('\\', "/")
-    }
-
-    fn ensure_under_root(&self, path: &Path, raw_path: &str) -> Result<(), RuntimeError> {
-        if path.starts_with(&self.root) {
-            Ok(())
-        } else {
-            Err(RuntimeError::InvalidArguments(format!(
-                "path escapes bioscript root: {raw_path}"
-            )))
-        }
-    }
-
     fn write_trace_report(
         &self,
         report_path: &Path,
@@ -431,20 +352,6 @@ impl BioscriptRuntime {
         })?;
         Ok(())
     }
-}
-
-fn resolve_optional_loader_path(
-    runtime: &BioscriptRuntime,
-    path: Option<PathBuf>,
-) -> Result<Option<PathBuf>, RuntimeError> {
-    path.map(|path| {
-        if path.is_absolute() {
-            Ok(path)
-        } else {
-            runtime.resolve_user_path(&path.to_string_lossy())
-        }
-    })
-    .transpose()
 }
 
 #[cfg(test)]
@@ -753,7 +660,7 @@ mod tests {
         )
         .unwrap();
         let runtime = BioscriptRuntime::new(&root).unwrap();
-        let bioscript = bioscript_object();
+        let bioscript = bioscript_object(MontyObject::Dict(Vec::new().into()));
 
         let genotype = runtime
             .method_load_genotypes(
@@ -833,7 +740,7 @@ mod tests {
     fn runtime_private_methods_cover_successful_text_tsv_and_trace_paths() {
         let root = temp_dir("host-output");
         let runtime = BioscriptRuntime::new(&root).unwrap();
-        let bioscript = bioscript_object();
+        let bioscript = bioscript_object(MontyObject::Dict(Vec::new().into()));
         let rows = MontyObject::List(vec![MontyObject::Dict(
             vec![
                 (
