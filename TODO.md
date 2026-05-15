@@ -19,6 +19,43 @@ This is not just a facade spike. The finish line is:
   BioScript runtime, `bioscript-libs`, `noodles`, `htslib-rs`, `samtools-rs`,
   `bcftools-rs`, `kestrel-rs`, or VNtyper-port logic.
 
+## Current Priority: `test-vntyper.sh` Java↔Rust Output Parity
+
+The overall goal right now is `test-vntyper.sh` as the single command for
+proving Java-Kestrel and BioScript/Rust-Kestrel are interchangeable end to
+end. The two engines must produce the same test output for the same input.
+
+- [ ] `./test-vntyper.sh --java` runs VNtyper through the Java Kestrel
+      reference pipeline against the representative BAM/FASTQ fixtures and
+      prints the test output (classification, TSV rows, report JSON
+      summary) to the terminal.
+- [ ] `./test-vntyper.sh --rust` runs VNtyper through BioScript (Rust
+      kestrel-rs via `_native.so`) against the same fixtures and prints
+      the matching test output in the same shape.
+- [ ] `./test-vntyper.sh --java --rust` runs both back to back and shows a
+      side-by-side diff that is empty when parity holds. Exit non-zero if
+      the two outputs differ.
+- [ ] What "same output" means is explicit in the script: classification,
+      canonicalized TSV rows over the stable columns, and report JSON
+      with documented allowances for paths, timestamps, and tool-version
+      metadata. No silent skips.
+- [ ] Each step prints what it ran, where the log is, wall time, and
+      pass/fail, so the human reading the terminal can see Java vs Rust
+      output without having to grep logs by hand.
+- [ ] Cover both inputs: `--bam` and `--fastq`. Java-only FASTQ is not a
+      thing in this repo — for FASTQ, "Java" means the BioScript external
+      Java-Kestrel path, not a separate Java-only entry point. Spell this
+      out in `--help` and in the summary table.
+- [ ] Reuse the existing opt-in gates as the test plumbing: external Java
+      BAM parity, native Rust BAM/FASTQ parity, and the strict
+      TSV/report fingerprint gate. Do not invent a second test path
+      alongside them.
+- [ ] When parity fails, the script points at the smallest reproducer:
+      which fixture, which engine, which field diverged. The diff should
+      be obvious enough to file a follow-up against `kestrel-rs`,
+      `bcftools-rs`, `samtools-rs`, or the BioScript port without
+      re-running anything.
+
 ## Work Rule: Keep Porting Until Only Blockers Remain
 
 The primary task is to port VNtyper to BioScript. While doing that work, do not
