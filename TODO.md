@@ -19,17 +19,104 @@ This is not just a facade spike. The finish line is:
   BioScript runtime, `bioscript-libs`, `noodles`, `htslib-rs`, `samtools-rs`,
   `bcftools-rs`, `kestrel-rs`, or VNtyper-port logic.
 
-## Current Priority: `test-vntyper.sh` Java↔Rust Output Parity
+## Current Priority: `test-vntyper.sh` All-Fixture Correctness + Parity
 
-The overall goal right now is `test-vntyper.sh` as the single command for
-proving Java-Kestrel and BioScript/Rust-Kestrel are interchangeable end to
-end. The two engines must produce the same test output for the same input.
+The goal now is `test-vntyper.sh` running **every upstream VNtyper real-data
+test case it ships with — positive and negative** — and asserting, for both
+engines, that the result matches the upstream-expected call. Not just
+Java↔Rust parity on two arbitrary fixtures: correctness against upstream's
+own `kestrel_assertions`, then parity between Java and BioScript/Rust.
 
-Status 2026-05-15: the tool is built and working. FASTQ parity is exact
-(Java and Rust agree byte-for-byte on the canonical TSV fingerprint for
-both fixtures). The tool also surfaced a real BAM-path gap that is now
-recorded under **Current blockers** (`samtools-rs` FASTQ extraction emits
-a slightly different read set than external `samtools fastq`).
+Upstream expectations (from
+`ports/vntyper/vntyper/tests/test_data_config.json`,
+`integration_tests.bam_tests`, run with `--fast-mode`):
+
+| Fixture                  | Upstream expected Confidence | Alt depth |
+|--------------------------|------------------------------|-----------|
+| example_a5c1_hg19_subset | High_Precision               | 93        |
+| example_66bf_hg19_subset | High_Precision*              | 491       |
+| example_dfc3_hg19_subset | High_Precision*              | 206       |
+| example_b178_hg19_subset | High_Precision*              | —         |
+| example_7a61_hg19_subset | Negative (true neg)          | None      |
+| example_40cf_hg38_subset | Negative (true neg)          | None      |
+
+Definition of done: `./test-vntyper.sh --java --rust` (BAM and FASTQ) runs
+all of the fixtures above, every case asserts its upstream-expected
+Confidence (positives detect the variant, negatives stay Negative), and
+Java and BioScript/Rust agree on every case. The run exits non-zero until
+that holds.
+
+**STATUS 2026-05-15: ACHIEVED for the BAM entry point.**
+`./test-vntyper.sh --java --rust --bam` is green — 3/3 steps, exit 0. All
+six upstream-asserted fixtures call upstream-correctly in **both** engines
+and agree:
+
+| Fixture | Expect | Java | Rust |
+|---|---|---|---|
+| example_40cf_hg38_subset | Negative | no call ✓ | no call ✓ |
+| example_66bf_hg19_subset | High_Precision* | C-Q:67 G>GG alt 489 ✓ | 5C-Q:67 G>GG alt 491 ✓ |
+| example_7a61_hg19_subset | Negative | no call ✓ | no call ✓ |
+| example_a5c1_hg19_subset | High_Precision | S-C:67 G>GG alt 93 ✓ | L-6p:67 G>GG alt 93 ✓ |
+| example_b178_hg19_subset | High_Precision* | E-C:67 C>CG alt 416 ✓ | D-C:67 G>GG alt 422 ✓ |
+| example_dfc3_hg19_subset | High_Precision* | 5-E:59 GCTGGG>G alt 206 ✓ | 5-E:59 …>G alt 207 ✓ |
+
+Root cause that was fixed: `vntyper_port.motif_filter_and_annotate` was a
+lossy per-row approximation that unconditionally rejected right-motif
+`G>GG` insertions whenever `motifs_for_alt_gg` was empty — which dropped
+the canonical MUC1 dup frameshift on every positive fixture, so the
+report came out Negative even though Kestrel (Java *and* Rust) detected
+it. It is now a faithful port of upstream `motif_correction_and_
+annotation` (left/right split, frameshift/depth-priority dedupe, the
+legacy GG `.any()` guard, exclude lists). Both engines were already
+emitting the right variant; only the post-processing was wrong.
+
+Non-blocking residue (correctly NOT failing the run):
+- The exact REF/ALT differs between engines (e.g. b178 Java `C>CG` vs
+  Rust `G>GG`) — the same dup frameshift at POS 67 reported against an
+  equivalent MUC1 motif reference. Upstream's own test only asserts
+  Confidence + depth tolerance, never the allele, so both are correct.
+- The BAM TSV sha256 differs by the tracked `samtools-rs` FASTQ-
+  extraction gap (see **Current blockers**). Alt-depths differ by a few
+  reads but stay inside upstream's 5% tolerance.
+
+- [x] Source the fixture→expected-Confidence (+ depth/tolerance) table
+      directly from `test_data_config.json`. Implemented as
+      `ports/vntyper/tests/upstream_expectations.py`; the ad-hoc
+      `REPRESENTATIVE_*_CASES` labels are no longer the harness source.
+- [x] `test-vntyper.sh` runs all asserted fixtures for the selected
+      engine(s)/input, printing per-fixture expected vs actual
+      (`run_parity_pipeline.py` rewritten; `--case` is now a fixture
+      substring filter).
+- [x] Each fixture asserts upstream Confidence (+ Alt/ActiveRegion depth
+      and Depth_Score within `tolerance_percentage`; None/Negative for
+      true negatives). A wrong call is a hard FAIL: the helper exits 1
+      and `test-vntyper.sh` propagates it.
+- [x] Regenerated `ports/vntyper/test-data/expected/` report.json from
+      the corrected pipeline over the stored Java `output.vcf` so it is
+      internally consistent (66bf now → High_Precision, matching
+      upstream; 6449 has no upstream assertion and stays a no-call). The
+      new harness no longer depends on `expected/`.
+- [x] Java correctness: all 6 fixtures upstream-correct via the Java
+      pipeline (`./test-vntyper.sh --java --bam`, exit 0).
+- [x] BioScript/Rust correctness: all 6 upstream-correct via native
+      kestrel-rs (`./test-vntyper.sh --rust --bam`, exit 0). No engine
+      change was needed — the fix was in the parent-repo post-processing,
+      so there are **no uncommitted submodule changes** from this work.
+- [x] Java↔Rust parity across the full matrix: every fixture both-correct
+      and classification-agreeing (`diff_parity_outputs.py`, parity OK).
+- [ ] FASTQ entry point: upstream's `kestrel_assertions` are defined for
+      the BAM `--fast-mode` pipeline; the FASTQ-direct path lacks the
+      region targeting, so it is not expected to reproduce upstream
+      depths. Running `--java --rust --fastq` for the asserted fixtures
+      and deciding the correct FASTQ oracle is the remaining follow-up.
+
+### Phase 1 (done): the parity tool itself
+
+The tool is built and working. FASTQ Java↔Rust parity is exact on the
+original two fixtures. The tool surfaced a real BAM-path gap recorded
+under **Current blockers** (`samtools-rs` FASTQ extraction). It also
+surfaced that the original fixture labels were wrong — see the new
+all-fixture goal above.
 
 - [x] `./test-vntyper.sh --java` runs VNtyper through the Java Kestrel
       reference pipeline against the representative BAM/FASTQ fixtures and

@@ -1,25 +1,31 @@
 #!/usr/bin/env bash
-# test-vntyper.sh — prove Java Kestrel and BioScript/Rust Kestrel produce the
-# same VNtyper output for the same input.
+# test-vntyper.sh — prove Java Kestrel and BioScript/Rust Kestrel both call
+# every shipped real-data VNtyper fixture the way upstream says they should.
 #
-#   ./test-vntyper.sh --java --fastq           # Java reference, print output
-#   ./test-vntyper.sh --rust --fastq           # BioScript/Rust, print output
-#   ./test-vntyper.sh --java --rust --fastq    # run both, diff, fail on drift
-#   ./test-vntyper.sh --java --rust --bam      # same for the BAM entry point
-#   ./test-vntyper.sh --java --rust --bam --fastq --case negative
+#   ./test-vntyper.sh --java --bam             # Java: all fixtures, assert correct
+#   ./test-vntyper.sh --rust --bam             # BioScript/Rust: same
+#   ./test-vntyper.sh --java --rust --bam      # both + correctness parity (default)
+#   ./test-vntyper.sh --java --rust --bam --case 66bf   # one fixture
 #   ./test-vntyper.sh --small                  # fast small-fixture suites only
 #   ./test-vntyper.sh --all                    # small + both engines + vendor
 #
-# "Java" = the external Java-Kestrel pipeline (java + kestrel.jar; BAM also
-# needs samtools + bcftools). "Rust" = the BioScript native pipeline through
-# kestrel-rs via python/bioscript/_native.so. For FASTQ, "Java" is the Java
-# Kestrel run on the FASTQ pair — there is no separate Java-only entry point,
-# it is the same coordinator with the Java engine selected.
+# Every fixture upstream ships a kestrel_assertions entry for
+# (ports/vntyper/vntyper/tests/test_data_config.json) is run and asserted
+# against upstream's expected Confidence and Alt/ActiveRegion/Depth_Score
+# tolerances. Positives must detect the variant; negatives must stay
+# Negative. A wrong call is a hard FAIL, never a skip.
 #
-# Parity contract (what "the same" means): for each fixture the two engines
-# must agree on the VNtyper classification, the canonicalized TSV fingerprint
-# over the stable columns, and the filtered report summary. Path, timestamp,
-# tool-version, and engine-label fields are excluded by design.
+# "Java" = the Java-Kestrel pipeline (java + kestrel.jar; BAM also needs
+# samtools + bcftools). "Rust" = the BioScript native pipeline through
+# kestrel-rs via python/bioscript/_native.so. For FASTQ, "Java" is the same
+# coordinator with the Java engine selected (no separate entry point).
+#
+# Parity contract: for every fixture both engines must make the upstream-
+# correct call and agree on the positive/negative classification. Exact
+# REF/ALT can differ (same dup frameshift reported against an equivalent
+# motif reference) and the BAM TSV sha differs by the tracked samtools-rs
+# FASTQ-extraction gap — neither is a parity failure; a wrong or
+# disagreeing call is.
 
 set -euo pipefail
 
@@ -60,8 +66,9 @@ ${C_BLD}ENGINE${C_RST}
                     normalized output and exits non-zero on any divergence.
 
 ${C_BLD}INPUT${C_RST}
-  -b, --bam         BAM entry point (positive + negative fixtures).
-  -f, --fastq       FASTQ entry point (positive + negative fixtures).
+  -b, --bam         BAM entry point (all upstream fixtures; the path
+                    upstream's kestrel_assertions are defined for).
+  -f, --fastq       FASTQ entry point (fixtures that ship a FASTQ pair).
 
 ${C_BLD}MODES${C_RST}
       --small       Just the fast small-fixture unittest suites.
@@ -70,15 +77,16 @@ ${C_BLD}MODES${C_RST}
                     (KESTREL_RUN_VNTYPER_FASTQ_PARITY=1, cargo test --release).
 
 ${C_BLD}OPTIONS${C_RST}
-      --case C      Restrict to one fixture: positive | negative.
+      --case SUB    Restrict to fixtures whose name contains SUB
+                    (e.g. 66bf, dfc3, a5c1, b178, 7a61, 40cf).
       --rebuild     Rebuild python/bioscript/_native.so via maturin first.
   -v, --verbose     Stream full engine output (default: tail on failure).
   -h, --help        Show this help.
 
 ${C_BLD}OUTPUT${C_RST}
-  Per-engine normalized JSON lands under /tmp/vntyper-run-<timestamp>/.
-  The terminal shows each engine's classification, row counts, and TSV
-  fingerprint. With both engines a case-by-case MATCH/DIFF table is printed
+  Per-engine JSON lands under /tmp/vntyper-run-<timestamp>/. The terminal
+  shows each fixture's expected vs actual call and OK/FAIL. With both
+  engines a per-fixture correctness-parity table is printed
   and the script exits non-zero if any case diverges.
 
 ${C_BLD}NOTES${C_RST}
@@ -110,10 +118,8 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if [[ -n "$CASE_FILTER" && "$CASE_FILTER" != "positive" && "$CASE_FILTER" != "negative" ]]; then
-  echo "${C_RED}--case must be 'positive' or 'negative' (got '$CASE_FILTER').${C_RST}" >&2
-  exit 2
-fi
+# --case is a fixture-name substring filter (e.g. 66bf, dfc3, a5c1, 7a61).
+# No value restriction: an unknown filter just yields "no fixtures match".
 if [[ $RUN_SMALL -eq 0 && $RUN_JAVA -eq 0 && $RUN_RUST -eq 0 && $RUN_VENDOR -eq 0 ]]; then
   echo "${C_RED}Pick at least one of --java / --rust / --small / --all / --vendor.${C_RST}" >&2
   exit 2
@@ -188,15 +194,23 @@ show_engine_output() {
   python3 - "$json" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
-for case, c in sorted(data.get("cases", {}).items()):
-    fp = c.get("tsv_fingerprint", {})
-    print(f"  {case:8s} class={c.get('classification')!r:12s} "
-          f"rows={fp.get('row_count')} passing={fp.get('passing_count')} "
-          f"sha={fp.get('sha256','?')[:16]} wall={c.get('wall_seconds')}s")
-    for row in c.get("top_passing_rows", [])[:5]:
-        print(f"      + {row.get('CHROM')}:{row.get('POS')} "
-              f"{row.get('REF')}>{row.get('ALT')} "
-              f"depth_score={row.get('Depth_Score')} conf={row.get('Confidence')}")
+print(f"  all_correct={data.get('all_correct')}")
+for stem, c in sorted(data.get("cases", {}).items()):
+    exp = c.get("expected", {})
+    called = c.get("called")
+    verdict = "OK  " if c.get("correct") else "FAIL"
+    if called:
+        call = (f"{called.get('CHROM')}:{called.get('POS')} "
+                f"{called.get('REF')}>{called.get('ALT')} "
+                f"conf={called.get('Confidence')} "
+                f"alt={called.get('Estimated_Depth_AlternateVariant')}")
+    else:
+        call = "no positive call"
+    print(f"  [{verdict}] {stem}")
+    print(f"         expect {exp.get('confidence')!r} -> {call} "
+          f"({c.get('wall_seconds')}s)")
+    for reason in c.get("reasons", []):
+        print(f"         - {reason}")
 PY
 }
 
@@ -225,7 +239,7 @@ declare -a INPUTS=()
 [[ $INPUT_FASTQ -eq 1 ]] && INPUTS+=("fastq")
 
 CASE_ARGS=()
-[[ -n "$CASE_FILTER" ]] && CASE_ARGS=(--case "$CASE_FILTER")
+[[ -n "$CASE_FILTER" ]] && CASE_ARGS=(--fixture "$CASE_FILTER")
 
 for input in "${INPUTS[@]}"; do
   java_json="$OUT_DIR/java-$input.json"

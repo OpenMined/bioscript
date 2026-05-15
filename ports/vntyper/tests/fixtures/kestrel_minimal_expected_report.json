@@ -6,7 +6,7 @@
   },
   "best_call": {
     "ALT": "CGGCA",
-    "CHROM": "MUC1",
+    "CHROM": "C-Q",
     "Confidence": "High_Precision*",
     "Depth_Score": 0.012,
     "Estimated_Depth_AlternateVariant": 120.0,
