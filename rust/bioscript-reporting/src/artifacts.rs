@@ -1,3 +1,4 @@
+#[derive(Clone, Debug)]
 pub struct ReportArtifactTexts {
     pub observations_tsv: String,
     pub analysis_jsonl: String,

@@ -13,6 +13,12 @@ struct ReviewCase {
     genotypes: BTreeMap<String, Option<String>>,
 }
 
+struct ReviewCaseReport {
+    observations: Vec<serde_json::Value>,
+    analyses: Vec<serde_json::Value>,
+    report: serde_json::Value,
+}
+
 fn run_review_report(args: Vec<String>) -> Result<(), String> {
     let cwd = env::current_dir().map_err(|err| format!("failed to get cwd: {err}"))?;
     let mut manifest_path: Option<PathBuf> = None;
@@ -83,71 +89,30 @@ fn generate_review_report(options: &ReviewReportOptions) -> Result<(), String> {
 
     let manifest_workspace = bioscript_reporting::FilesystemManifestWorkspace::new(&options.root);
     let manifest_path = options.manifest_path.display().to_string();
-    let manifest_context =
-        bioscript_reporting::load_report_manifest_context(&manifest_workspace, &manifest_path)?;
     let cases = load_review_cases(&options.cases_path)?;
     let mut observations = Vec::new();
     let mut analyses = Vec::new();
     let mut reports = Vec::new();
+    let review_temp_dir = options.output_dir.join(".review-temp");
+    fs::create_dir_all(&review_temp_dir).map_err(|err| {
+        format!(
+            "failed to create review temp dir {}: {err}",
+            review_temp_dir.display()
+        )
+    })?;
 
     for case in cases {
-        let input_bytes = review_case_genotype_text(&case);
-        let store = GenotypeStore::from_bytes(&format!("{}.txt", case.id), input_bytes.as_bytes())
-            .map_err(|err| err.to_string())?;
-        let input_observations = run_manifest_rows_with_store(
-            &options.root,
-            &options.manifest_path,
-            &store,
-            &case.id,
-            &options.filters,
-        )?
-        .iter()
-        .map(|row| {
-            app_observation_from_manifest_row(
-                &options.root,
-                row,
-                &manifest_context.assay_id,
-                None,
-                None,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-        observations.extend(input_observations.clone());
-
-        let input_analyses = run_review_analyses(options, &case, &input_bytes)?;
-        analyses.extend(input_analyses.clone());
-        let synthetic_input = PathBuf::from(format!("review://{}", case.id));
-        let synthetic_input_name = synthetic_input
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default();
-        let synthetic_input_path = synthetic_input.display().to_string();
-        let mut report = bioscript_reporting::app_input_report_json(
-            bioscript_reporting::AppInputReportInput {
-            assay_id: &manifest_context.assay_id,
-            participant_id: &case.id,
-            input_file_name: synthetic_input_name,
-            input_file_path: &synthetic_input_path,
-            observations: &input_observations,
-            analyses: &input_analyses,
-            findings: &manifest_context.findings,
-            provenance: &manifest_context.provenance,
-            input_inspection: None,
-            manifest_metadata: &manifest_context.manifest_metadata,
-            },
-        );
-        if let Some(object) = report.as_object_mut() {
-            object.insert(
-                "review_case".to_owned(),
-                serde_json::json!({
-                    "id": case.id,
-                    "label": case.label,
-                }),
-            );
-        }
-        reports.push(report);
+        let case_report = generate_review_case_report(
+            options,
+            &manifest_workspace,
+            &manifest_path,
+            &review_temp_dir,
+            &case,
+        )?;
+        observations.extend(case_report.observations);
+        analyses.extend(case_report.analyses);
+        reports.push(case_report.report);
     }
-    let review_temp_dir = options.output_dir.join(".review-temp");
     if review_temp_dir.exists() {
         fs::remove_dir_all(&review_temp_dir).map_err(|err| {
             format!(
@@ -173,71 +138,79 @@ fn generate_review_report(options: &ReviewReportOptions) -> Result<(), String> {
     Ok(())
 }
 
-fn run_manifest_rows_with_store(
-    runtime_root: &Path,
-    manifest_path: &Path,
-    store: &GenotypeStore,
-    participant_id: &str,
-    filters: &[String],
-) -> Result<Vec<BTreeMap<String, String>>, String> {
-    match manifest_schema(manifest_path)?.as_str() {
-        "bioscript:variant:1.0" | "bioscript:variant" => {
-            let manifest = load_variant_manifest(manifest_path)?;
-            Ok(vec![run_variant_manifest_with_store(
-                runtime_root,
-                &manifest,
-                store,
-                Some(participant_id),
-            )?])
-        }
-        "bioscript:panel:1.0" => {
-            let manifest = load_panel_manifest(manifest_path)?;
-            run_panel_manifest_with_store(runtime_root, &manifest, store, Some(participant_id), filters)
-        }
-        "bioscript:assay:1.0" => {
-            let manifest = load_assay_manifest(manifest_path)?;
-            run_assay_manifest_with_store(runtime_root, &manifest, store, Some(participant_id), filters)
-        }
-        other => Err(format!("unsupported manifest schema '{other}'")),
-    }
-}
-
-fn run_review_analyses(
+fn generate_review_case_report(
     options: &ReviewReportOptions,
+    manifest_workspace: &bioscript_reporting::FilesystemManifestWorkspace,
+    manifest_path: &str,
+    review_temp_dir: &Path,
     case: &ReviewCase,
-    input_bytes: &str,
-) -> Result<Vec<serde_json::Value>, String> {
-    let temp_dir = options.output_dir.join(".review-temp");
-    fs::create_dir_all(&temp_dir).map_err(|err| {
+) -> Result<ReviewCaseReport, String> {
+    let input_bytes = review_case_genotype_text(case);
+    let store = GenotypeStore::from_bytes(&format!("{}.txt", case.id), input_bytes.as_bytes())
+        .map_err(|err| err.to_string())?;
+    let temp_path = review_temp_dir.join(format!("{}.txt", case.id));
+    fs::write(&temp_path, &input_bytes).map_err(|err| {
         format!(
-            "failed to create review temp dir {}: {err}",
-            temp_dir.display()
+            "failed to write review temp input {}: {err}",
+            temp_path.display()
         )
     })?;
-    let temp_path = temp_dir.join(format!("{}.txt", case.id));
-    fs::write(&temp_path, input_bytes)
-        .map_err(|err| format!("failed to write review temp input {}: {err}", temp_path.display()))?;
     let loader = GenotypeLoadOptions {
         format: Some(GenotypeSourceFormat::Text),
         ..GenotypeLoadOptions::default()
     };
-    let observation_rows = Vec::new();
-    let analysis_options = ReportAnalysisOptions {
+    let analysis_runner = CliReportAnalysisRunner {
         runtime_root: &options.root,
         input_file: &temp_path,
         participant_id: &case.id,
         loader: &loader,
         output_dir: &options.output_dir,
-        observation_rows: &observation_rows,
-        filters: &options.filters,
         max_duration_ms: 1_000,
     };
-    let result = run_manifest_analyses_for_report(&options.manifest_path, &analysis_options);
+    let synthetic_input = PathBuf::from(format!("review://{}", case.id));
+    let synthetic_input_name = synthetic_input
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    let synthetic_input_path = synthetic_input.display().to_string();
+    let run_result = bioscript_reporting::run_report(
+        manifest_workspace,
+        manifest_path,
+        &store,
+        &analysis_runner,
+        bioscript_reporting::ReportInputContext {
+            participant_id: &case.id,
+            input_file_name: synthetic_input_name,
+            input_file_path: &synthetic_input_path,
+            input_inspection: None,
+        },
+        bioscript_reporting::ReportRunOptions {
+            filters: &options.filters,
+        },
+    );
     let cleanup = fs::remove_file(&temp_path);
     if let Err(err) = cleanup {
-        return Err(format!("failed to remove review temp input {}: {err}", temp_path.display()));
+        return Err(format!(
+            "failed to remove review temp input {}: {err}",
+            temp_path.display()
+        ));
     }
-    result
+    let run = run_result?;
+    let mut report = run.report;
+    if let Some(object) = report.as_object_mut() {
+        object.insert(
+            "review_case".to_owned(),
+            serde_json::json!({
+                "id": case.id,
+                "label": case.label,
+            }),
+        );
+    }
+    Ok(ReviewCaseReport {
+        observations: run.observations,
+        analyses: run.analyses,
+        report,
+    })
 }
 
 fn load_review_cases(path: &Path) -> Result<Vec<ReviewCase>, String> {

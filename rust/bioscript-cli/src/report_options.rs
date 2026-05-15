@@ -237,8 +237,6 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
 
     let manifest_workspace = bioscript_reporting::FilesystemManifestWorkspace::new(&options.root);
     let manifest_path = options.manifest_path.display().to_string();
-    let manifest_context =
-        bioscript_reporting::load_report_manifest_context(&manifest_workspace, &manifest_path)?;
     let mut observations = Vec::new();
     let mut analyses = Vec::new();
     let mut reports = Vec::new();
@@ -257,59 +255,39 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
             input_inspection.inferred_sex = Some(explicit_sample_sex_inference(sample_sex));
         }
         let input_loader = loader_with_inspection(&options.loader, &input_inspection);
-        let rows = run_manifest_rows_for_report(
-            &options.root,
-            &options.manifest_path,
-            input_file,
-            &participant_id,
-            &input_loader,
-            &options.filters,
-        )?;
-        let input_observations = rows
-            .iter()
-            .map(|row| {
-                app_observation_from_manifest_row(
-                    &options.root,
-                    row,
-                    &manifest_context.assay_id,
-                    input_inspection.inferred_sex.as_ref(),
-                    input_inspection.assembly,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        observations.extend(input_observations.clone());
-        let analysis_options = ReportAnalysisOptions {
+        let store = GenotypeStore::from_file_with_options(input_file, &input_loader)
+            .map_err(|err| err.to_string())?;
+        let analysis_runner = CliReportAnalysisRunner {
             runtime_root: &options.root,
             input_file,
             participant_id: &participant_id,
             loader: &input_loader,
             output_dir: &options.output_dir,
-            observation_rows: &rows,
-            filters: &options.filters,
             max_duration_ms: options.analysis_max_duration_ms,
         };
-        let input_analyses =
-            run_manifest_analyses_for_report(&options.manifest_path, &analysis_options)?;
-        analyses.extend(input_analyses.clone());
         let input_file_name = input_file
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or_default();
         let input_file_path = input_file.display().to_string();
-        reports.push(bioscript_reporting::app_input_report_json(
-            bioscript_reporting::AppInputReportInput {
-            assay_id: &manifest_context.assay_id,
-            participant_id: &participant_id,
-            input_file_name,
-            input_file_path: &input_file_path,
-            observations: &input_observations,
-            analyses: &input_analyses,
-            findings: &manifest_context.findings,
-            provenance: &manifest_context.provenance,
-            input_inspection: Some(&input_inspection),
-            manifest_metadata: &manifest_context.manifest_metadata,
+        let run = bioscript_reporting::run_report(
+            &manifest_workspace,
+            &manifest_path,
+            &store,
+            &analysis_runner,
+            bioscript_reporting::ReportInputContext {
+                participant_id: &participant_id,
+                input_file_name,
+                input_file_path: &input_file_path,
+                input_inspection: Some(&input_inspection),
             },
-        ));
+            bioscript_reporting::ReportRunOptions {
+                filters: &options.filters,
+            },
+        )?;
+        observations.extend(run.observations);
+        analyses.extend(run.analyses);
+        reports.push(run.report);
     }
 
     write_app_observations(

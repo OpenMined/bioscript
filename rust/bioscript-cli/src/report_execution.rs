@@ -1,43 +1,3 @@
-fn run_manifest_rows_for_report(
-    runtime_root: &Path,
-    manifest_path: &Path,
-    input_file: &Path,
-    participant_id: &str,
-    loader: &GenotypeLoadOptions,
-    filters: &[String],
-) -> Result<Vec<BTreeMap<String, String>>, String> {
-    let input_text = input_file.display().to_string();
-    let store = GenotypeStore::from_file_with_options(Path::new(&input_text), loader)
-        .map_err(|err| err.to_string())?;
-    let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(runtime_root);
-    let manifest_path_text = manifest_path.display().to_string();
-    let tasks =
-        bioscript_reporting::collect_variant_manifest_tasks(&workspace, &manifest_path_text, filters)?;
-    let observations = store
-        .lookup_variants(
-            &tasks
-                .iter()
-                .map(|task| task.manifest.spec.clone())
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|err| err.to_string())?;
-    Ok(tasks
-        .into_iter()
-        .zip(observations)
-        .map(|(task, observation)| {
-            let resolved = Path::new(&task.manifest_path);
-            variant_row(
-                runtime_root,
-                resolved,
-                &task.manifest.name,
-                &task.manifest.tags,
-                &observation,
-                Some(participant_id),
-            )
-        })
-        .collect())
-}
-
 struct ReportAnalysisOptions<'a> {
     runtime_root: &'a Path,
     input_file: &'a Path,
@@ -45,28 +5,42 @@ struct ReportAnalysisOptions<'a> {
     loader: &'a GenotypeLoadOptions,
     output_dir: &'a Path,
     observation_rows: &'a [BTreeMap<String, String>],
-    filters: &'a [String],
     max_duration_ms: u64,
 }
 
-fn run_manifest_analyses_for_report(
-    manifest_path: &Path,
-    options: &ReportAnalysisOptions<'_>,
-) -> Result<Vec<serde_json::Value>, String> {
-    let workspace = bioscript_reporting::FilesystemManifestWorkspace::new(options.runtime_root);
-    let manifest_path_text = manifest_path.display().to_string();
-    let mut analyses = Vec::new();
-    for task in
-        bioscript_reporting::collect_analysis_manifest_tasks(&workspace, &manifest_path_text, options.filters)?
-    {
-        analyses.extend(run_interpretations_for_report(
+struct CliReportAnalysisRunner<'a> {
+    runtime_root: &'a Path,
+    input_file: &'a Path,
+    participant_id: &'a str,
+    loader: &'a GenotypeLoadOptions,
+    output_dir: &'a Path,
+    max_duration_ms: u64,
+}
+
+impl bioscript_reporting::ReportAnalysisRunner for CliReportAnalysisRunner<'_> {
+    fn run_analysis_task(
+        &self,
+        task: &bioscript_reporting::AnalysisManifestTask,
+        observation_rows: &[BTreeMap<String, String>],
+        _variant_observations: &[bioscript_core::VariantObservation],
+        _observations: &[serde_json::Value],
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let options = ReportAnalysisOptions {
+            runtime_root: self.runtime_root,
+            input_file: self.input_file,
+            participant_id: self.participant_id,
+            loader: self.loader,
+            output_dir: self.output_dir,
+            observation_rows,
+            max_duration_ms: self.max_duration_ms,
+        };
+        run_interpretations_for_report(
             Path::new(&task.manifest_path),
             &task.manifest_name,
             &task.interpretations,
-            options,
-        )?);
+            &options,
+        )
     }
-    Ok(analyses)
 }
 
 fn run_interpretations_for_report(
@@ -317,7 +291,6 @@ mod app_report_execution_tests {
             loader: &loader,
             output_dir: &dir,
             observation_rows: &[],
-            filters: &[],
             max_duration_ms: 10,
         };
 
@@ -325,59 +298,6 @@ mod app_report_execution_tests {
             run_interpretations_for_report(&manifest, "assay", &[interpretation], &options)
                 .unwrap_err();
         assert!(err.contains("unsupported kind"));
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn run_manifest_rows_for_report_reads_text_input_and_variant_manifest() {
-        let dir = temp_dir("manifest-rows");
-        let manifest = dir.join("variant.yaml");
-        fs::write(
-            &manifest,
-            r#"
-schema: bioscript:variant:1.0
-version: "1.0"
-name: rs1
-gene: ABC
-identifiers:
-  rsids: [rs1]
-coordinates:
-  grch38:
-    chrom: "1"
-    pos: 100
-alleles:
-  kind: snv
-  ref: A
-  alts: [G]
-"#,
-        )
-        .unwrap();
-        let input = dir.join("sample.txt");
-        fs::write(&input, "rsid\tgenotype\nrs1\tA/G\n").unwrap();
-        let loader = GenotypeLoadOptions {
-            format: Some(GenotypeSourceFormat::Text),
-            ..GenotypeLoadOptions::default()
-        };
-
-        let rows =
-            run_manifest_rows_for_report(&dir, &manifest, &input, "p1", &loader, &[]).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0]["participant_id"], "p1");
-        assert_eq!(rows[0]["matched_rsid"], "rs1");
-        assert_eq!(rows[0]["genotype"], "AG");
-
-        let missing_input = dir.join("missing.txt");
-        assert!(run_manifest_rows_for_report(
-            &dir,
-            &manifest,
-            &missing_input,
-            "p1",
-            &loader,
-            &[],
-        )
-        .unwrap_err()
-        .contains("No such file"));
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -426,7 +346,6 @@ if __name__ == "__main__":
             loader: &loader,
             output_dir: &output,
             observation_rows: &rows,
-            filters: &[],
             max_duration_ms: 1000,
         };
 

@@ -38,16 +38,6 @@ pub(super) fn encode_report_run_output(
     .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
 }
 
-pub(super) fn variant_row(
-    path: &str,
-    name: &str,
-    tags: &[String],
-    observation: &VariantObservation,
-    participant_id: &str,
-) -> BTreeMap<String, String> {
-    bioscript_reporting::variant_row(path, name, tags, observation, participant_id)
-}
-
 pub(super) fn normalize_package_path(path: &str) -> Result<String, JsError> {
     let mut out = PathBuf::new();
     for component in Path::new(path).components() {

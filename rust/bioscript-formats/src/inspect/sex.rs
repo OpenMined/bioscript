@@ -123,6 +123,20 @@ pub(crate) fn infer_sex_from_path(
     infer_sex_from_reader(BufReader::new(file), kind)
 }
 
+pub fn infer_sex_from_named_reader<R: Read>(
+    name: &str,
+    reader: R,
+    kind: DetectedKind,
+) -> Result<SexInference, RuntimeError> {
+    if !supports_sex_detection(kind) {
+        return Ok(unsupported_sex_inference());
+    }
+    if name.to_ascii_lowercase().ends_with(".vcf.gz") {
+        return infer_sex_from_reader(BufReader::new(MultiGzDecoder::new(reader)), kind);
+    }
+    infer_sex_from_reader(BufReader::new(reader), kind)
+}
+
 pub(crate) fn infer_sex_from_bytes(
     name: &str,
     bytes: &[u8],
@@ -131,14 +145,7 @@ pub(crate) fn infer_sex_from_bytes(
     if !supports_sex_detection(kind) {
         return Ok(unsupported_sex_inference());
     }
-    let lower = name.to_ascii_lowercase();
-    if lower.ends_with(".vcf.gz") {
-        return infer_sex_from_reader(
-            BufReader::new(MultiGzDecoder::new(Cursor::new(bytes))),
-            kind,
-        );
-    }
-    infer_sex_from_reader(BufReader::new(Cursor::new(bytes)), kind)
+    infer_sex_from_named_reader(name, Cursor::new(bytes), kind)
 }
 
 pub(crate) fn infer_sex_from_zip_bytes(

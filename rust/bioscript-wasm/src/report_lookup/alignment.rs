@@ -1,6 +1,6 @@
 use super::*;
 
-/// Per-variant CRAM lookup that satisfies the workspace's `VariantLookup`
+/// Per-variant CRAM lookup that satisfies the reporting lookup
 /// trait. Holds the IndexedReader in a `RefCell` so &self lookup methods can
 /// mutably read while still being object-safe.
 pub(crate) struct CramReportLookup<R: std::io::Read + std::io::Seek> {
@@ -13,15 +13,17 @@ mod bam;
 
 pub(crate) use bam::BamReportLookup;
 
-impl<R: std::io::Read + std::io::Seek> report_workspace::VariantLookup for CramReportLookup<R> {
-    fn lookup_variants(
-        &self,
-        specs: &[VariantSpec],
-    ) -> Result<Vec<VariantObservation>, RuntimeError> {
+impl<R: std::io::Read + std::io::Seek> bioscript_reporting::ReportVariantLookup
+    for CramReportLookup<R>
+{
+    fn lookup_variants(&self, specs: &[VariantSpec]) -> Result<Vec<VariantObservation>, String> {
         let mut reader = self.reader.borrow_mut();
         let mut out = Vec::with_capacity(specs.len());
         for spec in specs {
-            out.push(observe_cram_variant(&mut reader, &self.label, spec)?);
+            out.push(
+                observe_cram_variant(&mut reader, &self.label, spec)
+                    .map_err(|err| err.to_string())?,
+            );
         }
         Ok(out)
     }
