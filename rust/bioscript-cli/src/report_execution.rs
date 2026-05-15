@@ -162,27 +162,17 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
     let virtual_output_file = format!("/output/results.{output_extension}");
     let script_virtual_path = virtual_pipeline_path(input.script_path, "analysis.py");
     let manifest_virtual_path = virtual_pipeline_path(input.manifest_path, "manifest.yaml");
-    let mut virtual_text_files = BTreeMap::new();
-    virtual_text_files.insert(script_virtual_path.clone(), script_text);
-    virtual_text_files.insert(
-        manifest_virtual_path.clone(),
-        fs::read_to_string(input.manifest_path).map_err(|err| {
-            format!(
-                "failed to read analysis manifest {}: {err}",
-                input.manifest_path.display()
-            )
-        })?,
-    );
-    virtual_text_files.insert(virtual_observations_file.clone(), observations_text);
-    let mut asset_paths = BTreeMap::new();
-    for asset in &input.interpretation.assets {
-        let asset_path = resolve_manifest_path(input.runtime_root, input.manifest_path, &asset.path)?;
-        let virtual_asset_path = virtual_pipeline_path(&asset_path, &asset.path);
-        let text = fs::read_to_string(&asset_path)
-            .map_err(|err| format!("failed to read analysis asset {}: {err}", asset_path.display()))?;
-        virtual_text_files.insert(virtual_asset_path.clone(), text);
-        asset_paths.insert(asset.id.clone(), virtual_asset_path);
-    }
+    let AnalysisVirtualTextFiles {
+        text_files: virtual_text_files,
+        asset_paths,
+    } = collect_analysis_virtual_text_files(
+        input,
+        &script_virtual_path,
+        script_text,
+        &manifest_virtual_path,
+        &virtual_observations_file,
+        observations_text,
+    )?;
     let mut virtual_binary_files = BTreeMap::new();
     virtual_binary_files.insert(virtual_input_file.clone(), input_bytes);
     let context = analysis_context(
@@ -237,6 +227,46 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
         )
     })?;
     persist_virtual_output_files(&written, &virtual_output_file, input.output_file)
+}
+
+struct AnalysisVirtualTextFiles {
+    text_files: BTreeMap<String, String>,
+    asset_paths: BTreeMap<String, String>,
+}
+
+fn collect_analysis_virtual_text_files(
+    input: &BioscriptAnalysisScriptInput<'_>,
+    script_virtual_path: &str,
+    script_text: String,
+    manifest_virtual_path: &str,
+    virtual_observations_file: &str,
+    observations_text: String,
+) -> Result<AnalysisVirtualTextFiles, String> {
+    let mut virtual_text_files = BTreeMap::new();
+    virtual_text_files.insert(script_virtual_path.to_owned(), script_text);
+    virtual_text_files.insert(
+        manifest_virtual_path.to_owned(),
+        fs::read_to_string(input.manifest_path).map_err(|err| {
+            format!(
+                "failed to read analysis manifest {}: {err}",
+                input.manifest_path.display()
+            )
+        })?,
+    );
+    virtual_text_files.insert(virtual_observations_file.to_owned(), observations_text);
+    let mut asset_paths = BTreeMap::new();
+    for asset in &input.interpretation.assets {
+        let asset_path = resolve_manifest_path(input.runtime_root, input.manifest_path, &asset.path)?;
+        let virtual_asset_path = virtual_pipeline_path(&asset_path, &asset.path);
+        let text = fs::read_to_string(&asset_path)
+            .map_err(|err| format!("failed to read analysis asset {}: {err}", asset_path.display()))?;
+        virtual_text_files.insert(virtual_asset_path.clone(), text);
+        asset_paths.insert(asset.id.clone(), virtual_asset_path);
+    }
+    Ok(AnalysisVirtualTextFiles {
+        text_files: virtual_text_files,
+        asset_paths,
+    })
 }
 
 fn persist_virtual_output_files(
