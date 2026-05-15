@@ -96,7 +96,11 @@ class VntyperFastqExpectedOutputsTests(unittest.TestCase):
                 max_saved_states=4,
             )
 
-        self.assertIn("##fileformat=VCFv4.2\n", vcf)
+        # kestrel-rs is bug-compatible with Java Kestrel, which emits the
+        # non-standard "##fileformat=VCF4.2" (no "v"). bcftools-rs accepts
+        # and normalizes it downstream; VNtyper validates against Java's
+        # exact bytes, so the adapter must not "fix" the header here.
+        self.assertIn("##fileformat=VCF4.2\n", vcf)
         self.assertIn("##contig=<ID=chr1,length=16", vcf)
         self.assertIn("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1", vcf)
         self.assertIn("chr1\t5\t.\tC\tT", vcf)
