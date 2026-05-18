@@ -311,16 +311,20 @@ fn loader_with_inspection(
 ) -> GenotypeLoadOptions {
     let mut loader = base.clone();
     if loader.format.is_none() {
-        loader.format = match inspection.detected_kind {
-            bioscript_formats::DetectedKind::AlignmentBam => {
-                Some(GenotypeSourceFormat::Bam)
+        loader.format = if inspection.container == bioscript_formats::FileContainer::Zip {
+            Some(GenotypeSourceFormat::Zip)
+        } else {
+            match inspection.detected_kind {
+                bioscript_formats::DetectedKind::AlignmentBam => {
+                    Some(GenotypeSourceFormat::Bam)
+                }
+                bioscript_formats::DetectedKind::AlignmentCram => {
+                    Some(GenotypeSourceFormat::Cram)
+                }
+                bioscript_formats::DetectedKind::Vcf => Some(GenotypeSourceFormat::Vcf),
+                bioscript_formats::DetectedKind::GenotypeText => Some(GenotypeSourceFormat::Text),
+                _ => None,
             }
-            bioscript_formats::DetectedKind::AlignmentCram => {
-                Some(GenotypeSourceFormat::Cram)
-            }
-            bioscript_formats::DetectedKind::Vcf => Some(GenotypeSourceFormat::Vcf),
-            bioscript_formats::DetectedKind::GenotypeText => Some(GenotypeSourceFormat::Text),
-            _ => None,
         };
     }
     loader.assembly = inspection.assembly.or(loader.assembly);
