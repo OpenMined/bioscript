@@ -25,6 +25,160 @@ pub(crate) fn genotype_file_object(handle_id: u64) -> MontyObject {
     }
 }
 
+pub(crate) fn kestrel_module_object() -> MontyObject {
+    empty_dataclass("KestrelModule", 26)
+}
+
+pub(crate) fn bcftools_module_object() -> MontyObject {
+    empty_dataclass("BcftoolsModule", 28)
+}
+
+pub(crate) fn pysam_module_object() -> MontyObject {
+    empty_dataclass("PysamModule", 20)
+}
+
+pub(crate) fn pyfaidx_module_object() -> MontyObject {
+    empty_dataclass("PyfaidxModule", 21)
+}
+
+pub(crate) fn samtools_module_object() -> MontyObject {
+    empty_dataclass("SamtoolsModule", 27)
+}
+
+pub(crate) fn vcf_module_object() -> MontyObject {
+    empty_dataclass("VcfModule", 22)
+}
+
+pub(crate) fn pysam_alignment_file_object(
+    path: &str,
+    mode: &str,
+    reference_filename: Option<&str>,
+    index_filename: Option<&str>,
+) -> MontyObject {
+    let mut attrs = vec![
+        (
+            MontyObject::String("path".to_owned()),
+            MontyObject::String(path.to_owned()),
+        ),
+        (
+            MontyObject::String("mode".to_owned()),
+            MontyObject::String(mode.to_owned()),
+        ),
+    ];
+    attrs.push((
+        MontyObject::String("reference_filename".to_owned()),
+        reference_filename.map_or(MontyObject::None, |value| {
+            MontyObject::String(value.to_owned())
+        }),
+    ));
+    attrs.push((
+        MontyObject::String("index_filename".to_owned()),
+        index_filename.map_or(MontyObject::None, |value| {
+            MontyObject::String(value.to_owned())
+        }),
+    ));
+    MontyObject::Dataclass {
+        name: "PysamAlignmentFile".to_owned(),
+        type_id: 23,
+        field_names: vec![
+            "path".to_owned(),
+            "mode".to_owned(),
+            "reference_filename".to_owned(),
+            "index_filename".to_owned(),
+        ],
+        attrs: attrs.into(),
+        frozen: true,
+    }
+}
+
+pub(crate) fn pyfaidx_fasta_object(path: &str) -> MontyObject {
+    MontyObject::Dataclass {
+        name: "PyfaidxFasta".to_owned(),
+        type_id: 24,
+        field_names: vec!["path".to_owned()],
+        attrs: vec![(
+            MontyObject::String("path".to_owned()),
+            MontyObject::String(path.to_owned()),
+        )]
+        .into(),
+        frozen: true,
+    }
+}
+
+fn empty_dataclass(name: &str, type_id: u64) -> MontyObject {
+    MontyObject::Dataclass {
+        name: name.to_owned(),
+        type_id,
+        field_names: vec![],
+        attrs: vec![].into(),
+        frozen: true,
+    }
+}
+
+pub(crate) fn pysam_aligned_segment_object(
+    segment: &bioscript_libs::pysam::AlignedSegment,
+) -> MontyObject {
+    MontyObject::Dataclass {
+        name: "PysamAlignedSegment".to_owned(),
+        type_id: 25,
+        field_names: vec![
+            "query_name".to_owned(),
+            "reference_name".to_owned(),
+            "reference_start".to_owned(),
+            "reference_end".to_owned(),
+            "query_sequence".to_owned(),
+            "mapping_quality".to_owned(),
+            "cigarstring".to_owned(),
+            "is_unmapped".to_owned(),
+            "is_reverse".to_owned(),
+        ],
+        attrs: vec![
+            optional_string_attr("query_name", segment.query_name.as_deref()),
+            optional_string_attr("reference_name", segment.reference_name.as_deref()),
+            optional_u64_attr("reference_start", segment.reference_start),
+            optional_u64_attr("reference_end", segment.reference_end),
+            optional_string_attr("query_sequence", segment.query_sequence.as_deref()),
+            optional_u8_attr("mapping_quality", segment.mapping_quality),
+            optional_string_attr("cigarstring", segment.cigarstring.as_deref()),
+            (
+                MontyObject::String("is_unmapped".to_owned()),
+                MontyObject::Bool(segment.is_unmapped),
+            ),
+            (
+                MontyObject::String("is_reverse".to_owned()),
+                MontyObject::Bool(segment.is_reverse),
+            ),
+        ]
+        .into(),
+        frozen: true,
+    }
+}
+
+fn optional_string_attr(name: &str, value: Option<&str>) -> (MontyObject, MontyObject) {
+    (
+        MontyObject::String(name.to_owned()),
+        value.map_or(MontyObject::None, |value| {
+            MontyObject::String(value.to_owned())
+        }),
+    )
+}
+
+fn optional_u64_attr(name: &str, value: Option<u64>) -> (MontyObject, MontyObject) {
+    (
+        MontyObject::String(name.to_owned()),
+        value.map_or(MontyObject::None, |value| MontyObject::Int(value as i64)),
+    )
+}
+
+fn optional_u8_attr(name: &str, value: Option<u8>) -> (MontyObject, MontyObject) {
+    (
+        MontyObject::String(name.to_owned()),
+        value.map_or(MontyObject::None, |value| {
+            MontyObject::Int(i64::from(value))
+        }),
+    )
+}
+
 pub(crate) fn variant_object(spec: &VariantSpec) -> MontyObject {
     let mut attrs = Vec::new();
     attrs.push((

@@ -1,0 +1,31 @@
+schema: bioscript:variant:1.0
+version: "1.0"
+name: muc1-vntr-frameshift
+gene: MUC1
+summary: >
+  MUC1 VNTR pathogenic frameshift locus (autosomal dominant tubulointerstitial
+  kidney disease, ADTKD-MUC1). The causal change is a cytosine insertion in a
+  GC-rich VNTR repeat that standard short-read callers cannot resolve; the
+  vntyper analysis derives the call with mapping-free Kestrel genotyping.
+coordinates:
+  grch37:
+    chrom: "1"
+    pos: 155160500
+  grch38:
+    chrom: "1"
+    pos: 155188000
+alleles:
+  kind: insertion
+  ref: C
+  alts:
+    - CC
+  observed_alts:
+    - CC
+provenance:
+  sources:
+    - kind: method
+      label: VNtyper / Kestrel mapping-free VNTR genotyping
+      url: https://github.com/hassansaei/VNtyper
+      fields:
+        - summary
+        - alleles

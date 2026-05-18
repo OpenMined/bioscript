@@ -10,19 +10,29 @@ use bioscript_core::RuntimeError;
 use monty::{LimitedTracker, MontyObject, MontyRun, NameLookupResult, PrintWriter, RunProgress};
 
 mod args;
+mod dispatch;
 mod genotype_load;
 mod host_io;
+mod imports;
+mod kestrel_native_methods;
+mod lib_methods;
 mod methods;
 mod objects;
 mod paths;
+mod samtools_command_methods;
+mod samtools_native_methods;
 mod state;
 mod timing;
+mod tool_methods;
 mod trace;
 mod variants;
+mod vcf_methods;
 
 #[cfg(test)]
 use bioscript_core::VariantSpec;
 use host_io::{deepest_existing_ancestor, host_read_text, host_write_text};
+use imports::rewrite_bioscript_imports;
+use lib_methods::host_bioscript_import;
 use objects::bioscript_object;
 #[cfg(test)]
 use objects::{
@@ -83,6 +93,10 @@ impl BioscriptRuntime {
         functions.insert("read_text", host_read_text as HostFunction);
         functions.insert("write_text", host_write_text as HostFunction);
         functions.insert("__bioscript_trace__", host_trace as HostFunction);
+        functions.insert(
+            "__bioscript_import__",
+            host_bioscript_import as HostFunction,
+        );
 
         Ok(Self {
             root: canonical_root,
@@ -120,7 +134,8 @@ impl BioscriptRuntime {
                 ))
             })?
         };
-        let instrumented = instrument_source(&code);
+        let rewritten = rewrite_bioscript_imports(&code)?;
+        let instrumented = instrument_source(&rewritten);
         self.state
             .trace_lines
             .lock()
@@ -240,43 +255,6 @@ impl BioscriptRuntime {
                     )));
                 }
             };
-        }
-    }
-
-    fn dispatch_method_call(
-        &self,
-        method_name: &str,
-        args: &[MontyObject],
-        kwargs: &[(MontyObject, MontyObject)],
-    ) -> Result<MontyObject, RuntimeError> {
-        let class_name = match args.first() {
-            Some(MontyObject::Dataclass { name, .. }) => name.as_str(),
-            _ => "<unknown>",
-        };
-
-        match (class_name, method_name) {
-            ("Bioscript", "load_genotypes") => self.method_load_genotypes(args, kwargs),
-            ("Bioscript", "variant") => self.method_variant(args, kwargs),
-            ("Bioscript", "query_plan") => self.method_query_plan(args, kwargs),
-            ("Bioscript", "write_tsv") => self.method_write_tsv(args, kwargs),
-            ("Bioscript", "read_tsv") => self.method_read_tsv(args, kwargs),
-            ("Bioscript", "read_text") => self.method_read_text(args, kwargs),
-            ("Bioscript", "write_text") => self.method_write_text(args, kwargs),
-            ("Bioscript", "exists") => self.method_exists(args, kwargs),
-            ("GenotypeFile", "get") => self.method_genotype_get(args, kwargs),
-            ("GenotypeFile", "lookup_variant") => self.method_genotype_lookup_variant(args, kwargs),
-            ("GenotypeFile", "lookup_variant_details") => {
-                self.method_genotype_lookup_variant_details(args, kwargs)
-            }
-            ("GenotypeFile", "lookup_variants") => {
-                self.method_genotype_lookup_variants(args, kwargs)
-            }
-            ("GenotypeFile", "lookup_variants_details") => {
-                self.method_genotype_lookup_variants_details(args, kwargs)
-            }
-            _ => Err(RuntimeError::Unsupported(format!(
-                "'{class_name}' object has no attribute '{method_name}'"
-            ))),
         }
     }
 

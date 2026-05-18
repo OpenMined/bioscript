@@ -1,0 +1,84 @@
+schema: bioscript:assay:1.0
+version: "1.0"
+name: vntyper_muc1
+label: MUC1 VNTR (VNtyper)
+summary: >
+  Advanced assay that genotypes the MUC1 VNTR frameshift (ADTKD-MUC1) from an
+  aligned genome. It slices the MUC1 region, extracts reads, runs mapping-free
+  Kestrel genotyping, and applies VNtyper post-processing to call the
+  pathogenic cytosine insertion. Requires aligned input (BAM/CRAM) — it cannot
+  run from SNP-chip or VCF genotypes.
+tags:
+  - type:risk
+  - gene:MUC1
+  - kind:vntr
+support:
+  input:
+    - bam
+    - cram
+members:
+  - kind: variant
+    path: muc1-vntr.yaml
+    version: "1.0"
+analyses:
+  - id: vntyper_muc1
+    kind: bioscript
+    path: vntyper.py
+    output_format: tsv
+    label: MUC1 VNTR genotype
+    derived_from:
+      - muc1-vntr.yaml
+    assets:
+      - id: muc1_reference
+        path: assets/muc1_motifs.fa
+    emits:
+      - key: vntyper_outcome
+        label: MUC1 VNTR outcome
+        value_type: string
+        format: badge
+      - key: vntyper_status
+        label: MUC1 VNTR status
+        value_type: string
+      - key: vntyper_confidence
+        label: Kestrel confidence
+        value_type: string
+        format: badge
+      - key: vntyper_variant
+        label: Called variant
+        value_type: string
+      - key: vntyper_alt_depth
+        label: Alternate-variant depth
+        value_type: string
+    logic:
+      source:
+        name: VNtyper / Kestrel
+        url: https://github.com/hassansaei/VNtyper
+      description: >
+        The MUC1 region is sliced from the aligned input, converted to FASTQ,
+        and genotyped with mapping-free Kestrel against the MUC1 motif
+        reference. VNtyper motif/frameshift/confidence post-processing selects
+        the called variant; vntyper_status is positive when a valid
+        High_Precision* / High_Precision frameshift passes the filters.
+findings:
+  - schema: bioscript:pgx-label:1.0
+    id: muc1_vntr_positive_finding
+    label: MUC1 VNTR pathogenic frameshift detected
+    authority_type: clinical_annotation
+    binding:
+      source: analysis
+      analysis_id: vntyper_muc1
+      key: vntyper_status
+      operator: equals
+      value: positive
+    regulatory_sources:
+      - "ClinVar"
+    pgx_action_level: "Informative"
+    evidence:
+      source: VNtyper
+      kind: method_annotation
+      id: ADTKD-MUC1
+      url: https://github.com/hassansaei/VNtyper
+    notes: >
+      A positive call indicates a MUC1 VNTR frameshift consistent with
+      ADTKD-MUC1; confirm with an orthogonal method (e.g. SNaPshot or
+      long-read sequencing).

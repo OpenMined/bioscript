@@ -5,7 +5,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use bioscript_formats::GenotypeLoadOptions;
+use bioscript_core::GenomicLocus;
+use bioscript_formats::{GenotypeLoadOptions, alignment};
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig};
 use monty::{MontyObject, ResourceLimits};
 
@@ -109,6 +110,460 @@ fn pathlib_read_text_is_blocked() {
 fn unsupported_networkish_import_fails() {
     let err = run_script("import urllib\n").unwrap_err();
     assert!(err.contains("No module named 'urllib'"));
+}
+
+#[test]
+fn bioscript_library_import_binds_pysam_module() {
+    run_script(
+        r#"
+from bioscript import pysam
+
+def main():
+    pysam.AlignmentFile("sample.cram", "rc")
+
+if __name__ == "__main__":
+    main()
+"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn bioscript_library_import_supports_alias_and_pyfaidx_constructor() {
+    let dir = temp_dir("pyfaidx-import");
+    fs::write(dir.join("ref.fa"), ">chr_test\nACGT\n").unwrap();
+
+    run_script_with_inputs(
+        &dir,
+        r#"
+from bioscript import pyfaidx as fa
+
+def main():
+    fa.Fasta("ref.fa")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn bioscript_library_import_binds_vntyper_tool_modules() {
+    run_script(
+        r#"
+from bioscript import kestrel
+from bioscript import samtools
+from bioscript import bcftools
+
+def main():
+    print(kestrel)
+    print(samtools)
+    print(bcftools)
+
+if __name__ == "__main__":
+    main()
+"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn bioscript_vntyper_tool_modules_build_structured_commands() {
+    let dir = temp_dir("tool-command-timing");
+    let runtime = run_script_with_inputs(
+        &dir,
+        r#"
+from bioscript import kestrel
+from bioscript import samtools
+from bioscript import bcftools
+
+def main():
+    kcmd = kestrel.build_command(
+        "kestrel.jar",
+        "muc1.fa",
+        "out.vcf",
+        "out.sam",
+        "tmp",
+        "sample1",
+        "r1.fastq.gz",
+        "r2.fastq.gz",
+    )
+    if kcmd[0] != "java":
+        raise Exception("bad kestrel command")
+    pkcmd = kestrel.plan_command(
+        "kestrel.jar",
+        "muc1.fa",
+        "out.vcf",
+        "out.sam",
+        "tmp",
+        "sample1",
+        "r1.fastq.gz",
+        "r2.fastq.gz",
+    )
+    if pkcmd[0] != kcmd[0]:
+        raise Exception("bad planned kestrel command")
+    fcmd = samtools.plan_fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz")
+    if fcmd[0] != "samtools":
+        raise Exception("bad samtools command")
+    pfcmd = samtools.plan_fastq("slice.bam", "r1.fastq.gz", "r2.fastq.gz")
+    if pfcmd[1] != fcmd[1]:
+        raise Exception("bad planned samtools command")
+    vcmd = samtools.plan_view("sample.bam", "chr1:1-10", "slice.bam")
+    if vcmd[1] != "view":
+        raise Exception("bad samtools view command")
+    pvcmd = samtools.plan_view("sample.bam", "chr1:1-10", "slice.bam")
+    if pvcmd[1] != vcmd[1]:
+        raise Exception("bad planned samtools view command")
+    scmd = samtools.plan_sort("slice.bam", "slice.name.bam", True)
+    if scmd[1] != "sort":
+        raise Exception("bad samtools sort command")
+    pscmd = samtools.plan_sort("slice.bam", "slice.name.bam", True)
+    if pscmd[1] != scmd[1]:
+        raise Exception("bad planned samtools sort command")
+    facmd = samtools.plan_faidx("ref.fa")
+    if facmd[1] != "faidx":
+        raise Exception("bad samtools faidx command")
+    pfacmd = samtools.plan_faidx("ref.fa")
+    if pfacmd[1] != facmd[1]:
+        raise Exception("bad planned samtools faidx command")
+    bcmd = bcftools.plan_sort("calls.vcf", "calls.vcf.gz")
+    if bcmd[0] != "bcftools":
+        raise Exception("bad bcftools command")
+    pbcmd = bcftools.plan_sort("calls.vcf", "calls.vcf.gz")
+    if pbcmd[1] != bcmd[1]:
+        raise Exception("bad planned bcftools command")
+    bvcmd = bcftools.plan_view("calls.vcf", "calls.bcf", "b")
+    if bvcmd[1] != "view":
+        raise Exception("bad bcftools view command")
+    pbvcmd = bcftools.plan_view("calls.vcf", "calls.bcf", "b")
+    if pbvcmd[1] != bvcmd[1]:
+        raise Exception("bad planned bcftools view command")
+    bncmd = bcftools.plan_norm("calls.vcf", "ref.fa", "norm.vcf.gz")
+    if bncmd[1] != "norm":
+        raise Exception("bad bcftools norm command")
+    pbncmd = bcftools.plan_norm("calls.vcf", "ref.fa", "norm.vcf.gz")
+    if pbncmd[1] != bncmd[1]:
+        raise Exception("bad planned bcftools norm command")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+    let timings = runtime.timing_snapshot();
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan"
+            && timing.detail.contains("method=kestrel.build_command")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=samtools.fastq")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=samtools.view")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=samtools.sort")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=samtools.faidx")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=bcftools.sort")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=bcftools.view")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "tool_command_plan" && timing.detail.contains("method=bcftools.norm")
+    }));
+}
+
+#[test]
+fn bioscript_bcftools_native_methods_materialize_outputs() {
+    let dir = temp_dir("bcftools-native-methods");
+    let runtime = run_script_with_inputs(
+        &dir,
+        r###"
+from bioscript import bcftools
+
+def main():
+    bioscript.write_text(
+        "calls.vcf",
+        "##fileformat=VCFv4.2\n"
+        + "##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
+        + "##contig=<ID=chr1,length=1000>\n"
+        + "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+        + "chr1\t5\t.\tC\tT\t.\tPASS\t.\n",
+    )
+    bcftools.view_header_native("calls.vcf", "header.vcf")
+    bcftools.view("calls.vcf", "calls.vcf.gz", "z")
+    bcftools.sort("calls.vcf", "calls.sorted.vcf.gz")
+    bcftools.index("calls.vcf.gz")
+
+if __name__ == "__main__":
+    main()
+"###,
+        Vec::new(),
+    )
+    .unwrap();
+
+    let header = fs::read_to_string(dir.join("header.vcf")).unwrap();
+    assert!(header.contains("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"));
+    assert!(!header.contains("chr1\t5\t.\tC\tT"));
+    assert!(fs::metadata(dir.join("calls.vcf.gz")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("calls.sorted.vcf.gz")).unwrap().len() > 0);
+    assert!(
+        fs::metadata(dir.join("calls.sorted.vcf.gz.csi"))
+            .unwrap()
+            .len()
+            > 0
+    );
+    assert!(fs::metadata(dir.join("calls.vcf.gz.tbi")).unwrap().len() > 0);
+    let timings = runtime.timing_snapshot();
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=bcftools.view_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=bcftools.sort_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=bcftools.index_native")
+    }));
+}
+
+#[test]
+fn bioscript_samtools_native_methods_materialize_outputs() {
+    let dir = temp_dir("samtools-native-methods");
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../vendor/rust/samtools-rs/samtools/test/stat");
+    fs::copy(fixtures.join("11_target.bam"), dir.join("11_target.bam")).unwrap();
+    fs::copy(
+        fixtures.join("11_target.bam.bai"),
+        dir.join("11_target.bam.bai"),
+    )
+    .unwrap();
+
+    let runtime = run_script_with_inputs(
+        &dir,
+        r#"
+from bioscript import samtools
+
+def main():
+    records = samtools.view("11_target.bam", "ref1:1-10", "slice.bam", "11_target.bam.bai")
+    if records != 0:
+        raise Exception("unexpected records return")
+    region_records = samtools.view_region("11_target.bam", "ref1:1-10", "slice_region.bam", False)
+    if region_records != 0:
+        raise Exception("unexpected view_region return")
+    depth = samtools.depth("11_target.bam", "ref1:1-10", "11_target.bam.bai")
+    if depth["region_length"] != 10 or depth["uncovered_bases"] != 0:
+        raise Exception("bad depth summary")
+    samtools.sort("11_target.bam", "sorted.bam", False)
+    written_index = samtools.index("sorted.bam")
+    if not written_index:
+        raise Exception("missing sorted BAM index")
+    fastq = samtools.fastq_native("11_target.bam", "ref1:1-10", "r1.fastq.gz", "r2.fastq.gz", "11_target.bam.bai")
+    if fastq["read1_records"] != 5 or fastq["read2_records"] != 0:
+        raise Exception("bad FASTQ summary")
+    whole_fastq = samtools.fastq("slice.bam", "r1.default.fastq.gz", "r2.default.fastq.gz")
+    if whole_fastq["read1_records"] < 0 or whole_fastq["read2_records"] < 0:
+        raise Exception("bad default FASTQ summary")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+
+    assert!(fs::metadata(dir.join("slice.bam")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("slice_region.bam")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("sorted.bam")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("sorted.bam.bai")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("r1.fastq.gz")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("r2.fastq.gz")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("r1.default.fastq.gz")).unwrap().len() > 0);
+    assert!(fs::metadata(dir.join("r2.default.fastq.gz")).unwrap().len() > 0);
+    let timings = runtime.timing_snapshot();
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call"
+            && timing.detail.contains("method=samtools.view_region_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail == "method=samtools.fastq"
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=samtools.fastq_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=samtools.depth_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=samtools.sort_native")
+    }));
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail.contains("method=samtools.index_native")
+    }));
+}
+
+#[test]
+fn bioscript_kestrel_native_method_materializes_vcf() {
+    let dir = temp_dir("kestrel-native-method");
+    let runtime = run_script_with_inputs(
+        &dir,
+        r#"
+from bioscript import kestrel
+
+def main():
+    bioscript.write_text("ref.fa", ">chr1\nAAAACCCCGGGGTTTT\n")
+    bioscript.write_text(
+        "reads.fastq",
+        "@r1\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n"
+        + "@r2\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n"
+        + "@r3\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n"
+        + "@r4\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n"
+        + "@r5\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n",
+    )
+    output = kestrel.run_native("ref.fa", ["reads.fastq"], "calls/out.vcf", 4, "sample1", 1, 4, 4)
+    if not output:
+        raise Exception("missing Kestrel output")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+
+    let vcf = fs::read_to_string(dir.join("calls/out.vcf")).unwrap();
+    assert!(vcf.contains("##fileformat=VCF4.2\n"));
+    assert!(vcf.contains("##contig=<ID=chr1,length=16"));
+    assert!(vcf.contains("chr1\t5\t.\tC\tT"), "{vcf}");
+    let timings = runtime.timing_snapshot();
+    assert!(timings.iter().any(|timing| {
+        timing.stage == "native_tool_call" && timing.detail == "method=kestrel.run_native"
+    }));
+}
+
+#[test]
+fn bioscript_vcf_read_kestrel_returns_records() {
+    let dir = temp_dir("vcf-read-kestrel");
+    fs::write(
+        dir.join("kestrel.vcf"),
+        "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\nMUC1\t100\t.\tC\tCGGCA\t.\tPASS\t.\tGT\tDel:120:10000\n",
+    )
+    .unwrap();
+    run_script_with_inputs(
+        &dir,
+        r#"
+from bioscript import vcf
+
+def main():
+    rows = vcf.read_kestrel("kestrel.vcf")
+    if len(rows) != 1:
+        raise Exception("expected one record")
+    if rows[0]["Sample"] != "Del:120:10000":
+        raise Exception("missing sample")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn bioscript_pysam_fetch_streams_tiny_cram_fixture() {
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bioscript-formats/tests/fixtures");
+    let root = temp_dir("pysam-fetch");
+    for fixture in ["mini.cram", "mini.cram.crai", "mini.fa", "mini.fa.fai"] {
+        fs::copy(source.join(fixture), root.join(fixture)).unwrap();
+    }
+    run_script_with_inputs(
+        &root,
+        r#"
+from bioscript import pysam
+
+def main():
+    bam = pysam.AlignmentFile(
+        "mini.cram",
+        "rc",
+        reference_filename="mini.fa",
+        index_filename="mini.cram.crai",
+    )
+    reads = bam.fetch("chr_test", 999, 1001)
+    if len(reads) == 0:
+        raise Exception("expected reads")
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn bioscript_pysam_fetch_matches_high_level_alignment_depth() {
+    let source =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../bioscript-formats/tests/fixtures");
+    let root = temp_dir("pysam-depth-parity");
+    for fixture in ["mini.cram", "mini.cram.crai", "mini.fa", "mini.fa.fai"] {
+        fs::copy(source.join(fixture), root.join(fixture)).unwrap();
+    }
+
+    let expected_depth = alignment::query_cram_records(
+        &root.join("mini.cram"),
+        &GenotypeLoadOptions {
+            input_index: Some(root.join("mini.cram.crai")),
+            ..GenotypeLoadOptions::default()
+        },
+        &root.join("mini.fa"),
+        &GenomicLocus {
+            chrom: "chr_test".to_owned(),
+            start: 1000,
+            end: 1000,
+        },
+    )
+    .unwrap()
+    .len();
+
+    run_script_with_inputs(
+        &root,
+        r#"
+from bioscript import pysam
+
+def main():
+    bam = pysam.AlignmentFile(
+        "mini.cram",
+        "rc",
+        reference_filename="mini.fa",
+        index_filename="mini.cram.crai",
+    )
+    reads = bam.fetch("chr_test", 999, 1000)
+    rows = [{"depth": str(len(reads))}]
+    bioscript.write_tsv("pysam-depth.tsv", rows)
+
+if __name__ == "__main__":
+    main()
+"#,
+        Vec::new(),
+    )
+    .unwrap();
+
+    let output = fs::read_to_string(root.join("pysam-depth.tsv")).unwrap();
+    assert_eq!(output.trim(), format!("depth\n{expected_depth}"));
+}
+
+#[test]
+fn bioscript_library_import_rejects_unknown_module() {
+    let err = run_script("from bioscript import numpy\n").unwrap_err();
+    assert!(err.contains("unknown bioscript library module: numpy"));
 }
 
 #[test]

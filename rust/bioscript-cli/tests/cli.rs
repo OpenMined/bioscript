@@ -147,6 +147,70 @@ fn lookup_variant_details_returns_counts_and_decision_fields() {
 }
 
 #[test]
+fn vntyper_bioscript_program_runs_via_cli_and_writes_command_plan() {
+    let root = repo_root();
+    let output_path = root.join("target/vntyper-bs-plan.tsv");
+    let output_dir = root.join("target/vntyper-bs-cli-out");
+    let reference_path = root.join("target/vntyper-bs-cli-ref.fa");
+    if output_path.exists() {
+        fs::remove_file(&output_path).unwrap();
+    }
+    if output_dir.exists() {
+        fs::remove_dir_all(&output_dir).unwrap();
+    }
+    fs::create_dir_all(&output_dir).unwrap();
+    fs::write(&reference_path, ">ref1\nAAAACCCCGGGGTTTT\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bioscript"))
+        .current_dir(&root)
+        .arg("--input-file")
+        .arg("vendor/rust/samtools-rs/samtools/test/stat/11_target.bam")
+        .arg("--output-file")
+        .arg("target/vntyper-bs-plan.tsv")
+        .arg("--participant-id")
+        .arg("cli-bam")
+        .arg("--filter")
+        .arg("input_bai=vendor/rust/samtools-rs/samtools/test/stat/11_target.bam.bai")
+        .arg("--filter")
+        .arg("bam_region=ref1:1-10")
+        .arg("--filter")
+        .arg("vntr_region=ref1:1-10")
+        .arg("--filter")
+        .arg("reference_fasta=target/vntyper-bs-cli-ref.fa")
+        .arg("--filter")
+        .arg("kmer_size=4")
+        .arg("--filter")
+        .arg("minimum_difference=1")
+        .arg("--filter")
+        .arg("max_haplotypes=4")
+        .arg("--filter")
+        .arg("max_saved_states=4")
+        .arg("--filter")
+        .arg("output_dir=target/vntyper-bs-cli-out")
+        .arg("ports/vntyper/bioscript/vntyper.bs")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let plan = fs::read_to_string(&output_path).unwrap();
+    assert!(plan.contains("participant_id"));
+    assert!(plan.contains("cli-bam"));
+    assert!(plan.contains("fastq_read1_records"));
+    assert!(plan.contains("ref1:1-10"));
+    assert!(plan.contains("kestrel_vcf"));
+    assert!(plan.contains("report_json"));
+    assert!(output_dir.join("cli-bam_kestrel_result.tsv").exists());
+    assert!(output_dir.join("cli-bam_report.json").exists());
+    fs::remove_file(output_path).unwrap();
+    fs::remove_file(reference_path).unwrap();
+    fs::remove_dir_all(output_dir).unwrap();
+}
+
+#[test]
 fn inspect_subcommand_reports_detected_vendor_and_platform() {
     let root = repo_root();
     let path = root.join("rust/bioscript-formats/tests/fixtures/ancestrydna_v2_sample.txt");
