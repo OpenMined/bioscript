@@ -855,9 +855,9 @@ variants:
                 ),
                 (
                     "variants.tsv".to_owned(),
-                    r#"id	name	rsid	gene	ref	alt	kind	grch38_chrom	grch38_pos
+                    r"id	name	rsid	gene	ref	alt	kind	grch38_chrom	grch38_pos
 rs1	rs1	rs1	GENE	A	G	snp	1	123
-"#
+"
                     .to_owned(),
                 ),
             ]),
