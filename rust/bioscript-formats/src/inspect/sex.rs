@@ -7,16 +7,24 @@ use bioscript_core::RuntimeError;
 use flate2::read::MultiGzDecoder;
 use zip::ZipArchive;
 
-use crate::genotype::{DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row};
+use crate::genotype::{
+    DelimitedColumnIndexes, Delimiter, GsgtParser, detect_delimiter, lines_look_like_gsgt,
+    parse_streaming_row,
+};
 
 use super::{DetectedKind, InspectOptions};
 
 mod alignment_depth;
+mod calls;
 mod classify;
 
 pub use alignment_depth::infer_sex_from_alignment_reader;
 
 pub(crate) use alignment_depth::infer_sex_from_alignment_path;
+use calls::{
+    genotype_allele_count, is_called_genotype_text, is_called_vcf_gt, is_genotype_text_het,
+    is_non_par_x, is_vcf_gt_het, normalize_chrom, vcf_gt_allele_count,
+};
 use classify::{classify_stats, supports_sex_detection, unsupported_sex_inference};
 
 const MAX_SEX_DETECTION_LINES: usize = 50_000_000;
@@ -181,6 +189,8 @@ pub fn infer_sex_from_text_lines(
 ) -> Result<SexInference, RuntimeError> {
     let mut stats = SexStats::default();
     let delimiter = detect_delimiter(lines);
+    let is_gsgt = lines_look_like_gsgt(lines);
+    let mut gsgt = None;
     let mut column_indexes = None;
     let mut comment_header = None;
     for line in lines {
@@ -189,6 +199,8 @@ pub fn infer_sex_from_text_lines(
             line,
             kind,
             delimiter,
+            is_gsgt,
+            &mut gsgt,
             &mut column_indexes,
             &mut comment_header,
         )?;
@@ -212,6 +224,8 @@ fn infer_sex_from_reader<R: BufRead>(
         let bytes = reader.read_line(&mut line).unwrap_or_default();
         if bytes == 0 {
             let delimiter = detect_delimiter(&probe_lines);
+            let is_gsgt = lines_look_like_gsgt(&probe_lines);
+            let mut gsgt = None;
             let mut column_indexes = None;
             let mut comment_header = None;
             for probe_line in &probe_lines {
@@ -220,6 +234,8 @@ fn infer_sex_from_reader<R: BufRead>(
                     probe_line,
                     kind,
                     delimiter,
+                    is_gsgt,
+                    &mut gsgt,
                     &mut column_indexes,
                     &mut comment_header,
                 )?;
@@ -229,6 +245,8 @@ fn infer_sex_from_reader<R: BufRead>(
         probe_lines.push(line.trim_end_matches(['\n', '\r']).to_owned());
     }
     let delimiter = detect_delimiter(&probe_lines);
+    let is_gsgt = lines_look_like_gsgt(&probe_lines);
+    let mut gsgt = None;
     let mut column_indexes = None;
     let mut comment_header = None;
     for probe_line in &probe_lines {
@@ -237,6 +255,8 @@ fn infer_sex_from_reader<R: BufRead>(
             probe_line,
             kind,
             delimiter,
+            is_gsgt,
+            &mut gsgt,
             &mut column_indexes,
             &mut comment_header,
         )?;
@@ -252,6 +272,8 @@ fn infer_sex_from_reader<R: BufRead>(
             line.trim_end_matches(['\n', '\r']),
             kind,
             delimiter,
+            is_gsgt,
+            &mut gsgt,
             &mut column_indexes,
             &mut comment_header,
         )?;
@@ -259,11 +281,14 @@ fn infer_sex_from_reader<R: BufRead>(
     Ok(classify_stats(&stats, kind))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_stats_from_line(
     stats: &mut SexStats,
     line: &str,
     kind: DetectedKind,
     delimiter: Delimiter,
+    is_gsgt: bool,
+    gsgt: &mut Option<GsgtParser>,
     column_indexes: &mut Option<DelimitedColumnIndexes>,
     comment_header: &mut Option<Vec<String>>,
 ) -> Result<(), RuntimeError> {
@@ -274,22 +299,45 @@ fn update_stats_from_line(
     match kind {
         DetectedKind::Vcf => update_vcf_stats(stats, trimmed),
         DetectedKind::GenotypeText | DetectedKind::Unknown => {
-            update_genotype_text_stats(stats, trimmed, delimiter, column_indexes, comment_header)?;
+            update_genotype_text_stats(
+                stats,
+                trimmed,
+                delimiter,
+                is_gsgt,
+                gsgt,
+                column_indexes,
+                comment_header,
+            )?;
         }
         _ => {}
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_genotype_text_stats(
     stats: &mut SexStats,
     line: &str,
     delimiter: Delimiter,
+    is_gsgt: bool,
+    gsgt: &mut Option<GsgtParser>,
     column_indexes: &mut Option<DelimitedColumnIndexes>,
     comment_header: &mut Option<Vec<String>>,
 ) -> Result<(), RuntimeError> {
-    let Some(row) = parse_streaming_row(line, delimiter, column_indexes, comment_header)? else {
-        return Ok(());
+    // GSGT SNP-array exports must normalize into the same
+    // rsid/chrom/pos/genotype row as every other SNP text export so the
+    // identical X/Y fingerprint heuristic applies regardless of source.
+    let row = if is_gsgt {
+        match gsgt.get_or_insert_with(GsgtParser::new).consume(line)? {
+            Some(row) => row,
+            None => return Ok(()),
+        }
+    } else {
+        let Some(row) = parse_streaming_row(line, delimiter, column_indexes, comment_header)?
+        else {
+            return Ok(());
+        };
+        row
     };
     let rsid = row.rsid.as_deref().unwrap_or_default();
     let chrom = normalize_chrom(row.chrom.as_deref().unwrap_or_default());
@@ -365,75 +413,6 @@ fn update_vcf_stats(stats: &mut SexStats, line: &str) {
     }
 }
 
-fn normalize_chrom(value: &str) -> String {
-    let normalized = value
-        .trim()
-        .trim_start_matches("chr")
-        .trim_start_matches("CHR")
-        .to_ascii_uppercase();
-    match normalized.as_str() {
-        "23" => "X".to_owned(),
-        "24" => "Y".to_owned(),
-        "25" => "XY".to_owned(),
-        "26" | "M" => "MT".to_owned(),
-        _ => normalized,
-    }
-}
-
-fn is_called_genotype_text(value: &str) -> bool {
-    let value = value.trim();
-    if value.is_empty() || matches!(value, "--" | "00" | "." | "./." | ".|.") {
-        return false;
-    }
-    value
-        .chars()
-        .all(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
-}
-
-fn genotype_allele_count(value: &str) -> usize {
-    value
-        .chars()
-        .filter(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
-        .count()
-}
-
-fn is_genotype_text_het(value: &str) -> bool {
-    let alleles: Vec<char> = value
-        .chars()
-        .filter(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
-        .map(|ch| ch.to_ascii_uppercase())
-        .collect();
-    alleles.len() == 2 && alleles[0] != alleles[1]
-}
-
-fn is_called_vcf_gt(value: &str) -> bool {
-    let value = value.trim();
-    !value.is_empty()
-        && !value.contains('.')
-        && (value != "0" || matches!(value, "0" | "1" | "2" | "3"))
-}
-
-fn vcf_gt_allele_count(gt: &str) -> usize {
-    gt.split(['/', '|'])
-        .filter(|part| !part.is_empty() && *part != ".")
-        .count()
-}
-
-fn is_vcf_gt_het(gt: &str) -> bool {
-    let alleles: Vec<&str> = gt
-        .split(['/', '|'])
-        .filter(|part| !part.is_empty() && *part != ".")
-        .collect();
-    alleles.len() == 2 && alleles[0] != alleles[1]
-}
-
-fn is_non_par_x(pos: u32) -> bool {
-    // Human GRCh38 non-PAR X used by bcftools +guess-ploidy.
-    // GRCh37 differs slightly, but these bounds cover the common non-PAR body
-    // and avoid both pseudoautosomal ends for this QC heuristic.
-    (2_781_480..=154_931_043).contains(&pos)
-}
-
 fn select_sex_detection_zip_entry<R: std::io::Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<String, RuntimeError> {
@@ -500,6 +479,34 @@ mod tests {
         let result = infer_sex_from_text_lines(&female, DetectedKind::GenotypeText).unwrap();
         assert_eq!(result.sex, InferredSex::Female);
         assert_eq!(result.confidence, SexDetectionConfidence::High);
+    }
+
+    #[test]
+    fn gsgt_snp_array_goes_through_the_same_y_fingerprint() {
+        // A male SNP array wrapped in the Illumina GSGT [Header]/[Data]
+        // layout must reach the identical X/Y fingerprint and classify the
+        // same as any other text export — source format is irrelevant.
+        let mut gsgt = vec![
+            "[Header]".to_owned(),
+            "GSGT Version\t2.0.5".to_owned(),
+            "[Data]".to_owned(),
+            "SNP Name\tSNP\tChr\tPosition\tAllele1 - Plus\tAllele2 - Plus".to_owned(),
+        ];
+        let mut flat = Vec::new();
+        for i in 0..600 {
+            let rsid = format!("rs{}", 700_000 + i);
+            gsgt.push(format!("{rsid}\t[A/G]\tY\t{}\tG\tG", i + 1));
+            flat.push(format!("{rsid}\tY\t{}\tG", i + 1));
+        }
+
+        let gsgt_result = infer_sex_from_text_lines(&gsgt, DetectedKind::GenotypeText).unwrap();
+        let flat_result = infer_sex_from_text_lines(&flat, DetectedKind::GenotypeText).unwrap();
+
+        assert_eq!(gsgt_result.sex, InferredSex::Male);
+        assert_eq!(gsgt_result.method, "snp_array_x_y_fingerprint");
+        // Identical heuristic outcome regardless of which export format.
+        assert_eq!(gsgt_result.sex, flat_result.sex);
+        assert_eq!(gsgt_result.confidence, flat_result.confidence);
     }
 
     #[test]

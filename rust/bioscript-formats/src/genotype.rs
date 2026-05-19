@@ -30,9 +30,10 @@ pub use cram_backend::{
     observe_cram_deletion_with_reader, observe_cram_indel_with_reader, observe_cram_snp_with_reader,
 };
 pub(crate) use delimited::{
-    COMMENT_PREFIXES, DelimitedColumnIndexes, Delimiter, detect_delimiter, parse_streaming_row,
+    COMMENT_PREFIXES, DelimitedColumnIndexes, Delimiter, GsgtParser, detect_delimiter,
+    lines_look_like_gsgt, parse_streaming_row,
 };
-use delimited::{RowParser, scan_delimited_variants};
+use delimited::{RowParser, is_no_call as gsgt_is_no_call, scan_delimited_variants};
 use io::{
     detect_source_format, is_bgzf_path, looks_like_vcf_lines, read_lines_from_reader,
     select_zip_entry,

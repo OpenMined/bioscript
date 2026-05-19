@@ -2,11 +2,12 @@ use std::{collections::HashMap, io::BufRead};
 
 use bioscript_core::{Assembly, RuntimeError};
 
-use crate::inspect::detect_assembly;
+use crate::inspect::{AssemblyAnchorScorer, detect_assembly};
 
 use super::{
-    COMMENT_PREFIXES, GenotypeSourceFormat, GenotypeStore, QueryBackend, RowParser, RsidMapBackend,
-    delimited::sanitize_evidence_line, detect_delimiter, vcf_tokens::genotype_from_vcf_gt,
+    COMMENT_PREFIXES, GenotypeSourceFormat, GenotypeStore, GsgtParser, QueryBackend, RowParser,
+    RsidMapBackend, delimited::sanitize_evidence_line, detect_delimiter, gsgt_is_no_call,
+    lines_look_like_gsgt, vcf_tokens::genotype_from_vcf_gt,
 };
 
 pub(crate) fn from_vcf_reader<R: BufRead>(
@@ -66,8 +67,15 @@ pub(crate) fn from_delimited_reader<R: BufRead>(
         }
     }
 
+    if lines_look_like_gsgt(&prelude) {
+        return from_gsgt_reader(format, &prelude, reader, &mut buf, label);
+    }
+
     let mut parser = RowParser::new(delimiter.unwrap_or(super::Delimiter::Tab));
-    let assembly = detect_assembly(&label.to_ascii_lowercase(), &prelude);
+    // Build from declared metadata first; only fall back to the rsID/locus
+    // anchor vote when the file gives us no idea (per spec / no blind guess).
+    let meta_assembly = detect_assembly(&label.to_ascii_lowercase(), &prelude);
+    let mut scorer = meta_assembly.is_none().then(AssemblyAnchorScorer::new);
     let mut values = HashMap::new();
     let mut locus_values = HashMap::new();
     let mut source_lines = HashMap::new();
@@ -78,6 +86,7 @@ pub(crate) fn from_delimited_reader<R: BufRead>(
             &mut values,
             &mut locus_values,
             &mut source_lines,
+            scorer.as_mut(),
         )?;
     }
     loop {
@@ -94,9 +103,11 @@ pub(crate) fn from_delimited_reader<R: BufRead>(
             &mut values,
             &mut locus_values,
             &mut source_lines,
+            scorer.as_mut(),
         )?;
     }
 
+    let assembly = meta_assembly.or_else(|| scorer.as_ref().and_then(AssemblyAnchorScorer::decide));
     Ok(from_rsid_map(
         format,
         values,
@@ -104,6 +115,128 @@ pub(crate) fn from_delimited_reader<R: BufRead>(
         assembly,
         source_lines,
     ))
+}
+
+struct GsgtMergeGroup {
+    chrom: String,
+    position: i64,
+    rsid: Option<String>,
+    genotypes: Vec<String>,
+    source_line: String,
+}
+
+/// GSGT loader: parse the Final Report, merge replicate probes keyed by
+/// `(chrom, pos, rsid)` (spec §5), then build the in-memory rsid/locus maps.
+fn from_gsgt_reader<R: BufRead>(
+    format: GenotypeSourceFormat,
+    prelude: &[String],
+    mut reader: R,
+    buf: &mut String,
+    label: &str,
+) -> Result<GenotypeStore, RuntimeError> {
+    let mut parser = GsgtParser::new();
+    // Insertion-ordered groups so output is deterministic.
+    let mut order: Vec<(String, i64, String)> = Vec::new();
+    let mut groups: HashMap<(String, i64, String), GsgtMergeGroup> = HashMap::new();
+
+    let ingest = |row: super::delimited::ParsedDelimitedRow,
+                  order: &mut Vec<(String, i64, String)>,
+                  groups: &mut HashMap<(String, i64, String), GsgtMergeGroup>| {
+        let (Some(chrom), Some(position)) = (row.chrom.clone(), row.position) else {
+            return;
+        };
+        let chrom_norm = chrom.trim_start_matches("chr").to_ascii_lowercase();
+        let rsid_key = row.rsid.clone().unwrap_or_default();
+        let key = (chrom_norm, position, rsid_key);
+        let entry = groups.entry(key.clone()).or_insert_with(|| {
+            order.push(key.clone());
+            GsgtMergeGroup {
+                chrom,
+                position,
+                rsid: row.rsid.clone(),
+                genotypes: Vec::new(),
+                source_line: row.raw_line.clone(),
+            }
+        });
+        entry.genotypes.push(row.genotype);
+    };
+
+    for line in prelude {
+        if let Some(row) = parser.consume(line)? {
+            ingest(row, &mut order, &mut groups);
+        }
+    }
+    loop {
+        buf.clear();
+        let bytes = reader
+            .read_line(buf)
+            .map_err(|err| RuntimeError::Io(format!("failed to read {label}: {err}")))?;
+        if bytes == 0 {
+            break;
+        }
+        if let Some(row) = parser.consume(buf.trim_end_matches(['\n', '\r']))? {
+            ingest(row, &mut order, &mut groups);
+        }
+    }
+
+    // GSGT Final Reports declare no build; try real metadata first (none
+    // here), then resolve the assembly from the rsID/locus anchor vote over
+    // the merged calls instead of blindly assuming GRCh38.
+    let meta_assembly = detect_assembly(&label.to_ascii_lowercase(), prelude);
+    let mut scorer = meta_assembly.is_none().then(AssemblyAnchorScorer::new);
+
+    let mut values = HashMap::new();
+    let mut locus_values = HashMap::new();
+    let mut source_lines = HashMap::new();
+    for key in order {
+        let group = groups.remove(&key).expect("group recorded in order exists");
+        let genotype = merge_genotypes(&group.genotypes);
+        let chrom_norm = group.chrom.trim_start_matches("chr").to_ascii_lowercase();
+        if let Some(scorer) = scorer.as_mut() {
+            scorer.observe(
+                group.rsid.as_deref().unwrap_or(""),
+                &group.chrom,
+                group.position,
+                &genotype,
+            );
+        }
+        locus_values.insert(
+            (chrom_norm, group.position),
+            (
+                genotype.clone(),
+                group.rsid.clone(),
+                group.source_line.clone(),
+            ),
+        );
+        if let Some(rsid) = group.rsid {
+            values.insert(rsid.clone(), genotype);
+            source_lines.insert(rsid, group.source_line);
+        }
+    }
+
+    let assembly = meta_assembly.or_else(|| scorer.as_ref().and_then(AssemblyAnchorScorer::decide));
+    Ok(from_rsid_map(
+        format,
+        values,
+        locus_values,
+        assembly,
+        source_lines,
+    ))
+}
+
+/// Collapse a replicate-probe group to one genotype: drop no-calls; if none
+/// remain emit a no-call; if the remaining calls all agree emit that;
+/// otherwise emit a no-call (genuine disagreement — never auto-pick).
+fn merge_genotypes(genotypes: &[String]) -> String {
+    let mut calls = genotypes.iter().filter(|g| !gsgt_is_no_call(g));
+    let Some(first) = calls.next() else {
+        return "--".to_owned();
+    };
+    if calls.all(|g| g == first) {
+        first.clone()
+    } else {
+        "--".to_owned()
+    }
 }
 
 pub(crate) fn from_vcf_lines(lines: Vec<String>) -> Result<GenotypeStore, RuntimeError> {
@@ -158,9 +291,20 @@ fn consume_delimited_line(
     values: &mut HashMap<String, String>,
     locus_values: &mut HashMap<(String, i64), (String, Option<String>, String)>,
     source_lines: &mut HashMap<String, String>,
+    scorer: Option<&mut AssemblyAnchorScorer>,
 ) -> Result<(), RuntimeError> {
     if let Some(row) = parser.consume_record(line)? {
         let source_line = sanitize_evidence_line(line);
+        if let (Some(scorer), Some(chrom), Some(position)) =
+            (scorer, row.chrom.as_ref(), row.position)
+        {
+            scorer.observe(
+                row.rsid.as_deref().unwrap_or(""),
+                chrom,
+                position,
+                &row.genotype,
+            );
+        }
         if let (Some(chrom), Some(position)) = (row.chrom.as_ref(), row.position) {
             locus_values.insert(
                 (

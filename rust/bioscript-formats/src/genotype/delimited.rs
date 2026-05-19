@@ -4,8 +4,10 @@ use bioscript_core::RuntimeError;
 
 use super::normalize_genotype;
 
+mod gsgt;
 mod scan;
 
+pub(crate) use gsgt::{GsgtParser, is_no_call, lines_look_like_gsgt};
 pub(crate) use scan::scan_delimited_variants;
 
 pub(crate) const COMMENT_PREFIXES: [&str; 2] = ["#", "//"];
