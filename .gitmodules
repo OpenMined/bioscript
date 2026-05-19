@@ -5,7 +5,7 @@
 [submodule "noodles"]
 	path = noodles
 	url = git@github.com:madhavajay/noodles.git
-	branch = madhava/streaming-slice-records
+	branch = madhava/bioscript
 [submodule "vendor/python/pysam"]
 	path = vendor/python/pysam
 	url = https://github.com/pysam-developers/pysam.git
