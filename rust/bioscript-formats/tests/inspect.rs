@@ -804,3 +804,134 @@ chr1\t100\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
     assert_eq!(inspection.detected_kind, DetectedKind::Vcf);
     assert_eq!(inspection.assembly, Some(Assembly::Grch38));
 }
+
+#[test]
+fn inspect_bytes_detects_gsgt_carigenetics_final_report() {
+    let bytes = std::fs::read(fixtures_dir().join("carigenetics_gsgt_sample.txt")).unwrap();
+    let inspection =
+        inspect_bytes("export.txt", &bytes, &InspectOptions::default()).unwrap();
+
+    assert_eq!(inspection.detected_kind, DetectedKind::GenotypeText);
+    // GSGT carries no build line but is GRCh38 (spec §2.1).
+    assert_eq!(inspection.assembly, Some(Assembly::Grch38));
+    let source = inspection.source.expect("vendor detected");
+    assert_eq!(source.vendor.as_deref(), Some("CariGenetics"));
+    assert!(
+        source
+            .evidence
+            .iter()
+            .any(|e| e.contains("GSGT [Header]/[Data] block")),
+        "evidence: {:?}",
+        source.evidence
+    );
+    // Detection works on content alone, even with a non-CariGenetics name.
+}
+
+#[test]
+fn inspect_bytes_still_detects_dynamic_dna_no_regression() {
+    let bytes =
+        std::fs::read(fixtures_dir().join("carigenetics_ddna_concordance_sample.txt")).unwrap();
+    let inspection = inspect_bytes(
+        "PC0001_X_X_GSAv3-DTC_GRCh38.txt",
+        &bytes,
+        &InspectOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(inspection.detected_kind, DetectedKind::GenotypeText);
+    let source = inspection.source.expect("vendor detected");
+    assert_eq!(source.vendor.as_deref(), Some("Dynamic DNA"));
+}
+
+// Real-file proof: the same individual's GSGT and DDNA exports must infer
+// the same sex through the identical fingerprint. Skips if private data absent.
+#[test]
+fn pc0001_gsgt_and_ddna_infer_same_sex_real_files() {
+    let dir = std::env::var_os("BIOVAULT_CARIKA_DIR")
+        .map(std::path::PathBuf::from)
+        .filter(|d| d.exists())
+        .or_else(|| {
+            let d = std::path::PathBuf::from("/Users/madhavajay/dev/my_private_data/carika");
+            d.exists().then_some(d)
+        });
+    let Some(dir) = dir else {
+        eprintln!("skipping pc0001 sex parity: BIOVAULT_CARIKA_DIR unset");
+        return;
+    };
+    let gsgt_path = dir.join("PC0001_Raw Data_Carigenetics.txt");
+    let ddna_path = dir.join("PC0001_X_X_GSAv3-DTC_GRCh38-07-29-2025.txt");
+    if !gsgt_path.exists() || !ddna_path.exists() {
+        eprintln!("skipping pc0001 sex parity: sample files missing");
+        return;
+    }
+
+    let sex = |p: &std::path::Path| {
+        let f = std::fs::File::open(p).unwrap();
+        bioscript_formats::infer_sex_from_named_reader(
+            &p.file_name().unwrap().to_string_lossy(),
+            f,
+            DetectedKind::GenotypeText,
+        )
+        .unwrap()
+    };
+    let g = sex(&gsgt_path);
+    let d = sex(&ddna_path);
+    eprintln!(
+        "PC0001 sex: gsgt={:?}/{:?}  ddna={:?}/{:?}",
+        g.sex, g.confidence, d.sex, d.confidence
+    );
+    assert_eq!(g.method, "snp_array_x_y_fingerprint");
+    assert_eq!(g.sex, d.sex, "GSGT vs DDNA inferred different sex");
+    assert_eq!(g.sex, InferredSex::Male);
+}
+
+// Gated real-file matrix: every cached vendor export must resolve to its
+// known ground-truth build (or honest unknown for build-36). Skips when the
+// local test-data cache is absent. Proves metadata->anchor priority.
+#[test]
+fn assembly_matrix_matches_ground_truth_across_vendors() {
+    let cache = std::path::PathBuf::from(std::env::var_os("HOME").unwrap())
+        .join(".bioscript/cache/test-data");
+    let carika = std::path::PathBuf::from("/Users/madhavajay/dev/my_private_data/carika");
+    if !cache.exists() {
+        eprintln!("skipping assembly_matrix: no test-data cache");
+        return;
+    }
+    use bioscript_core::Assembly::{Grch37, Grch38};
+    let cases: &[(&str, Option<bioscript_core::Assembly>)] = &[
+        ("23andme/v4/huE18D82/genome__v4_Full_2016.txt", Some(Grch37)),
+        ("23andme/v5/hu50B3F5/genome_Lisa_Fauman_v5_Full_20180326062517.txt", Some(Grch37)),
+        ("ancestrydna/huE922FC/AncestryDNA.txt", Some(Grch37)),
+        ("myheritage/hu33515F/MyHeritage_raw_dna_data.csv", Some(Grch37)),
+        ("genesforgood/hu80B047/GFG0_filtered_imputed_genotypes_noY_noMT_23andMe.txt", Some(Grch37)),
+        ("dynamicdna/100001-synthetic/100001_X_X_GSAv3-DTC_GRCh38-07-12-2025.txt", Some(Grch38)),
+        // build-36 files must NOT be misread as 37/38.
+        ("23andme/v2/hu0199C8/23data20100526.txt", None),
+        ("23andme/v3/huE4DAE4/huE4DAE4_20120522224129.txt", None),
+    ];
+    for (rel, want) in cases {
+        let path = cache.join(rel);
+        if !path.exists() {
+            eprintln!("  skip missing {rel}");
+            continue;
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        let got = inspect_bytes(rel, &bytes, &InspectOptions::default())
+            .unwrap()
+            .assembly;
+        assert_eq!(got, *want, "vendor {rel}: got {got:?} want {want:?}");
+    }
+
+    // The GSGT file declares no build; it must resolve GRCh38 via the
+    // anchor vote (not a hardcode).
+    for f in ["PC0001_Raw Data_Carigenetics.txt", "PC0159_Raw Data_Carigenetics.txt"] {
+        let p = carika.join(f);
+        if !p.exists() {
+            continue;
+        }
+        let bytes = std::fs::read(&p).unwrap();
+        let got = inspect_bytes(f, &bytes, &InspectOptions::default())
+            .unwrap()
+            .assembly;
+        assert_eq!(got, Some(Grch38), "GSGT {f} should anchor-vote GRCh38");
+    }
+}

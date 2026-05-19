@@ -1,0 +1,31 @@
+[Header]
+GSGT Version	2.0.5
+Processing Date	01/02/2030 1:23 PM
+Content		SyntheticPanel_00000000_A1.bpm
+Num SNPs	14
+Total SNPs	14
+Num Samples	1
+Total Samples	1
+File 	1 of 1
+[Data]
+Sample ID	Sample Name	SNP Name	SNP	Chr	Position	Allele1 - Top	Allele2 - Top	Allele1 - Forward	Allele2 - Forward	Allele1 - Plus	Allele2 - Plus	Allele1 - Design	Allele2 - Design	Allele1 - AB	Allele2 - AB	Plus/Minus Strand
+FAKE001		rs9000001	[A/G]	1	1000	G	G	G	G	G	G	G	G	B	B	+
+FAKE001		BOT-rs9000002	[A/G]	1	2000	A	G	A	G	A	G	A	G	A	B	-
+FAKE001		rs9000003_ilmndup1	[C/T]	1	3000	C	C	C	C	C	C	C	C	A	A	+
+FAKE001		GSA-rs9000003	[C/T]	1	3000	-	-	-	-	-	-	C	C	-	-	+
+FAKE001		rs9000004	[A/G]	2	5000	A	A	A	A	A	A	A	A	A	A	+
+FAKE001		BOT-rs9000004	[A/G]	2	5000	G	G	G	G	G	G	A	G	B	B	-
+FAKE001		2:6000	[C/T]	2	6000	C	T	C	T	C	T	C	T	A	B	+
+FAKE001		1:7000_CNV_GENEX	[A/G]	1	7000	A	A	A	A	A	A	A	A	A	A	+
+FAKE001		seq-rs9000007	[A/T]	3	8000	A	T	A	T	A	T	A	T	A	B	+
+FAKE001		1:8000-I-D_MNV	[I/D]	3	8000	I	D	I	D	I	D	I	D	A	B	+
+FAKE001		rs9000009	[A/G]	0	0	A	G	A	G	A	G	A	G	A	B	+
+FAKE001		rs9000010	[A/G]	4	0	A	G	A	G	A	G	A	G	A	B	+
+FAKE001		rs9000011	[A/G]	4	9000	-	-	-	-	-	-	A	G	-	-	+
+FAKE001		DICER1-chr14-95000000	[A/G]	14	95000000	A	A	A	A	A	A	A	A	A	A	+
+FAKE001		rs429358	[C/T]	19	44908684	C	C	C	C	C	C	C	C	A	A	+
+FAKE001		rs7412	[C/T]	19	44908822	C	C	C	C	C	C	C	C	A	A	+
+FAKE001		rs1801133	[A/G]	1	11796321	A	G	A	G	A	G	A	G	A	B	+
+FAKE001		rs53576	[A/G]	3	8762685	A	A	A	A	A	A	A	A	A	A	+
+FAKE001		rs9939609	[A/T]	16	53786615	A	T	A	T	A	T	A	T	A	B	+
+FAKE001		rs4680	[A/G]	22	19963748	G	G	G	G	G	G	G	G	A	A	+

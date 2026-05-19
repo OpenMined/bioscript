@@ -1,0 +1,8 @@
+# Synthetic Dynamic DNA (DDNA) export for the same fabricated individual as
+# carigenetics_gsgt_sample.txt. Build 38, plus strand. Values are fake.
+# rsid	chromosome	position	genotype	gs	baf	lrr
+rs9000001	1	1000	GG	0.99	1.0	0.01
+rs9000002	1	2000	AG	0.98	0.5	0.02
+rs9000003	1	3000	CC	0.97	0.0	0.00
+rs9000007	3	8000	AT	0.99	0.5	0.01
+rs9000011	4	9000	--	0.10	0.5	0.01

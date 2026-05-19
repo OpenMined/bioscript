@@ -12,6 +12,11 @@ pub(crate) fn looks_like_vcf_lines(lines: &[String]) -> bool {
 }
 
 pub(crate) fn looks_like_genotype_text(lines: &[String]) -> bool {
+    // Illumina GSGT Final Report: a [Header]/[Data] block whose data rows
+    // don't match the flat rsid/chrom/pos/genotype shape but are genotypes.
+    if detect_gsgt_final_report(lines).is_some() {
+        return true;
+    }
     let mut checked = 0usize;
     let mut valid = 0usize;
     for line in lines {
@@ -121,6 +126,7 @@ pub(crate) fn detect_source(
     let mut vendor = None;
     let mut platform_version = None;
     let mut confidence = DetectionConfidence::Unknown;
+    let gsgt_final_report = detect_gsgt_final_report(sample_lines);
 
     if normalized.contains("genes for good") || normalized.contains("geneforgood") {
         vendor = Some("Genes for Good".to_owned());
@@ -189,10 +195,22 @@ pub(crate) fn detect_source(
             DetectionConfidence::StrongHeuristic
         };
         evidence.push("sequencing.com path/header text".to_owned());
-    } else if normalized.contains("carigenetics") || normalized.contains("cari genetics") {
+    } else if normalized.contains("carigenetics")
+        || normalized.contains("cari genetics")
+        || gsgt_final_report.is_some()
+    {
         vendor = Some("CariGenetics".to_owned());
         confidence = DetectionConfidence::StrongHeuristic;
-        evidence.push("CariGenetics path/header text".to_owned());
+        if normalized.contains("carigenetics") || normalized.contains("cari genetics") {
+            evidence.push("CariGenetics path/header text".to_owned());
+        }
+        if let Some(report) = gsgt_final_report {
+            evidence.push("GSGT [Header]/[Data] block".to_owned());
+            if report.platform_version.is_some() {
+                evidence.push("GSGT Version / .bpm manifest".to_owned());
+            }
+            platform_version = report.platform_version;
+        }
     }
 
     vendor.map(|vendor| SourceMetadata {
@@ -201,6 +219,50 @@ pub(crate) fn detect_source(
         confidence,
         evidence,
     })
+}
+
+/// A detected Illumina `GenomeStudio` GSGT Final Report.
+struct GsgtReport {
+    /// `.bpm` manifest stem or `GSGT Version`, when present.
+    platform_version: Option<String>,
+}
+
+/// Detect an Illumina `GenomeStudio` GSGT Final Report by its
+/// `[Header]` … `[Data]` block.
+fn detect_gsgt_final_report(sample_lines: &[String]) -> Option<GsgtReport> {
+    let mut saw_header = false;
+    let mut saw_data = false;
+    let mut version: Option<String> = None;
+    for line in sample_lines {
+        let trimmed = line.trim();
+        if trimmed.eq_ignore_ascii_case("[header]") {
+            saw_header = true;
+        } else if trimmed.eq_ignore_ascii_case("[data]") {
+            saw_data = true;
+        } else if version.is_none() {
+            let lower = trimmed.to_ascii_lowercase();
+            if let Some(rest) = lower.strip_prefix("content") {
+                if let Some(bpm) = rest
+                    .split_whitespace()
+                    .find(|tok| tok.ends_with(".bpm"))
+                {
+                    version = Some(bpm.trim_end_matches(".bpm").to_owned());
+                }
+            } else if lower.starts_with("gsgt version") {
+                version = trimmed
+                    .split_whitespace()
+                    .last()
+                    .map(|v| format!("GSGT-{v}"));
+            }
+        }
+    }
+    if saw_header && saw_data {
+        Some(GsgtReport {
+            platform_version: version,
+        })
+    } else {
+        None
+    }
 }
 
 fn extract_after_marker(text: &str, marker: &str) -> Option<String> {
@@ -251,6 +313,8 @@ pub(crate) fn detect_assembly(lower_name: &str, sample_lines: &[String]) -> Opti
         || combined.contains("##contig=<id=chrx,length=156040895")
         || combined.contains("##contig=<id=x,length=156040895");
 
+    // Metadata-only: a GSGT Final Report declares no build, so it is left
+    // unknown here and resolved by the rsID/locus anchor vote downstream.
     if looks_like_grch38 {
         Some(Assembly::Grch38)
     } else if combined.contains("build 37")
