@@ -122,7 +122,9 @@ fn split_tab(line: &str) -> Vec<&str> {
 fn resolve_columns(header: &[&str]) -> Result<GsgtColumns, RuntimeError> {
     let find = |want: &str| header.iter().position(|h| normalize_name(h) == want);
     let snp_name = find("snpname");
-    let chr = find("chr").or_else(|| find("chromosome")).or_else(|| find("chrom"));
+    let chr = find("chr")
+        .or_else(|| find("chromosome"))
+        .or_else(|| find("chrom"));
     let position = find("position").or_else(|| find("pos"));
     let allele1_plus = find("allele1plus");
     let allele2_plus = find("allele2plus");
@@ -143,11 +145,7 @@ fn resolve_columns(header: &[&str]) -> Result<GsgtColumns, RuntimeError> {
     }
 }
 
-fn extract_row(
-    line: &str,
-    fields: &[&str],
-    cols: &GsgtColumns,
-) -> Option<ParsedDelimitedRow> {
+fn extract_row(line: &str, fields: &[&str], cols: &GsgtColumns) -> Option<ParsedDelimitedRow> {
     let snp_name = fields.get(cols.snp_name).copied().unwrap_or("");
     let rsid = extract_rsid(snp_name);
 
@@ -217,8 +215,14 @@ mod tests {
             extract_rsid("rs111647200_ilmndup1").as_deref(),
             Some("rs111647200")
         );
-        assert_eq!(extract_rsid("GSA-rs61660502").as_deref(), Some("rs61660502"));
-        assert_eq!(extract_rsid("seq-rs786202193").as_deref(), Some("rs786202193"));
+        assert_eq!(
+            extract_rsid("GSA-rs61660502").as_deref(),
+            Some("rs61660502")
+        );
+        assert_eq!(
+            extract_rsid("seq-rs786202193").as_deref(),
+            Some("rs786202193")
+        );
         // No rs id: chr:pos, CNV, MNV, vendor/clinical.
         assert_eq!(extract_rsid("1:103380393"), None);
         assert_eq!(extract_rsid("1:159174749-C-T"), None);
@@ -241,7 +245,15 @@ mod tests {
         p
     }
 
-    fn row(p: &mut GsgtParser, snp_name: &str, snp: &str, chr: &str, pos: &str, a1: &str, a2: &str) -> Option<ParsedDelimitedRow> {
+    fn row(
+        p: &mut GsgtParser,
+        snp_name: &str,
+        snp: &str,
+        chr: &str,
+        pos: &str,
+        a1: &str,
+        a2: &str,
+    ) -> Option<ParsedDelimitedRow> {
         let line = format!("S1\t\t{snp_name}\t{snp}\t{chr}\t{pos}\tX\tX\t{a1}\t{a2}\t+");
         p.consume(&line).unwrap()
     }

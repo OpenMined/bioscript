@@ -36,8 +36,22 @@ const ANCHORS: &[Anchor] = &[
     ("rs1799971", "6", 154_402_490, 154_360_797, 154_039_662, "A"),
     ("rs662", "7", 94_775_382, 94_937_446, 95_308_134, "CT"),
     ("rs505922", "9", 135_139_050, 136_149_229, 133_273_813, "CT"),
-    ("rs7903146", "10", 114_748_339, 114_758_349, 112_998_590, "C"),
-    ("rs1800497", "11", 112_776_038, 113_270_828, 113_400_106, "G"),
+    (
+        "rs7903146",
+        "10",
+        114_748_339,
+        114_758_349,
+        112_998_590,
+        "C",
+    ),
+    (
+        "rs1800497",
+        "11",
+        112_776_038,
+        113_270_828,
+        113_400_106,
+        "G",
+    ),
     ("rs671", "12", 110_726_149, 112_241_766, 111_803_962, "G"),
     ("rs12913832", "15", 26_039_213, 28_365_618, 28_120_472, "AG"),
     ("rs1051730", "15", 76_681_394, 78_894_339, 78_601_997, "G"),
@@ -70,7 +84,10 @@ fn complement(base: u8) -> Option<u8> {
 /// Normalize a chromosome label to bare form (`chr7` -> `7`, `23` -> `X`).
 fn norm_chrom(raw: &str) -> String {
     let c = raw.trim();
-    let c = c.strip_prefix("chr").or_else(|| c.strip_prefix("CHR")).unwrap_or(c);
+    let c = c
+        .strip_prefix("chr")
+        .or_else(|| c.strip_prefix("CHR"))
+        .unwrap_or(c);
     match c.to_ascii_uppercase().as_str() {
         "23" => "X".to_owned(),
         "24" => "Y".to_owned(),
@@ -91,7 +108,10 @@ fn allele_ok(genotype: &str, anchor_alleles: &str) -> bool {
     if observed.is_empty() {
         return true;
     }
-    let fwd: Vec<u8> = anchor_alleles.bytes().map(|b| b.to_ascii_uppercase()).collect();
+    let fwd: Vec<u8> = anchor_alleles
+        .bytes()
+        .map(|b| b.to_ascii_uppercase())
+        .collect();
     let rev: Vec<u8> = fwd.iter().filter_map(|b| complement(*b)).collect();
     let subset = |set: &[u8]| observed.iter().all(|o| set.contains(o));
     subset(&fwd) || subset(&rev)
@@ -203,11 +223,7 @@ pub(crate) fn assembly_from_text_bytes(bytes: &[u8]) -> Option<Assembly> {
                 }
             }
             Mode::GsgtHdr => {
-                let norm = |s: &str| {
-                    s.trim()
-                        .to_ascii_lowercase()
-                        .replace([' ', '-', '_'], "")
-                };
+                let norm = |s: &str| s.trim().to_ascii_lowercase().replace([' ', '-', '_'], "");
                 let h: Vec<String> = line.split('\t').map(norm).collect();
                 let idx = |w: &str| h.iter().position(|x| x == w);
                 match (

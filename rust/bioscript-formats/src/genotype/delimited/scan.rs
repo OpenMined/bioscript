@@ -86,10 +86,10 @@ fn prescan_assembly_anchors(
         let mut ch: Option<Vec<String>> = None;
         let mut gsgt = GsgtParser::new();
         let feed = |line: &str,
-                        scorer: &mut AssemblyAnchorScorer,
-                        gsgt: &mut GsgtParser,
-                        ci: &mut Option<DelimitedColumnIndexes>,
-                        ch: &mut Option<Vec<String>>|
+                    scorer: &mut AssemblyAnchorScorer,
+                    gsgt: &mut GsgtParser,
+                    ci: &mut Option<DelimitedColumnIndexes>,
+                    ch: &mut Option<Vec<String>>|
          -> Result<(), RuntimeError> {
             let row = if is_gsgt {
                 gsgt.consume(line)?

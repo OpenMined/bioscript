@@ -15,11 +15,16 @@ use crate::genotype::{
 use super::{DetectedKind, InspectOptions};
 
 mod alignment_depth;
+mod calls;
 mod classify;
 
 pub use alignment_depth::infer_sex_from_alignment_reader;
 
 pub(crate) use alignment_depth::infer_sex_from_alignment_path;
+use calls::{
+    genotype_allele_count, is_called_genotype_text, is_called_vcf_gt, is_genotype_text_het,
+    is_non_par_x, is_vcf_gt_het, normalize_chrom, vcf_gt_allele_count,
+};
 use classify::{classify_stats, supports_sex_detection, unsupported_sex_inference};
 
 const MAX_SEX_DETECTION_LINES: usize = 50_000_000;
@@ -295,7 +300,13 @@ fn update_stats_from_line(
         DetectedKind::Vcf => update_vcf_stats(stats, trimmed),
         DetectedKind::GenotypeText | DetectedKind::Unknown => {
             update_genotype_text_stats(
-                stats, trimmed, delimiter, is_gsgt, gsgt, column_indexes, comment_header,
+                stats,
+                trimmed,
+                delimiter,
+                is_gsgt,
+                gsgt,
+                column_indexes,
+                comment_header,
             )?;
         }
         _ => {}
@@ -402,75 +413,6 @@ fn update_vcf_stats(stats: &mut SexStats, line: &str) {
     }
 }
 
-fn normalize_chrom(value: &str) -> String {
-    let normalized = value
-        .trim()
-        .trim_start_matches("chr")
-        .trim_start_matches("CHR")
-        .to_ascii_uppercase();
-    match normalized.as_str() {
-        "23" => "X".to_owned(),
-        "24" => "Y".to_owned(),
-        "25" => "XY".to_owned(),
-        "26" | "M" => "MT".to_owned(),
-        _ => normalized,
-    }
-}
-
-fn is_called_genotype_text(value: &str) -> bool {
-    let value = value.trim();
-    if value.is_empty() || matches!(value, "--" | "00" | "." | "./." | ".|.") {
-        return false;
-    }
-    value
-        .chars()
-        .all(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
-}
-
-fn genotype_allele_count(value: &str) -> usize {
-    value
-        .chars()
-        .filter(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
-        .count()
-}
-
-fn is_genotype_text_het(value: &str) -> bool {
-    let alleles: Vec<char> = value
-        .chars()
-        .filter(|ch| matches!(ch.to_ascii_uppercase(), 'A' | 'C' | 'G' | 'T'))
-        .map(|ch| ch.to_ascii_uppercase())
-        .collect();
-    alleles.len() == 2 && alleles[0] != alleles[1]
-}
-
-fn is_called_vcf_gt(value: &str) -> bool {
-    let value = value.trim();
-    !value.is_empty()
-        && !value.contains('.')
-        && (value != "0" || matches!(value, "0" | "1" | "2" | "3"))
-}
-
-fn vcf_gt_allele_count(gt: &str) -> usize {
-    gt.split(['/', '|'])
-        .filter(|part| !part.is_empty() && *part != ".")
-        .count()
-}
-
-fn is_vcf_gt_het(gt: &str) -> bool {
-    let alleles: Vec<&str> = gt
-        .split(['/', '|'])
-        .filter(|part| !part.is_empty() && *part != ".")
-        .collect();
-    alleles.len() == 2 && alleles[0] != alleles[1]
-}
-
-fn is_non_par_x(pos: u32) -> bool {
-    // Human GRCh38 non-PAR X used by bcftools +guess-ploidy.
-    // GRCh37 differs slightly, but these bounds cover the common non-PAR body
-    // and avoid both pseudoautosomal ends for this QC heuristic.
-    (2_781_480..=154_931_043).contains(&pos)
-}
-
 fn select_sex_detection_zip_entry<R: std::io::Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<String, RuntimeError> {
@@ -557,10 +499,8 @@ mod tests {
             flat.push(format!("{rsid}\tY\t{}\tG", i + 1));
         }
 
-        let gsgt_result =
-            infer_sex_from_text_lines(&gsgt, DetectedKind::GenotypeText).unwrap();
-        let flat_result =
-            infer_sex_from_text_lines(&flat, DetectedKind::GenotypeText).unwrap();
+        let gsgt_result = infer_sex_from_text_lines(&gsgt, DetectedKind::GenotypeText).unwrap();
+        let flat_result = infer_sex_from_text_lines(&flat, DetectedKind::GenotypeText).unwrap();
 
         assert_eq!(gsgt_result.sex, InferredSex::Male);
         assert_eq!(gsgt_result.method, "snp_array_x_y_fingerprint");

@@ -328,10 +328,7 @@ fn pc0001_gsgt_matches_ddna_real_files() {
         if !rsid.starts_with("rs") {
             continue;
         }
-        let (Some(g), Some(d)) = (
-            gsgt.get(rsid).unwrap(),
-            ddna.get(rsid).unwrap(),
-        ) else {
+        let (Some(g), Some(d)) = (gsgt.get(rsid).unwrap(), ddna.get(rsid).unwrap()) else {
             continue;
         };
         if !is_acgt_call(&g) || !is_acgt_call(&d) {

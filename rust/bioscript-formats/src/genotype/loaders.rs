@@ -140,8 +140,8 @@ fn from_gsgt_reader<R: BufRead>(
     let mut groups: HashMap<(String, i64, String), GsgtMergeGroup> = HashMap::new();
 
     let ingest = |row: super::delimited::ParsedDelimitedRow,
-                      order: &mut Vec<(String, i64, String)>,
-                      groups: &mut HashMap<(String, i64, String), GsgtMergeGroup>| {
+                  order: &mut Vec<(String, i64, String)>,
+                  groups: &mut HashMap<(String, i64, String), GsgtMergeGroup>| {
         let (Some(chrom), Some(position)) = (row.chrom.clone(), row.position) else {
             return;
         };

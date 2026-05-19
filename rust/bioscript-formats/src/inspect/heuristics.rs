@@ -242,10 +242,7 @@ fn detect_gsgt_final_report(sample_lines: &[String]) -> Option<GsgtReport> {
         } else if version.is_none() {
             let lower = trimmed.to_ascii_lowercase();
             if let Some(rest) = lower.strip_prefix("content") {
-                if let Some(bpm) = rest
-                    .split_whitespace()
-                    .find(|tok| tok.ends_with(".bpm"))
-                {
+                if let Some(bpm) = rest.split_whitespace().find(|tok| tok.ends_with(".bpm")) {
                     version = Some(bpm.trim_end_matches(".bpm").to_owned());
                 }
             } else if lower.starts_with("gsgt version") {

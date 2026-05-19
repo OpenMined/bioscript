@@ -808,8 +808,7 @@ chr1\t100\trs1\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
 #[test]
 fn inspect_bytes_detects_gsgt_carigenetics_final_report() {
     let bytes = std::fs::read(fixtures_dir().join("carigenetics_gsgt_sample.txt")).unwrap();
-    let inspection =
-        inspect_bytes("export.txt", &bytes, &InspectOptions::default()).unwrap();
+    let inspection = inspect_bytes("export.txt", &bytes, &InspectOptions::default()).unwrap();
 
     assert_eq!(inspection.detected_kind, DetectedKind::GenotypeText);
     // GSGT carries no build line but is GRCh38 (spec §2.1).
@@ -889,6 +888,7 @@ fn pc0001_gsgt_and_ddna_infer_same_sex_real_files() {
 // local test-data cache is absent. Proves metadata->anchor priority.
 #[test]
 fn assembly_matrix_matches_ground_truth_across_vendors() {
+    use bioscript_core::Assembly::{Grch37, Grch38};
     let cache = std::path::PathBuf::from(std::env::var_os("HOME").unwrap())
         .join(".bioscript/cache/test-data");
     let carika = std::path::PathBuf::from("/Users/madhavajay/dev/my_private_data/carika");
@@ -896,14 +896,25 @@ fn assembly_matrix_matches_ground_truth_across_vendors() {
         eprintln!("skipping assembly_matrix: no test-data cache");
         return;
     }
-    use bioscript_core::Assembly::{Grch37, Grch38};
     let cases: &[(&str, Option<bioscript_core::Assembly>)] = &[
         ("23andme/v4/huE18D82/genome__v4_Full_2016.txt", Some(Grch37)),
-        ("23andme/v5/hu50B3F5/genome_Lisa_Fauman_v5_Full_20180326062517.txt", Some(Grch37)),
+        (
+            "23andme/v5/hu50B3F5/genome_Lisa_Fauman_v5_Full_20180326062517.txt",
+            Some(Grch37),
+        ),
         ("ancestrydna/huE922FC/AncestryDNA.txt", Some(Grch37)),
-        ("myheritage/hu33515F/MyHeritage_raw_dna_data.csv", Some(Grch37)),
-        ("genesforgood/hu80B047/GFG0_filtered_imputed_genotypes_noY_noMT_23andMe.txt", Some(Grch37)),
-        ("dynamicdna/100001-synthetic/100001_X_X_GSAv3-DTC_GRCh38-07-12-2025.txt", Some(Grch38)),
+        (
+            "myheritage/hu33515F/MyHeritage_raw_dna_data.csv",
+            Some(Grch37),
+        ),
+        (
+            "genesforgood/hu80B047/GFG0_filtered_imputed_genotypes_noY_noMT_23andMe.txt",
+            Some(Grch37),
+        ),
+        (
+            "dynamicdna/100001-synthetic/100001_X_X_GSAv3-DTC_GRCh38-07-12-2025.txt",
+            Some(Grch38),
+        ),
         // build-36 files must NOT be misread as 37/38.
         ("23andme/v2/hu0199C8/23data20100526.txt", None),
         ("23andme/v3/huE4DAE4/huE4DAE4_20120522224129.txt", None),
@@ -923,7 +934,10 @@ fn assembly_matrix_matches_ground_truth_across_vendors() {
 
     // The GSGT file declares no build; it must resolve GRCh38 via the
     // anchor vote (not a hardcode).
-    for f in ["PC0001_Raw Data_Carigenetics.txt", "PC0159_Raw Data_Carigenetics.txt"] {
+    for f in [
+        "PC0001_Raw Data_Carigenetics.txt",
+        "PC0159_Raw Data_Carigenetics.txt",
+    ] {
         let p = carika.join(f);
         if !p.exists() {
             continue;

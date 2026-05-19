@@ -184,9 +184,12 @@ pub fn inspect_bytes(
     // Declared metadata first; fall back to the rsID/locus anchor vote over
     // the buffer only when the file declares no build (e.g. a GSGT report).
     let assembly = detect_assembly(&inspection_context, &sample_lines).or_else(|| {
-        matches!(detected_kind, DetectedKind::GenotypeText | DetectedKind::Vcf)
-            .then(|| assembly_from_text_bytes(bytes))
-            .flatten()
+        matches!(
+            detected_kind,
+            DetectedKind::GenotypeText | DetectedKind::Vcf
+        )
+        .then(|| assembly_from_text_bytes(bytes))
+        .flatten()
     });
     let phased = (detected_kind == DetectedKind::Vcf)
         .then(|| detect_vcf_phasing(&sample_lines))
@@ -291,9 +294,16 @@ pub fn inspect_file(path: &Path, options: &InspectOptions) -> Result<FileInspect
     // Declared metadata first; anchor-vote the build from the file only when
     // it declares none.
     let assembly = detect_assembly(&inspection_context, &sample_lines).or_else(|| {
-        matches!(detected_kind, DetectedKind::GenotypeText | DetectedKind::Vcf)
-            .then(|| std::fs::read(path).ok().and_then(|b| assembly_from_text_bytes(&b)))
-            .flatten()
+        matches!(
+            detected_kind,
+            DetectedKind::GenotypeText | DetectedKind::Vcf
+        )
+        .then(|| {
+            std::fs::read(path)
+                .ok()
+                .and_then(|b| assembly_from_text_bytes(&b))
+        })
+        .flatten()
     });
     let phased = (detected_kind == DetectedKind::Vcf)
         .then(|| detect_vcf_phasing(&sample_lines))
