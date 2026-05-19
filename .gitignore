@@ -81,3 +81,4 @@ examples/**/.nextflow*
 # Read-only reference material (htslib/rust-htslib source trees used during
 # the CRAM/noodles migration; not part of the build).
 context/
+/repos/
