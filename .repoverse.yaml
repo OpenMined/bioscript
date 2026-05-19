@@ -1,0 +1,17 @@
+version: 1
+defaults:
+  remote: github
+  revision: main
+  scheme: ssh
+remotes:
+  github:
+    host: github.com
+projects:
+- name: self
+  path: .
+  shared:
+  - name: madhavajay/htslib-rs
+    path: vendor/rust/htslib-rs
+  - name: madhavajay/noodles
+    path: noodles
+    revision: madhava/bioscript
