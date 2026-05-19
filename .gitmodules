@@ -27,6 +27,7 @@
 [submodule "vendor/rust/htslib-rs"]
 	path = vendor/rust/htslib-rs
 	url = git@github.com:madhavajay/htslib-rs.git
+	branch = main
 [submodule "vendor/rust/bcftools-rs"]
 	path = vendor/rust/bcftools-rs
 	url = git@github.com:madhavajay/bcftools-rs.git
