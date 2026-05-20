@@ -178,7 +178,7 @@ where
         selected_containers,
         allow_reference_md5_mismatch,
         &mut |record| {
-            let alignment_record = build_alignment_record_from_cram(label, &record)?;
+            let alignment_record = build_alignment_record_from_cram(label, record)?;
             on_record(alignment_record)
         },
     )

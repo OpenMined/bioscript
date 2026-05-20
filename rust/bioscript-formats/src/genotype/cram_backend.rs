@@ -383,7 +383,7 @@ pub(super) fn snp_pileup_with_reader<R: Read + Seek>(
             }
 
             let Some((base, base_quality)) =
-                cram_base_quality_at_reference_position(&record, target_position, reference_base)?
+                cram_base_quality_at_reference_position(record, target_position, reference_base)?
             else {
                 return Ok(true);
             };

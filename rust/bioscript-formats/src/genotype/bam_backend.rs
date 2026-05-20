@@ -476,50 +476,10 @@ fn indel_alternate_lengths(variant: &VariantSpec, fallback_alternate: &str) -> V
     lengths
 }
 
-fn read_bam_header<R: Read + Seek>(
-    reader: &mut noodles::bam::io::indexed_reader::IndexedReader<noodles::bgzf::io::Reader<R>>,
-    label: &str,
-) -> Result<noodles::sam::Header, RuntimeError> {
-    reader
-        .get_mut()
-        .seek(noodles::bgzf::VirtualPosition::MIN)
-        .map_err(|err| RuntimeError::Io(format!("failed to rewind BAM {label}: {err}")))?;
-    reader
-        .read_header()
-        .map_err(|err| RuntimeError::Io(format!("failed to read BAM header {label}: {err}")))
-}
-
-fn bam_region(
-    header: &noodles::sam::Header,
-    locus: &GenomicLocus,
-) -> Result<noodles::core::Region, RuntimeError> {
-    let chrom = resolve_bam_reference_name(header, &locus.chrom).ok_or_else(|| {
-        RuntimeError::Unsupported(format!(
-            "indexed BAM does not contain contig {} for {}:{}-{}",
-            locus.chrom, locus.chrom, locus.start, locus.end
-        ))
-    })?;
-    format!("{chrom}:{}-{}", locus.start, locus.end)
-        .parse()
-        .map_err(|err| RuntimeError::Io(format!("invalid BAM query region: {err}")))
-}
-
-fn resolve_bam_reference_name(header: &noodles::sam::Header, chrom: &str) -> Option<String> {
-    let candidates = [
-        chrom.to_owned(),
-        format!("chr{chrom}"),
-        chrom.trim_start_matches("chr").to_owned(),
-    ];
-    candidates.into_iter().find(|candidate| {
-        header.reference_sequences().iter().any(|(name, _)| {
-            let name_bytes: &[u8] = name.as_ref();
-            name_bytes == candidate.as_bytes()
-        })
-    })
-}
-
 #[path = "bam_backend/pileup.rs"]
 mod pileup;
+#[path = "bam_backend/query.rs"]
+mod query;
 
 use pileup::{
     BamSnpPileupCounts, bam_alignment_record, bam_base_quality_at_reference_position,
@@ -527,3 +487,4 @@ use pileup::{
     describe_snp_decision_rule, indel_at_anchor, infer_copy_number_genotype, infer_snp_genotype,
     normalize_pileup_base, record_overlaps_locus, spans_position,
 };
+use query::{bam_region, read_bam_header};

@@ -92,21 +92,7 @@ pub fn app_observation_from_manifest_row(input: AppObservationInput<'_>) -> serd
         genotype_display = normalized_display;
     }
     let weak_indel_match = is_weak_delimited_indel_match(row, &manifest, &genotype_display);
-    let assembly = row
-        .get("assembly")
-        .filter(|value| !value.is_empty())
-        .cloned()
-        .or_else(|| fallback_assembly.map(assembly_row_value))
-        .unwrap_or_default();
-    let locus = if assembly.eq_ignore_ascii_case("grch37") {
-        manifest.spec.grch37.as_ref()
-    } else {
-        manifest
-            .spec
-            .grch38
-            .as_ref()
-            .or(manifest.spec.grch37.as_ref())
-    };
+    let (assembly, locus) = observation_assembly_and_locus(row, &manifest, fallback_assembly);
     let chrom = locus.map_or(String::new(), |locus| locus.chrom.clone());
     reportable_alt = select_observed_reportable_alt(
         &genotype_display,
@@ -178,6 +164,29 @@ pub fn app_observation_from_manifest_row(input: AppObservationInput<'_>) -> serd
         weak_indel_match,
         zygosity,
     })
+}
+
+fn observation_assembly_and_locus<'a>(
+    row: &BTreeMap<String, String>,
+    manifest: &'a VariantManifest,
+    fallback_assembly: Option<Assembly>,
+) -> (String, Option<&'a GenomicLocus>) {
+    let assembly = row
+        .get("assembly")
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .or_else(|| fallback_assembly.map(assembly_row_value))
+        .unwrap_or_default();
+    let locus = if assembly.eq_ignore_ascii_case("grch37") {
+        manifest.spec.grch37.as_ref()
+    } else {
+        manifest
+            .spec
+            .grch38
+            .as_ref()
+            .or(manifest.spec.grch37.as_ref())
+    };
+    (assembly, locus)
 }
 
 fn select_observed_reportable_alt(
