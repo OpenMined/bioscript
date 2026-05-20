@@ -68,13 +68,22 @@ impl bioscript_reporting::ReportWorkspace for PackageWorkspace {
         fallback_assembly: Option<Assembly>,
     ) -> Result<serde_json::Value, String> {
         let row_path = row.get("path").cloned().unwrap_or_default();
-        let (manifest, gene, source, observed_alt_alleles) = if row_path.contains('#') {
+        let (manifest, gene, source, alt_alleles, observed_alt_alleles) = if row_path.contains('#') {
             let task = bioscript_reporting::load_variant_manifest_task_by_path(self, &row_path)?;
+            let alt_alleles = task
+                .manifest
+                .spec
+                .alternate
+                .clone()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let observed_alt_alleles = task.manifest.spec.observed_alternates.clone();
             (
                 task.manifest,
                 String::new(),
                 serde_json::Value::Null,
-                Vec::new(),
+                alt_alleles,
+                observed_alt_alleles,
             )
         } else {
             let manifest = self
@@ -85,6 +94,7 @@ impl bioscript_reporting::ReportWorkspace for PackageWorkspace {
                 manifest,
                 yaml_string(&value, "gene").unwrap_or_default(),
                 variant_primary_source_from_yaml(&value),
+                variant_alt_alleles_from_yaml(&value),
                 variant_observed_alt_alleles_from_yaml(&value),
             )
         };
@@ -96,6 +106,7 @@ impl bioscript_reporting::ReportWorkspace for PackageWorkspace {
                 manifest,
                 gene,
                 source,
+                alt_alleles,
                 observed_alt_alleles,
                 inferred_sex,
                 fallback_assembly,
