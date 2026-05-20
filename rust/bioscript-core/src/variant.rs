@@ -31,6 +31,7 @@ pub struct VariantSpec {
     pub grch38_assembly_ref: Option<String>,
     pub reference: Option<String>,
     pub alternate: Option<String>,
+    pub observed_alternates: Vec<String>,
     pub kind: Option<VariantKind>,
     pub deletion_length: Option<usize>,
     pub motifs: Vec<String>,

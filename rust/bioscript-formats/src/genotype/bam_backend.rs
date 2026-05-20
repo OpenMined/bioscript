@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::File,
     io::{Read, Seek},
 };
@@ -113,6 +113,7 @@ pub fn observe_bam_variant<R: Read + Seek>(
                 &locus,
                 ref_char,
                 alt_char,
+                &variant.observed_alternates,
                 variant.rsids.first().cloned(),
                 assembly,
             )
@@ -133,12 +134,14 @@ pub fn observe_bam_variant<R: Read + Seek>(
                     variant.rsids.first().map_or("variant", String::as_str)
                 ))
             })?;
+            let alternate_lengths = indel_alternate_lengths(variant, alternate);
             observe_bam_indel_with_reader(
                 reader,
                 label,
                 &locus,
                 reference,
                 alternate,
+                &alternate_lengths,
                 variant.rsids.first().cloned(),
                 assembly,
             )
@@ -156,7 +159,8 @@ fn observe_bam_snp_with_reader<R: Read + Seek>(
     label: &str,
     locus: &GenomicLocus,
     reference: char,
-    alternate: char,
+    mut alternate: char,
+    observed_alternates: &[String],
     matched_rsid: Option<String>,
     assembly: Option<Assembly>,
 ) -> Result<VariantObservation, RuntimeError> {
@@ -242,6 +246,14 @@ fn observe_bam_snp_with_reader<R: Read + Seek>(
         }
     }
 
+    alternate = select_observed_snp_alternate(
+        reference,
+        alternate,
+        observed_alternates,
+        &counts.filtered_base_counts,
+        &counts.raw_base_counts,
+    );
+    recount_bam_snp_counts(&mut counts, reference, alternate);
     let ref_count = counts.filtered_ref_count;
     let alt_count = counts.filtered_alt_count;
     let depth = counts.filtered_depth;
@@ -263,6 +275,53 @@ fn observe_bam_snp_with_reader<R: Read + Seek>(
         )),
         evidence,
     })
+}
+
+fn select_observed_snp_alternate(
+    reference: char,
+    preferred_alternate: char,
+    observed_alternates: &[String],
+    filtered_base_counts: &BTreeMap<String, u32>,
+    raw_base_counts: &BTreeMap<String, u32>,
+) -> char {
+    let preferred_alternate = preferred_alternate.to_ascii_uppercase();
+    let reference = reference.to_ascii_uppercase();
+    let mut candidates = BTreeSet::from([preferred_alternate]);
+    candidates.extend(
+        observed_alternates
+            .iter()
+            .filter_map(|alt| alt.trim().chars().next())
+            .map(|alt| alt.to_ascii_uppercase())
+            .filter(|alt| *alt != reference),
+    );
+    candidates
+        .into_iter()
+        .max_by_key(|candidate| {
+            let key = candidate.to_string();
+            (
+                filtered_base_counts.get(&key).copied().unwrap_or(0),
+                raw_base_counts.get(&key).copied().unwrap_or(0),
+                u8::from(*candidate == preferred_alternate),
+            )
+        })
+        .unwrap_or(preferred_alternate)
+}
+
+fn recount_bam_snp_counts(counts: &mut BamSnpPileupCounts, reference: char, alternate: char) {
+    let reference = reference.to_ascii_uppercase().to_string();
+    let alternate = alternate.to_ascii_uppercase().to_string();
+    counts.filtered_ref_count = counts
+        .filtered_base_counts
+        .get(&reference)
+        .copied()
+        .unwrap_or(0);
+    counts.filtered_alt_count = counts
+        .filtered_base_counts
+        .get(&alternate)
+        .copied()
+        .unwrap_or(0);
+    counts.raw_ref_count = counts.raw_base_counts.get(&reference).copied().unwrap_or(0);
+    counts.raw_alt_count = counts.raw_base_counts.get(&alternate).copied().unwrap_or(0);
 }
 
 fn observe_bam_deletion_with_reader<R: Read + Seek>(
@@ -334,6 +393,7 @@ fn observe_bam_indel_with_reader<R: Read + Seek>(
     locus: &GenomicLocus,
     reference: &str,
     alternate: &str,
+    alternate_lengths: &[usize],
     matched_rsid: Option<String>,
     assembly: Option<Assembly>,
 ) -> Result<VariantObservation, RuntimeError> {
@@ -354,8 +414,12 @@ fn observe_bam_indel_with_reader<R: Read + Seek>(
         if alignment_record.is_unmapped || !record_overlaps_locus(&alignment_record, locus) {
             continue;
         }
-        let classification =
-            classify_expected_indel(&alignment_record, locus, reference.len(), alternate)?;
+        let classification = classify_expected_indel_lengths(
+            &alignment_record,
+            locus,
+            reference.len(),
+            alternate_lengths,
+        )?;
         if !classification.covering {
             continue;
         }
@@ -397,54 +461,30 @@ fn observe_bam_indel_with_reader<R: Read + Seek>(
     })
 }
 
-fn read_bam_header<R: Read + Seek>(
-    reader: &mut noodles::bam::io::indexed_reader::IndexedReader<noodles::bgzf::io::Reader<R>>,
-    label: &str,
-) -> Result<noodles::sam::Header, RuntimeError> {
-    reader
-        .get_mut()
-        .seek(noodles::bgzf::VirtualPosition::MIN)
-        .map_err(|err| RuntimeError::Io(format!("failed to rewind BAM {label}: {err}")))?;
-    reader
-        .read_header()
-        .map_err(|err| RuntimeError::Io(format!("failed to read BAM header {label}: {err}")))
-}
-
-fn bam_region(
-    header: &noodles::sam::Header,
-    locus: &GenomicLocus,
-) -> Result<noodles::core::Region, RuntimeError> {
-    let chrom = resolve_bam_reference_name(header, &locus.chrom).ok_or_else(|| {
-        RuntimeError::Unsupported(format!(
-            "indexed BAM does not contain contig {} for {}:{}-{}",
-            locus.chrom, locus.chrom, locus.start, locus.end
-        ))
-    })?;
-    format!("{chrom}:{}-{}", locus.start, locus.end)
-        .parse()
-        .map_err(|err| RuntimeError::Io(format!("invalid BAM query region: {err}")))
-}
-
-fn resolve_bam_reference_name(header: &noodles::sam::Header, chrom: &str) -> Option<String> {
-    let candidates = [
-        chrom.to_owned(),
-        format!("chr{chrom}"),
-        chrom.trim_start_matches("chr").to_owned(),
-    ];
-    candidates.into_iter().find(|candidate| {
-        header.reference_sequences().iter().any(|(name, _)| {
-            let name_bytes: &[u8] = name.as_ref();
-            name_bytes == candidate.as_bytes()
-        })
-    })
+fn indel_alternate_lengths(variant: &VariantSpec, fallback_alternate: &str) -> Vec<usize> {
+    let mut lengths = variant
+        .observed_alternates
+        .iter()
+        .map(String::len)
+        .filter(|len| *len > 0)
+        .collect::<Vec<_>>();
+    if lengths.is_empty() {
+        lengths.push(fallback_alternate.len());
+    }
+    lengths.sort_unstable();
+    lengths.dedup();
+    lengths
 }
 
 #[path = "bam_backend/pileup.rs"]
 mod pileup;
+#[path = "bam_backend/query.rs"]
+mod query;
 
 use pileup::{
     BamSnpPileupCounts, bam_alignment_record, bam_base_quality_at_reference_position,
-    classify_expected_indel, describe_copy_number_decision_rule, describe_snp_decision_rule,
-    indel_at_anchor, infer_copy_number_genotype, infer_snp_genotype, normalize_pileup_base,
-    record_overlaps_locus, spans_position,
+    classify_expected_indel_lengths, describe_copy_number_decision_rule,
+    describe_snp_decision_rule, indel_at_anchor, infer_copy_number_genotype, infer_snp_genotype,
+    normalize_pileup_base, record_overlaps_locus, spans_position,
 };
+use query::{bam_region, read_bam_header};

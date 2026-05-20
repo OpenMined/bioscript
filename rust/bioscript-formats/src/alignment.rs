@@ -140,7 +140,7 @@ pub fn for_each_raw_cram_record_with_reader<R, F>(
 ) -> Result<(), RuntimeError>
 where
     R: Read + Seek,
-    F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
+    F: FnMut(&cram::Record<'_>) -> Result<bool, RuntimeError>,
 {
     for_each_raw_cram_record_with_reader_inner(reader, label, locus, true, on_record)
 }

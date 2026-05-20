@@ -23,6 +23,7 @@ pub struct AppObservationInput<'a> {
     pub manifest: VariantManifest,
     pub gene: String,
     pub source: serde_json::Value,
+    pub alt_alleles: Vec<String>,
     pub observed_alt_alleles: Vec<String>,
     pub inferred_sex: Option<&'a SexInference>,
     pub fallback_assembly: Option<Assembly>,
@@ -31,6 +32,7 @@ pub struct AppObservationInput<'a> {
 struct AppObservationJson {
     allele_balance: Option<f64>,
     alt_count: Option<u32>,
+    alt_alleles: Vec<String>,
     assay_id: String,
     assembly: String,
     call: ObservationCallValues,
@@ -69,12 +71,13 @@ pub fn app_observation_from_manifest_row(input: AppObservationInput<'_>) -> serd
         manifest,
         gene,
         source,
+        alt_alleles,
         observed_alt_alleles,
         inferred_sex,
         fallback_assembly,
     } = input;
     let ref_allele = manifest.spec.reference.clone().unwrap_or_default();
-    let reportable_alt = manifest.spec.alternate.clone().unwrap_or_default();
+    let mut reportable_alt = manifest.spec.alternate.clone().unwrap_or_default();
     let mut genotype_display = row
         .get("genotype")
         .filter(|value| !value.is_empty())
@@ -82,35 +85,33 @@ pub fn app_observation_from_manifest_row(input: AppObservationInput<'_>) -> serd
         .or_else(|| genotype_display_from_raw_counts(row.get("raw_counts")?))
         .unwrap_or_default();
     let depth = parse_optional_u32(row.get("depth"));
-    let ref_count = parse_optional_u32(row.get("ref_count"));
-    let alt_count = parse_optional_u32(row.get("alt_count"));
+    let mut ref_count = parse_optional_u32(row.get("ref_count"));
+    let mut alt_count = parse_optional_u32(row.get("alt_count"));
     if let Some(normalized_display) = deletion_copy_number_display(row, &manifest, depth, alt_count)
     {
         genotype_display = normalized_display;
     }
     let weak_indel_match = is_weak_delimited_indel_match(row, &manifest, &genotype_display);
+    let (assembly, locus) = observation_assembly_and_locus(row, &manifest, fallback_assembly);
+    let chrom = locus.map_or(String::new(), |locus| locus.chrom.clone());
+    reportable_alt = select_observed_reportable_alt(
+        &genotype_display,
+        &ref_allele,
+        &reportable_alt,
+        &observed_alt_alleles,
+    );
+    if let Some((raw_ref_count, raw_alt_count)) =
+        raw_snv_counts_for_selected_alleles(row, &manifest, &ref_allele, &reportable_alt)
+    {
+        ref_count = Some(raw_ref_count);
+        alt_count = Some(raw_alt_count);
+    }
     let allele_balance = match (alt_count, depth) {
         (Some(alt_count), Some(depth)) if depth > 0 => {
             Some(f64::from(alt_count) / f64::from(depth))
         }
         _ => None,
     };
-    let assembly = row
-        .get("assembly")
-        .filter(|value| !value.is_empty())
-        .cloned()
-        .or_else(|| fallback_assembly.map(assembly_row_value))
-        .unwrap_or_default();
-    let locus = if assembly.eq_ignore_ascii_case("grch37") {
-        manifest.spec.grch37.as_ref()
-    } else {
-        manifest
-            .spec
-            .grch38
-            .as_ref()
-            .or(manifest.spec.grch37.as_ref())
-    };
-    let chrom = locus.map_or(String::new(), |locus| locus.chrom.clone());
     let (genotype, zygosity) = normalize_app_genotype(
         &genotype_display,
         &ref_allele,
@@ -139,6 +140,7 @@ pub fn app_observation_from_manifest_row(input: AppObservationInput<'_>) -> serd
     render_app_observation_json(AppObservationJson {
         allele_balance,
         alt_count,
+        alt_alleles,
         assay_id: assay_id.to_owned(),
         assembly,
         call,
@@ -162,6 +164,102 @@ pub fn app_observation_from_manifest_row(input: AppObservationInput<'_>) -> serd
         weak_indel_match,
         zygosity,
     })
+}
+
+fn observation_assembly_and_locus<'a>(
+    row: &BTreeMap<String, String>,
+    manifest: &'a VariantManifest,
+    fallback_assembly: Option<Assembly>,
+) -> (String, Option<&'a GenomicLocus>) {
+    let assembly = row
+        .get("assembly")
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .or_else(|| fallback_assembly.map(assembly_row_value))
+        .unwrap_or_default();
+    let locus = if assembly.eq_ignore_ascii_case("grch37") {
+        manifest.spec.grch37.as_ref()
+    } else {
+        manifest
+            .spec
+            .grch38
+            .as_ref()
+            .or(manifest.spec.grch37.as_ref())
+    };
+    (assembly, locus)
+}
+
+fn select_observed_reportable_alt(
+    genotype_display: &str,
+    ref_allele: &str,
+    reportable_alt: &str,
+    observed_alt_alleles: &[String],
+) -> String {
+    if genotype_display.is_empty()
+        || ref_allele.len() != 1
+        || reportable_alt.len() != 1
+        || observed_alt_alleles.is_empty()
+    {
+        return reportable_alt.to_owned();
+    }
+    let genotype_alleles = genotype_display
+        .chars()
+        .filter(char::is_ascii_alphabetic)
+        .map(|ch| ch.to_ascii_uppercase())
+        .collect::<Vec<_>>();
+    if genotype_alleles.is_empty() {
+        return reportable_alt.to_owned();
+    }
+    let reportable_ch = reportable_alt
+        .chars()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    if genotype_alleles.contains(&reportable_ch) {
+        return reportable_alt.to_owned();
+    }
+    let ref_ch = ref_allele
+        .chars()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    observed_alt_alleles
+        .iter()
+        .find(|alt| {
+            alt.len() == 1
+                && alt.chars().next().is_some_and(|alt_ch| {
+                    let alt_ch = alt_ch.to_ascii_uppercase();
+                    alt_ch != ref_ch && genotype_alleles.contains(&alt_ch)
+                })
+        })
+        .cloned()
+        .unwrap_or_else(|| reportable_alt.to_owned())
+}
+
+fn raw_snv_counts_for_selected_alleles(
+    row: &BTreeMap<String, String>,
+    manifest: &VariantManifest,
+    ref_allele: &str,
+    reportable_alt: &str,
+) -> Option<(u32, u32)> {
+    if !matches!(manifest.spec.kind, Some(bioscript_core::VariantKind::Snp))
+        || ref_allele.len() != 1
+        || reportable_alt.len() != 1
+        || !matches!(row.get("backend").map(String::as_str), Some("cram" | "bam"))
+    {
+        return None;
+    }
+    let counts: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(row.get("raw_counts")?).ok()?;
+    let count_for = |allele: &str| -> u32 {
+        let allele = allele.to_ascii_uppercase();
+        counts
+            .get(&allele)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(0)
+    };
+    Some((count_for(ref_allele), count_for(reportable_alt)))
 }
 
 fn observation_call_values(
@@ -211,6 +309,7 @@ fn render_app_observation_json(input: AppObservationJson) -> serde_json::Value {
     let AppObservationJson {
         allele_balance,
         alt_count,
+        alt_alleles,
         assay_id,
         assembly,
         call,
@@ -258,6 +357,7 @@ fn render_app_observation_json(input: AppObservationJson) -> serde_json::Value {
         "pos_end": locus.as_ref().map_or(serde_json::Value::Null, |locus| serde_json::Value::from(locus.end)),
         "ref": ref_allele,
         "alt": reportable_alt,
+        "alts": alt_alleles,
         "kind": kind,
         "match_status": if row.get("matched_rsid").is_some_and(|value| !value.is_empty()) || !genotype_display.is_empty() { "found" } else { "not_found" },
         "coverage_status": depth.map_or("covered", |depth| if depth > 0 { "covered" } else { "not_covered" }),
@@ -404,6 +504,50 @@ mod tests {
     }
 
     #[test]
+    fn multi_alt_observations_use_the_alt_present_in_the_genotype() {
+        assert_eq!(
+            select_observed_reportable_alt("CT", "C", "G", &["G".to_owned(), "T".to_owned()]),
+            "T"
+        );
+        assert_eq!(
+            select_observed_reportable_alt("CG", "C", "G", &["G".to_owned(), "T".to_owned()]),
+            "G"
+        );
+    }
+
+    #[test]
+    fn cram_multi_alt_observations_recount_against_the_selected_alt() {
+        let row = BTreeMap::from([
+            ("participant_id".to_owned(), "p1".to_owned()),
+            ("matched_rsid".to_owned(), "rs1".to_owned()),
+            ("backend".to_owned(), "cram".to_owned()),
+            ("raw_counts".to_owned(), r#"{"T":45}"#.to_owned()),
+            ("ref_count".to_owned(), "0".to_owned()),
+            ("alt_count".to_owned(), "0".to_owned()),
+            ("depth".to_owned(), "45".to_owned()),
+        ]);
+        let observation = app_observation_from_manifest_row(AppObservationInput {
+            row: &row,
+            row_path: "variants/rs1.yaml",
+            assay_id: "assay",
+            manifest: manifest(VariantKind::Snp, "6", "C", "G"),
+            gene: "FOXO3".to_owned(),
+            source: serde_json::Value::Null,
+            alt_alleles: vec!["G".to_owned(), "T".to_owned()],
+            observed_alt_alleles: vec!["G".to_owned(), "T".to_owned()],
+            inferred_sex: None,
+            fallback_assembly: None,
+        });
+
+        assert_eq!(observation["alt"], "T");
+        assert_eq!(observation["ref_count"], 0);
+        assert_eq!(observation["alt_count"], 45);
+        assert_eq!(observation["allele_balance"], 1.0);
+        assert_eq!(observation["genotype"], "1/1");
+        assert_eq!(observation["outcome"], "variant");
+    }
+
+    #[test]
     fn single_allele_sex_chromosome_calls_are_treated_as_hemizygous() {
         assert_eq!(
             normalize_app_genotype("G", "C", "G", None, "X", None),
@@ -495,6 +639,7 @@ mod tests {
             manifest: manifest(VariantKind::Snp, "1", "A", "G"),
             gene: "ABC".to_owned(),
             source: serde_json::json!({"kind": "database"}),
+            alt_alleles: vec!["G".to_owned()],
             observed_alt_alleles: Vec::new(),
             inferred_sex: None,
             fallback_assembly: None,
@@ -526,6 +671,7 @@ mod tests {
             manifest: manifest(VariantKind::Snp, "1", "A", "G"),
             gene: "ABC".to_owned(),
             source: serde_json::Value::Null,
+            alt_alleles: vec!["G".to_owned()],
             observed_alt_alleles: Vec::new(),
             inferred_sex: None,
             fallback_assembly: Some(Assembly::Grch37),
@@ -546,6 +692,7 @@ mod tests {
             manifest: manifest(VariantKind::Snp, "1", "A", "G"),
             gene: "ABC".to_owned(),
             source: serde_json::Value::Null,
+            alt_alleles: vec!["G".to_owned()],
             observed_alt_alleles: Vec::new(),
             inferred_sex: None,
             fallback_assembly: Some(Assembly::Grch38),
@@ -570,14 +717,18 @@ mod tests {
             manifest: manifest(VariantKind::Snp, "X", "A", "G"),
             gene: "ABC".to_owned(),
             source: serde_json::Value::Null,
+            alt_alleles: vec!["G".to_owned(), "T".to_owned()],
             observed_alt_alleles: vec!["T".to_owned()],
             inferred_sex: Some(&inferred_sex),
             fallback_assembly: None,
         });
 
-        assert_eq!(observation["outcome"], "observed_alt");
-        assert_eq!(observation["call_status"], "observed_alt");
-        assert_eq!(observation["facets"], "observed_alt;known_observed_alts=T");
+        assert_eq!(observation["alt"], "T");
+        assert_eq!(observation["genotype"], "1");
+        assert_eq!(observation["zygosity"], "hem_alt");
+        assert_eq!(observation["outcome"], "variant");
+        assert_eq!(observation["call_status"], "called");
+        assert_eq!(observation["facets"], serde_json::Value::Null);
         assert!(
             observation["evidence_raw"]
                 .as_str()
@@ -603,6 +754,7 @@ mod tests {
             manifest: manifest(VariantKind::Deletion, "22", "TTATAA", "<DEL:6>"),
             gene: "APOL1".to_owned(),
             source: serde_json::Value::Null,
+            alt_alleles: vec!["<DEL:6>".to_owned()],
             observed_alt_alleles: Vec::new(),
             inferred_sex: None,
             fallback_assembly: Some(Assembly::Grch38),

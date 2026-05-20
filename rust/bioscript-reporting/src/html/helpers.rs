@@ -1,4 +1,14 @@
 use std::fmt::Write as _;
+
+#[path = "helpers/repeats.rs"]
+mod repeats;
+
+pub(super) use repeats::{
+    genotype_repeat_notation, genotype_repeat_notation_html, padded_homopolymer_repeat_notation,
+    padded_homopolymer_repeat_notation_html, paired_reference_repeat_notation,
+    paired_reference_repeat_notation_html, paired_repeat_notation, paired_repeat_notation_html,
+    repeat_notation, repeat_notation_html, same_homopolymer_base,
+};
 pub(super) fn render_table_start(out: &mut String, table_id: &str, headers: &[&str]) {
     let escaped_id = html_escape(table_id);
     let _ = write!(

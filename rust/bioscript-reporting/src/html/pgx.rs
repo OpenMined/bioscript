@@ -1,6 +1,6 @@
 use super::helpers::{
     class_cell, html_escape, join_drugs, join_string_array, link_cell, render_table_end,
-    render_table_start, table_cell, value_str,
+    render_table_start, repeat_notation, table_cell, value_str,
 };
 use super::observations::highlight_allele;
 use std::fmt::Write as _;
@@ -338,16 +338,43 @@ pub(super) fn matched_ref_alt(finding: &serde_json::Value) -> String {
         .get("ref")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    let alt_allele = observation
-        .get("alt")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    if ref_allele.is_empty() && alt_allele.is_empty() {
+    let alt_alleles = matched_observation_alt_alleles(observation);
+    if ref_allele.is_empty() && alt_alleles.is_empty() {
         String::new()
     } else {
-        let alt_display = alt_allele.replace(',', "/");
-        format!("{ref_allele}->{alt_display}")
+        format!(
+            "{} > {}",
+            repeat_notation(ref_allele),
+            alt_alleles
+                .iter()
+                .map(|allele| repeat_notation(allele))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
+}
+
+fn matched_observation_alt_alleles(observation: &serde_json::Value) -> Vec<String> {
+    let alts = observation
+        .get("alts")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if !alts.is_empty() {
+        return alts;
+    }
+    observation
+        .get("alt")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .split(',')
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 pub(super) fn evidence_level_group(level: &str) -> String {

@@ -27,6 +27,8 @@ struct VariantInput {
     #[serde(rename = "alt")]
     alt_base: String,
     #[serde(default)]
+    observed_alts: Vec<String>,
+    #[serde(default)]
     rsid: Option<String>,
     #[serde(default)]
     assembly: Option<String>,
@@ -138,15 +140,19 @@ pub fn lookup_cram_variants(
                     assembly,
                 )
             }
-            VariantKind::Insertion | VariantKind::Indel => observe_cram_indel_with_reader(
-                &mut indexed,
-                &variant.name,
-                &locus,
-                &variant.ref_base,
-                &variant.alt_base,
-                variant.rsid.clone(),
-                assembly,
-            ),
+            VariantKind::Insertion | VariantKind::Indel => {
+                let alternate_lengths = indel_alternate_lengths(&variant);
+                observe_cram_indel_with_reader(
+                    &mut indexed,
+                    &variant.name,
+                    &locus,
+                    &variant.ref_base,
+                    &variant.alt_base,
+                    &alternate_lengths,
+                    variant.rsid.clone(),
+                    assembly,
+                )
+            }
             other => {
                 return Err(JsError::new(&format!(
                     "variant {} has unsupported kind {:?} for web CRAM lookup",
@@ -343,10 +349,30 @@ fn variant_input_to_spec(variant: &VariantInput) -> Result<VariantSpec, JsError>
         grch38_assembly_ref: None,
         reference: Some(variant.ref_base.clone()),
         alternate: Some(variant.alt_base.clone()),
+        observed_alternates: if variant.observed_alts.is_empty() {
+            vec![variant.alt_base.clone()]
+        } else {
+            variant.observed_alts.clone()
+        },
         kind,
         deletion_length: variant.deletion_length,
         motifs: Vec::new(),
     })
+}
+
+fn indel_alternate_lengths(variant: &VariantInput) -> Vec<usize> {
+    let mut lengths = variant
+        .observed_alts
+        .iter()
+        .map(String::len)
+        .filter(|len| *len > 0)
+        .collect::<Vec<_>>();
+    if lengths.is_empty() {
+        lengths.push(variant.alt_base.len());
+    }
+    lengths.sort_unstable();
+    lengths.dedup();
+    lengths
 }
 
 fn parse_variant_kind(kind: Option<&str>) -> Option<VariantKind> {

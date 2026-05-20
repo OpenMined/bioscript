@@ -49,6 +49,13 @@ pub(super) fn render_analysis_tables(
             continue;
         }
         out.push_str("<h4>Results</h4>");
+        if should_render_analysis_narrative_rows(&headers) {
+            render_analysis_narrative_rows(out, analysis, &rows);
+            render_analysis_notes(out, &notes);
+            render_weak_indel_analysis_note(out, weak_indel_dependency);
+            out.push_str("</div></details>");
+            continue;
+        }
         let header_refs = headers.iter().map(String::as_str).collect::<Vec<_>>();
         render_table_start(out, &table_id, &header_refs);
         let participant = value_str(analysis, "participant_id");
@@ -68,6 +75,31 @@ pub(super) fn render_analysis_tables(
         render_weak_indel_analysis_note(out, weak_indel_dependency);
         out.push_str("</div></details>");
     }
+}
+
+fn should_render_analysis_narrative_rows(headers: &[String]) -> bool {
+    headers.len() == 2 && headers[0] == "rsid" && headers[1] == "info"
+}
+
+fn render_analysis_narrative_rows(
+    out: &mut String,
+    analysis: &serde_json::Value,
+    rows: &[serde_json::Value],
+) {
+    out.push_str("<div class=\"analysis-narrative-list\">");
+    let participant = value_str(analysis, "participant_id");
+    for row in rows {
+        let rsid = json_field_as_tsv(row.get("rsid"));
+        let info = json_field_as_tsv(row.get("info"));
+        let _ = write!(
+            out,
+            "<article class=\"analysis-narrative-row\" data-participant=\"{}\"><h5>{}</h5><p>{}</p></article>",
+            html_escape(participant),
+            html_escape(&rsid),
+            render_analysis_value("info", &info)
+        );
+    }
+    out.push_str("</div>");
 }
 
 pub(super) fn analysis_title(analysis: &serde_json::Value) -> String {
@@ -304,4 +336,35 @@ pub(super) fn render_analysis_logic(out: &mut String, analysis: &serde_json::Val
         );
     }
     out.push_str("</div>");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn renders_rsid_info_analysis_as_narrative_rows() {
+        let analysis = json!({
+            "analysis_id": "glp1_nature_findings",
+            "analysis_label": "GLP-1 medication response findings",
+            "participant_id": "P001",
+            "emits": [
+                {"key": "rsid", "label": "Variant"},
+                {"key": "info", "label": "Finding and your result"}
+            ],
+            "rows": [
+                {"participant_id": "P001", "rsid": "rs10305420", "info": "Genotype: CC. Finding: Study text. Your result: You do not have T."},
+                {"participant_id": "P001", "rsid": "rs11760106", "info": "Genotype: GT. Finding: Study text. Your result: You have T."}
+            ]
+        });
+        let mut html = String::new();
+
+        render_analysis_tables(&mut html, &[analysis], &[], false);
+
+        assert!(html.contains("analysis-narrative-list"));
+        assert!(html.contains("<h5>rs10305420</h5>"));
+        assert!(html.contains("Genotype: CC."));
+        assert!(!html.contains("analysis-table-0"));
+    }
 }
