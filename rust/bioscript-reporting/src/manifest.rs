@@ -147,6 +147,8 @@ pub fn report_manifest_metadata(
         "version": yaml_string(&value, "version"),
         "name": yaml_string(&value, "name"),
         "label": yaml_string(&value, "label").or_else(|| yaml_string(&value, "name")),
+        "summary": yaml_string(&value, "summary"),
+        "summary_url": yaml_string(&value, "summary_url"),
         "tags": yaml_string_sequence(&value, "tags"),
         "members": members,
     }))
@@ -475,10 +477,10 @@ mod tests {
         ExecutableAssayMember, ExecutablePanelMember, ManifestWorkspace, ReportManifestKind,
         assay_executable_member, assay_executable_member_path, collect_analysis_manifest_tasks,
         collect_variant_manifest_tasks, load_manifest_findings, load_report_manifest_context,
-        matches_analysis_path_filters, matches_variant_manifest_filters, panel_executable_member,
-        panel_executable_member_path, report_assay_id, report_manifest_kind,
-        report_manifest_metadata, report_manifest_schema, resolve_filesystem_manifest_path,
-        traversable_manifest_member_paths,
+        load_variant_manifest_task_by_path, matches_analysis_path_filters,
+        matches_variant_manifest_filters, panel_executable_member, panel_executable_member_path,
+        report_assay_id, report_manifest_kind, report_manifest_metadata, report_manifest_schema,
+        resolve_filesystem_manifest_path, traversable_manifest_member_paths,
     };
 
     struct InlineWorkspace {
@@ -623,6 +625,8 @@ alleles:
 schema: bioscript:panel:1.0
 version: "1.0"
 name: pgx-panel
+summary: Panel summary text.
+summary_url: https://example.test/panel-summary
 tags: [pgx, cardiology, 7]
 members:
   - kind: variant
@@ -636,6 +640,11 @@ members:
         let metadata = report_manifest_metadata(&workspace, "panel.yaml").unwrap();
         assert_eq!(metadata["schema"], "bioscript:panel:1.0");
         assert_eq!(metadata["label"], "pgx-panel");
+        assert_eq!(metadata["summary"], "Panel summary text.");
+        assert_eq!(
+            metadata["summary_url"],
+            "https://example.test/panel-summary"
+        );
         assert_eq!(metadata["tags"], serde_json::json!(["pgx", "cardiology"]));
         assert_eq!(metadata["members"][0]["kind"], "variant");
         assert_eq!(metadata["members"][0]["path"], "rs1.yaml");
@@ -866,6 +875,38 @@ rs1	rs1	rs1	GENE	A	G	snp	1	123
         let tasks = collect_variant_manifest_tasks(&workspace, "panel.yaml", &[]).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].manifest_path, "catalogue.yaml#rs1");
+    }
+
+    #[test]
+    fn variant_catalogue_tasks_preserve_observed_alts_separately_from_reportable_alts() {
+        let workspace = MapWorkspace {
+            files: BTreeMap::from([
+                (
+                    "catalogue.yaml".to_owned(),
+                    r#"
+schema: bioscript:variant-catalogue:1.0
+version: "1.0"
+name: catalogue
+variants:
+  source: variants.tsv
+"#
+                    .to_owned(),
+                ),
+                (
+                    "variants.tsv".to_owned(),
+                    "variant_id\tname\trsid\tgene\tref\talts\tobserved_alts\tkind\tgrch38_chrom\tgrch38_pos\nrs1\trs1\trs1\tGENE\tA\tC\tC|G|T\tsnp\t1\t123\n"
+                        .to_owned(),
+                ),
+            ]),
+        };
+
+        let task = load_variant_manifest_task_by_path(&workspace, "catalogue.yaml#rs1").unwrap();
+
+        assert_eq!(task.manifest.spec.alternate.as_deref(), Some("C"));
+        assert_eq!(
+            task.manifest.spec.observed_alternates,
+            vec!["C".to_owned(), "G".to_owned(), "T".to_owned()]
+        );
     }
 
     #[test]

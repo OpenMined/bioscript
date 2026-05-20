@@ -1,5 +1,9 @@
 use super::helpers::{
-    class_cell, html_escape, json_field_as_tsv, render_table_start, table_column_class, value_str,
+    class_cell, genotype_repeat_notation, genotype_repeat_notation_html, html_escape,
+    json_field_as_tsv, padded_homopolymer_repeat_notation, padded_homopolymer_repeat_notation_html,
+    paired_reference_repeat_notation, paired_reference_repeat_notation_html,
+    paired_repeat_notation, paired_repeat_notation_html, render_table_start, repeat_notation,
+    repeat_notation_html, same_homopolymer_base, table_column_class, value_str,
 };
 use std::fmt::Write as _;
 pub(super) fn render_observation_table(
@@ -207,20 +211,45 @@ pub(super) fn render_observation_cell(
             .get("outcome")
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
-        let value = json_field_as_tsv(observation.get(header));
+        let raw_value = json_field_as_tsv(observation.get(header));
+        let ref_allele = observation
+            .get("ref")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let alt_allele = observation
+            .get("alt")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let value = genotype_repeat_notation(&raw_value, ref_allele, alt_allele);
+        let html_value = genotype_repeat_notation_html(&raw_value, ref_allele, alt_allele);
         if matches!(outcome, "variant" | "observed_alt" | "unknown_alt") {
             let alt = observation
                 .get("alt")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
+            let escaped_value = html_escape(&value);
+            let cell_html = if html_value == escaped_value {
+                highlight_allele(&value, alt)
+            } else {
+                html_value
+            };
             let _ = write!(
                 out,
-                "<td class=\"genotype-hit {}\">{}</td>",
+                "<td class=\"genotype-hit {}\" title=\"{}\">{}</td>",
                 cell_class,
-                highlight_allele(&value, alt)
+                html_escape(&raw_value),
+                cell_html
             );
             return;
         }
+        let _ = write!(
+            out,
+            "<td class=\"{}\" title=\"{}\">{}</td>",
+            cell_class,
+            html_escape(&raw_value),
+            html_value
+        );
+        return;
     }
     let _ = write!(
         out,
@@ -232,10 +261,13 @@ pub(super) fn render_observation_cell(
 
 fn ref_alt_cell(out: &mut String, observation: &serde_json::Value) {
     let value = observation_ref_alt(observation);
-    let escaped_value = html_escape(&value);
+    let html_value = observation_ref_alt_html(observation);
+    let raw_value = observation_ref_alt_raw(observation);
+    let escaped_raw_value = html_escape(&raw_value);
     let _ = write!(
         out,
-        "<td class=\"mono ref-alt-cell\" title=\"{escaped_value}\"><span class=\"truncate-cell\">{escaped_value}</span></td>"
+        "<td class=\"mono ref-alt-cell\" title=\"{escaped_raw_value}\" data-sort=\"{}\"><span class=\"truncate-cell\">{html_value}</span></td>",
+        html_escape(&value)
     );
 }
 
@@ -260,15 +292,122 @@ pub(super) fn observation_ref_alt(observation: &serde_json::Value) -> String {
         .get("ref")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    let alt_allele = observation
-        .get("alt")
+    let alt_alleles = observation_alt_alleles(observation);
+    if ref_allele.is_empty() && alt_alleles.is_empty() {
+        String::new()
+    } else if observation_uses_padded_homopolymer_repeat(observation, ref_allele, &alt_alleles) {
+        format!(
+            "{} > {}",
+            padded_homopolymer_repeat_notation(ref_allele),
+            alt_alleles
+                .iter()
+                .map(|allele| padded_homopolymer_repeat_notation(allele))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    } else {
+        let reference_display = alt_alleles.first().map_or_else(
+            || repeat_notation(ref_allele),
+            |alt| paired_reference_repeat_notation(ref_allele, alt),
+        );
+        format!(
+            "{} > {}",
+            reference_display,
+            alt_alleles
+                .iter()
+                .map(|allele| paired_repeat_notation(ref_allele, allele))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+fn observation_ref_alt_html(observation: &serde_json::Value) -> String {
+    let ref_allele = observation
+        .get("ref")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    if ref_allele.is_empty() && alt_allele.is_empty() {
+    let alt_alleles = observation_alt_alleles(observation);
+    if ref_allele.is_empty() && alt_alleles.is_empty() {
+        String::new()
+    } else if observation_uses_padded_homopolymer_repeat(observation, ref_allele, &alt_alleles) {
+        format!(
+            "{} &gt; {}",
+            padded_homopolymer_repeat_notation(ref_allele),
+            alt_alleles
+                .iter()
+                .map(|allele| padded_homopolymer_repeat_notation_html(allele, ref_allele))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    } else {
+        let reference_display = alt_alleles.first().map_or_else(
+            || repeat_notation_html(ref_allele, None),
+            |alt| paired_reference_repeat_notation_html(ref_allele, alt),
+        );
+        format!(
+            "{} &gt; {}",
+            reference_display,
+            alt_alleles
+                .iter()
+                .map(|allele| paired_repeat_notation_html(ref_allele, allele))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+fn observation_ref_alt_raw(observation: &serde_json::Value) -> String {
+    let ref_allele = observation
+        .get("ref")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let alt_alleles = observation_alt_alleles(observation);
+    if ref_allele.is_empty() && alt_alleles.is_empty() {
         String::new()
     } else {
-        format!("{ref_allele}->{}", alt_allele.replace(',', "/"))
+        format!("{ref_allele} > {}", alt_alleles.join(", "))
     }
+}
+
+fn observation_alt_alleles(observation: &serde_json::Value) -> Vec<String> {
+    let alts = observation
+        .get("alts")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if !alts.is_empty() {
+        return alts;
+    }
+    observation
+        .get("alt")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .split(',')
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn observation_uses_padded_homopolymer_repeat(
+    observation: &serde_json::Value,
+    ref_allele: &str,
+    alt_alleles: &[String],
+) -> bool {
+    let kind = observation
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    matches!(kind, "indel" | "deletion" | "insertion")
+        && !ref_allele.is_empty()
+        && !alt_alleles.is_empty()
+        && alt_alleles
+            .iter()
+            .all(|alt| same_homopolymer_base(ref_allele, alt).is_some())
 }
 
 pub(super) fn highlight_allele(value: &str, allele: &str) -> String {

@@ -10,9 +10,9 @@ use bioscript_core::{Assembly, GenomicLocus, RuntimeError, VariantObservation};
 use crate::alignment::{self, AlignmentOpKind};
 
 use super::{
-    anchor_window, classify_expected_indel, describe_copy_number_decision_rule, describe_locus,
-    describe_snp_decision_rule, indel_at_anchor, infer_copy_number_genotype, infer_snp_genotype,
-    record_overlaps_locus, snp_pileup_with_reader, spans_position,
+    anchor_window, classify_expected_indel_lengths, describe_copy_number_decision_rule,
+    describe_locus, describe_snp_decision_rule, indel_at_anchor, infer_copy_number_genotype,
+    infer_snp_genotype, record_overlaps_locus, snp_pileup_with_reader, spans_position,
 };
 
 /// Observe a SNP at `locus` over an already-built CRAM `IndexedReader` and
@@ -116,6 +116,7 @@ pub fn observe_cram_indel_with_reader<R: Read + Seek>(
     locus: &GenomicLocus,
     reference: &str,
     alternate: &str,
+    alternate_lengths: &[usize],
     matched_rsid: Option<String>,
     assembly: Option<Assembly>,
 ) -> Result<VariantObservation, RuntimeError> {
@@ -128,7 +129,8 @@ pub fn observe_cram_indel_with_reader<R: Read + Seek>(
         if record.is_unmapped || !record_overlaps_locus(&record, locus) {
             return Ok(true);
         }
-        let classification = classify_expected_indel(&record, locus, reference.len(), alternate)?;
+        let classification =
+            classify_expected_indel_lengths(&record, locus, reference.len(), alternate_lengths)?;
         if !classification.covering {
             return Ok(true);
         }

@@ -144,12 +144,14 @@ fn observe_cram_variant<R: std::io::Read + std::io::Seek>(
                         .unwrap_or("variant")
                 ))
             })?;
+            let alternate_lengths = indel_alternate_lengths(variant, alternate);
             bioscript_formats::observe_cram_indel_with_reader(
                 reader,
                 label,
                 &locus,
                 reference,
                 alternate,
+                &alternate_lengths,
                 variant.rsids.first().cloned(),
                 assembly,
             )
@@ -164,4 +166,19 @@ fn observe_cram_variant<R: std::io::Read + std::io::Seek>(
             other
         ))),
     }
+}
+
+fn indel_alternate_lengths(variant: &VariantSpec, fallback_alternate: &str) -> Vec<usize> {
+    let mut lengths = variant
+        .observed_alternates
+        .iter()
+        .map(String::len)
+        .filter(|len| *len > 0)
+        .collect::<Vec<_>>();
+    if lengths.is_empty() {
+        lengths.push(fallback_alternate.len());
+    }
+    lengths.sort_unstable();
+    lengths.dedup();
+    lengths
 }

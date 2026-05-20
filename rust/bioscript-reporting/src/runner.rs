@@ -167,13 +167,23 @@ impl ReportWorkspace for FilesystemManifestWorkspace {
         fallback_assembly: Option<Assembly>,
     ) -> Result<serde_json::Value, String> {
         let row_path = row.get("path").cloned().unwrap_or_default();
-        let (manifest, gene, source, observed_alt_alleles) = if row_path.contains('#') {
+        let (manifest, gene, source, alt_alleles, observed_alt_alleles) = if row_path.contains('#')
+        {
             let task = crate::load_variant_manifest_task_by_path(self, &row_path)?;
+            let alt_alleles = task
+                .manifest
+                .spec
+                .alternate
+                .clone()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let observed_alt_alleles = task.manifest.spec.observed_alternates.clone();
             (
                 task.manifest,
                 String::new(),
                 serde_json::Value::Null,
-                Vec::new(),
+                alt_alleles,
+                observed_alt_alleles,
             )
         } else {
             let text = self.load_text(&row_path)?;
@@ -183,6 +193,7 @@ impl ReportWorkspace for FilesystemManifestWorkspace {
                 manifest,
                 yaml_string(&value, "gene").unwrap_or_default(),
                 variant_primary_source_from_yaml(&value)?,
+                variant_alt_alleles_from_yaml(&value),
                 variant_observed_alt_alleles_from_yaml(&value),
             )
         };
@@ -194,6 +205,7 @@ impl ReportWorkspace for FilesystemManifestWorkspace {
                 manifest,
                 gene,
                 source,
+                alt_alleles,
                 observed_alt_alleles,
                 inferred_sex,
                 fallback_assembly,
@@ -244,6 +256,19 @@ fn variant_observed_alt_alleles_from_yaml(value: &serde_yaml::Value) -> Vec<Stri
         .get("alleles")
         .and_then(serde_yaml::Value::as_mapping)
         .and_then(|mapping| mapping.get(serde_yaml::Value::String("observed_alts".to_owned())))
+        .and_then(serde_yaml::Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_yaml::Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn variant_alt_alleles_from_yaml(value: &serde_yaml::Value) -> Vec<String> {
+    value
+        .get("alleles")
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|mapping| mapping.get(serde_yaml::Value::String("alts".to_owned())))
         .and_then(serde_yaml::Value::as_sequence)
         .into_iter()
         .flatten()

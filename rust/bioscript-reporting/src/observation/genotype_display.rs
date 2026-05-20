@@ -67,6 +67,9 @@ pub(super) fn normalize_app_genotype(
     {
         return normalize_app_genotype(display, "I", "D", None, chrom, inferred_sex);
     }
+    if let Some(normalized) = normalize_long_allele_genotype(display, ref_allele, alt_allele) {
+        return normalized;
+    }
     let alleles: Vec<char> = display.chars().filter(char::is_ascii_alphabetic).collect();
     if ref_allele.len() != 1 || alt_allele.len() != 1 {
         return (display.to_owned(), "unknown".to_owned());
@@ -104,6 +107,42 @@ pub(super) fn normalize_app_genotype(
         (0, 2) => ("1/1".to_owned(), "hom_alt".to_owned()),
         _ => (display.to_owned(), "unknown".to_owned()),
     }
+}
+
+fn normalize_long_allele_genotype(
+    display: &str,
+    ref_allele: &str,
+    alt_allele: &str,
+) -> Option<(String, String)> {
+    if ref_allele.is_empty()
+        || alt_allele.is_empty()
+        || (ref_allele.len() == 1 && alt_allele.len() == 1)
+    {
+        return None;
+    }
+    let display = normalize_sequence_token(display);
+    let ref_allele = normalize_sequence_token(ref_allele);
+    let alt_allele = normalize_sequence_token(alt_allele);
+    if display == format!("{ref_allele}{ref_allele}") {
+        return Some(("0/0".to_owned(), "hom_ref".to_owned()));
+    }
+    if display == format!("{alt_allele}{alt_allele}") {
+        return Some(("1/1".to_owned(), "hom_alt".to_owned()));
+    }
+    if display == format!("{ref_allele}{alt_allele}")
+        || display == format!("{alt_allele}{ref_allele}")
+    {
+        return Some(("0/1".to_owned(), "het".to_owned()));
+    }
+    None
+}
+
+fn normalize_sequence_token(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| !matches!(ch, '/' | '|' | ' ' | '-' | '.'))
+        .map(|ch| ch.to_ascii_uppercase())
+        .collect()
 }
 
 fn is_confident_male_sex_chromosome(chrom: &str, inferred_sex: Option<&SexInference>) -> bool {

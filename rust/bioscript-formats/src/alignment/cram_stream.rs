@@ -74,7 +74,7 @@ pub(crate) fn for_each_raw_cram_record_with_reader_inner<R, F>(
 ) -> Result<(), RuntimeError>
 where
     R: Read + Seek,
-    F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
+    F: FnMut(&cram::Record<'_>) -> Result<bool, RuntimeError>,
 {
     // Re-seeks to position 0 before reading the header so this helper is
     // idempotent across repeated calls on the same indexed reader (e.g. a
@@ -196,7 +196,7 @@ fn stream_selected_cram_records<R, F>(
 ) -> Result<(), RuntimeError>
 where
     R: Read + Seek,
-    F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
+    F: FnMut(&cram::Record<'_>) -> Result<bool, RuntimeError>,
 {
     let interval = region.interval();
 
@@ -325,7 +325,7 @@ fn handle_decoded_cram_record<F>(
     on_record: &mut F,
 ) -> bool
 where
-    F: FnMut(cram::Record<'_>) -> Result<bool, RuntimeError>,
+    F: FnMut(&cram::Record<'_>) -> Result<bool, RuntimeError>,
 {
     let alignment_record = match build_alignment_record_from_cram(label, record) {
         Ok(record) => record,
@@ -344,7 +344,7 @@ where
         return true;
     }
 
-    match on_record(record.clone()) {
+    match on_record(record) {
         Ok(true) => true,
         Ok(false) => {
             *stop = true;

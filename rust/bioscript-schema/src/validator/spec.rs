@@ -8,6 +8,9 @@ pub(crate) fn variant_spec_from_root(root: &Value) -> Result<VariantSpec, String
     let grch37 = locus_from_root(root, "grch37")?;
     let grch38 = locus_from_root(root, "grch38")?;
     let reference = scalar_at(root, &["alleles", "ref"]);
+    let alts = seq_of_strings(root, &["alleles", "alts"]).unwrap_or_default();
+    let observed_alternates =
+        seq_of_strings(root, &["alleles", "observed_alts"]).unwrap_or_else(|| alts.clone());
     let alternate = preferred_alternate_from_root(root);
     let deletion_length = value_at(root, &["alleles", "deletion_length"])
         .and_then(Value::as_u64)
@@ -29,6 +32,7 @@ pub(crate) fn variant_spec_from_root(root: &Value) -> Result<VariantSpec, String
         grch38_assembly_ref: assembly_ref_from_root(root, "grch38"),
         reference,
         alternate,
+        observed_alternates,
         kind,
         deletion_length,
         motifs,

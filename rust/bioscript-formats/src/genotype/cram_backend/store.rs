@@ -211,7 +211,7 @@ impl CramBackend {
     }
 }
 
-const DEFAULT_MAX_CRAM_WORKERS: usize = 16;
+const DEFAULT_MAX_CRAM_WORKERS: usize = 2;
 
 fn cram_lookup_worker_count(job_count: usize) -> usize {
     if job_count <= 1 {

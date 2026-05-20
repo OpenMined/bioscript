@@ -89,17 +89,28 @@ fn catalogue_row_task(
     ));
     rsids.sort();
     rsids.dedup();
+    let alternates = split_list(
+        columns.value(row, "alleles.alts"),
+        columns.separator("alleles.alts"),
+    );
+    let observed_alternates = {
+        let observed = split_list(
+            columns.value(row, "alleles.observed_alts"),
+            columns.separator("alleles.observed_alts"),
+        );
+        if observed.is_empty() {
+            alternates.clone()
+        } else {
+            observed
+        }
+    };
     let spec = VariantSpec {
         rsids,
         grch37: catalogue_locus(columns, row, "grch37")?,
         grch38: catalogue_locus(columns, row, "grch38")?,
         reference: columns.value(row, "alleles.ref").map(ToOwned::to_owned),
-        alternate: split_list(
-            columns.value(row, "alleles.alts"),
-            columns.separator("alleles.alts"),
-        )
-        .into_iter()
-        .next(),
+        alternate: alternates.first().cloned(),
+        observed_alternates,
         kind: columns
             .value(row, "alleles.kind")
             .map(catalogue_variant_kind),
@@ -279,6 +290,7 @@ impl CatalogueColumns {
         columns.insert_default("alleles.kind", "kind");
         columns.insert_default("alleles.ref", "ref");
         columns.insert_default("alleles.alts", "alts");
+        columns.insert_default("alleles.observed_alts", "observed_alts");
         columns.insert_default("coordinates.grch37.chrom", "grch37_chrom");
         columns.insert_default("coordinates.grch37.pos", "grch37_pos");
         columns.insert_default("coordinates.grch37.start", "grch37_start");

@@ -138,12 +138,14 @@ impl AlignmentBytesBackend {
             VariantKind::Insertion | VariantKind::Indel => {
                 let reference = variant.reference.clone().unwrap_or_else(|| "I".to_owned());
                 let alternate = variant.alternate.clone().unwrap_or_else(|| "D".to_owned());
+                let alternate_lengths = indel_alternate_lengths(variant, &alternate);
                 observe_cram_indel_with_reader(
                     reader,
                     LABEL,
                     &locus,
                     &reference,
                     &alternate,
+                    &alternate_lengths,
                     matched_rsid,
                     Some(assembly),
                 )
@@ -183,6 +185,21 @@ impl AlignmentBytesBackend {
             ..VariantObservation::default()
         }
     }
+}
+
+fn indel_alternate_lengths(variant: &VariantSpec, fallback_alternate: &str) -> Vec<usize> {
+    let mut lengths = variant
+        .observed_alternates
+        .iter()
+        .map(String::len)
+        .filter(|len| *len > 0)
+        .collect::<Vec<_>>();
+    if lengths.is_empty() {
+        lengths.push(fallback_alternate.len());
+    }
+    lengths.sort_unstable();
+    lengths.dedup();
+    lengths
 }
 
 fn first_base(value: Option<&str>) -> Option<char> {

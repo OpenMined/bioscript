@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{Read, Seek},
     path::Path,
 };
@@ -20,9 +20,9 @@ mod reader;
 mod store;
 
 #[cfg(test)]
-pub(crate) use indel::len_as_i64;
+pub(crate) use indel::{classify_expected_indel, len_as_i64};
 pub(crate) use indel::{
-    classify_expected_indel, indel_at_anchor, record_overlaps_locus, spans_position,
+    classify_expected_indel_lengths, indel_at_anchor, record_overlaps_locus, spans_position,
 };
 pub use reader::{
     observe_cram_deletion_with_reader, observe_cram_indel_with_reader, observe_cram_snp_with_reader,
@@ -263,6 +263,56 @@ impl SnpPileupCounts {
             ),
         ]
     }
+}
+
+pub(crate) fn select_observed_snp_alternate(
+    reference: char,
+    preferred_alternate: char,
+    observed_alternates: &[String],
+    filtered_base_counts: &BTreeMap<String, u32>,
+    raw_base_counts: &BTreeMap<String, u32>,
+) -> char {
+    let preferred_alternate = preferred_alternate.to_ascii_uppercase();
+    let reference = reference.to_ascii_uppercase();
+    let mut candidates = BTreeSet::from([preferred_alternate]);
+    candidates.extend(
+        observed_alternates
+            .iter()
+            .filter_map(|alt| first_base(alt))
+            .filter(|alt| *alt != reference),
+    );
+    candidates
+        .into_iter()
+        .max_by_key(|candidate| {
+            let key = candidate.to_string();
+            (
+                filtered_base_counts.get(&key).copied().unwrap_or(0),
+                raw_base_counts.get(&key).copied().unwrap_or(0),
+                u8::from(*candidate == preferred_alternate),
+            )
+        })
+        .unwrap_or(preferred_alternate)
+}
+
+pub(crate) fn recount_snp_pileup_counts(
+    counts: &mut SnpPileupCounts,
+    reference: char,
+    alternate: char,
+) {
+    let reference = reference.to_ascii_uppercase().to_string();
+    let alternate = alternate.to_ascii_uppercase().to_string();
+    counts.filtered_ref_count = counts
+        .filtered_base_counts
+        .get(&reference)
+        .copied()
+        .unwrap_or(0);
+    counts.filtered_alt_count = counts
+        .filtered_base_counts
+        .get(&alternate)
+        .copied()
+        .unwrap_or(0);
+    counts.raw_ref_count = counts.raw_base_counts.get(&reference).copied().unwrap_or(0);
+    counts.raw_alt_count = counts.raw_base_counts.get(&alternate).copied().unwrap_or(0);
 }
 
 fn observe_snp_pileup(

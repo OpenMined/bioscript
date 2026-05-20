@@ -12,9 +12,10 @@ use crate::alignment::{self, AlignmentOpKind};
 use crate::genotype::types::CramBackend;
 
 use super::{
-    anchor_window, classify_expected_indel, describe_copy_number_decision_rule, describe_locus,
-    describe_snp_decision_rule, first_base, indel_at_anchor, infer_copy_number_genotype,
-    infer_snp_genotype, observe_snp_pileup, record_overlaps_locus, snp_pileup_with_reader,
+    anchor_window, classify_expected_indel_lengths, describe_copy_number_decision_rule,
+    describe_locus, describe_snp_decision_rule, first_base, indel_at_anchor,
+    infer_copy_number_genotype, infer_snp_genotype, observe_snp_pileup, record_overlaps_locus,
+    recount_snp_pileup_counts, select_observed_snp_alternate, snp_pileup_with_reader,
     spans_position,
 };
 
@@ -69,7 +70,7 @@ impl CramBackend {
             })?;
 
         let target_pos = locus.start;
-        let pileup = observe_snp_pileup(
+        let mut pileup = observe_snp_pileup(
             &self.path,
             &self.options,
             reference_file,
@@ -77,6 +78,14 @@ impl CramBackend {
             reference,
             alternate,
         )?;
+        let alternate = select_observed_snp_alternate(
+            reference,
+            alternate,
+            &variant.observed_alternates,
+            &pileup.filtered_base_counts,
+            &pileup.raw_base_counts,
+        );
+        recount_snp_pileup_counts(&mut pileup, reference, alternate);
         let ref_count = pileup.filtered_ref_count;
         let alt_count = pileup.filtered_alt_count;
         let depth = pileup.filtered_depth;
@@ -122,7 +131,7 @@ impl CramBackend {
                 RuntimeError::InvalidArguments("SNP variant requires alt/alternate".to_owned())
             })?;
 
-        let pileup = snp_pileup_with_reader(
+        let mut pileup = snp_pileup_with_reader(
             reader,
             label,
             locus,
@@ -130,6 +139,14 @@ impl CramBackend {
             alternate,
             self.options.allow_reference_md5_mismatch,
         )?;
+        let alternate = select_observed_snp_alternate(
+            reference,
+            alternate,
+            &variant.observed_alternates,
+            &pileup.filtered_base_counts,
+            &pileup.raw_base_counts,
+        );
+        recount_snp_pileup_counts(&mut pileup, reference, alternate);
         let ref_count = pileup.filtered_ref_count;
         let alt_count = pileup.filtered_alt_count;
         let depth = pileup.filtered_depth;
@@ -282,6 +299,7 @@ impl CramBackend {
         let alternate = variant.alternate.clone().ok_or_else(|| {
             RuntimeError::InvalidArguments("indel variant requires alt/alternate".to_owned())
         })?;
+        let alternate_lengths = indel_alternate_lengths(variant, &alternate);
         let records =
             alignment::query_cram_records(&self.path, &self.options, reference_file, locus)?;
 
@@ -297,8 +315,12 @@ impl CramBackend {
             if !record_overlaps_locus(&record, locus) {
                 continue;
             }
-            let classification =
-                classify_expected_indel(&record, locus, reference.len(), &alternate)?;
+            let classification = classify_expected_indel_lengths(
+                &record,
+                locus,
+                reference.len(),
+                &alternate_lengths,
+            )?;
             if !classification.covering {
                 continue;
             }
@@ -360,6 +382,7 @@ impl CramBackend {
         let alternate = variant.alternate.clone().ok_or_else(|| {
             RuntimeError::InvalidArguments("indel variant requires alt/alternate".to_owned())
         })?;
+        let alternate_lengths = indel_alternate_lengths(variant, &alternate);
 
         super::observe_cram_indel_with_reader(
             reader,
@@ -367,10 +390,26 @@ impl CramBackend {
             locus,
             &reference,
             &alternate,
+            &alternate_lengths,
             variant.rsids.first().cloned(),
             Some(assembly),
         )
     }
+}
+
+fn indel_alternate_lengths(variant: &VariantSpec, fallback_alternate: &str) -> Vec<usize> {
+    let mut lengths = variant
+        .observed_alternates
+        .iter()
+        .map(String::len)
+        .filter(|len| *len > 0)
+        .collect::<Vec<_>>();
+    if lengths.is_empty() {
+        lengths.push(fallback_alternate.len());
+    }
+    lengths.sort_unstable();
+    lengths.dedup();
+    lengths
 }
 
 #[cfg(test)]

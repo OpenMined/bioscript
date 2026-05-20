@@ -56,13 +56,22 @@ pub(crate) fn indel_at_anchor(
     None
 }
 
+#[allow(dead_code)]
 pub(crate) fn classify_expected_indel(
     record: &AlignmentRecord,
     locus: &GenomicLocus,
     reference_len: usize,
     alternate: &str,
 ) -> Result<IndelClassification, RuntimeError> {
-    let alt_len = alternate.len();
+    classify_expected_indel_lengths(record, locus, reference_len, &[alternate.len()])
+}
+
+pub(crate) fn classify_expected_indel_lengths(
+    record: &AlignmentRecord,
+    locus: &GenomicLocus,
+    reference_len: usize,
+    alternate_lengths: &[usize],
+) -> Result<IndelClassification, RuntimeError> {
     let anchor_start = locus.start.saturating_sub(1);
     let anchor_end = locus.end;
 
@@ -89,7 +98,7 @@ pub(crate) fn classify_expected_indel(
             return Ok(IndelClassification {
                 covering: true,
                 reference_like: false,
-                matches_alt: observed_len == alt_len,
+                matches_alt: alternate_lengths.contains(&observed_len),
                 observed_len,
             });
         }

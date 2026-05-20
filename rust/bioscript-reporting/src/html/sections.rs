@@ -47,6 +47,22 @@ pub(super) fn render_report_manifest_header(out: &mut String, reports: &[serde_j
         title
     };
     let _ = write!(out, "<h1>{}</h1>", html_escape(title));
+    let summary = value_str(manifest, "summary");
+    let summary_url = value_str(manifest, "summary_url");
+    if !summary.is_empty() || !summary_url.is_empty() {
+        out.push_str("<div class=\"logic-note\">");
+        if !summary.is_empty() {
+            let _ = write!(out, "<p>{}</p>", html_escape(summary));
+        }
+        if !summary_url.is_empty() {
+            let _ = write!(
+                out,
+                "<p><a href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">Learn more about the GLP-1 medication response study</a></p>",
+                html_escape(summary_url)
+            );
+        }
+        out.push_str("</div>");
+    }
     out.push_str("<div class=\"logic-note\"><p><strong>Disclaimer:</strong> This is not medical or clinical advice, only for research purposes. Always consult a licensed professional to interpret medical information.</p><p>This report was generated offline on your system.</p><p>For more information see <a href=\"https://app.biovault.net\" target=\"_blank\" rel=\"noopener noreferrer\">https://app.biovault.net</a></p></div>");
 }
 
@@ -60,6 +76,8 @@ pub(super) fn render_report_source_section(out: &mut String, reports: &[serde_js
     report_manifest_kv(out, "Version", value_str(manifest, "version"));
     report_manifest_kv(out, "Name", value_str(manifest, "name"));
     report_manifest_kv(out, "Label", value_str(manifest, "label"));
+    report_manifest_kv(out, "Summary", value_str(manifest, "summary"));
+    report_manifest_kv(out, "Summary URL", value_str(manifest, "summary_url"));
     report_manifest_kv(out, "Tags", &manifest_tags(manifest));
     report_manifest_kv(out, "Members", &manifest_member_summary(manifest));
     out.push_str("</dl>");

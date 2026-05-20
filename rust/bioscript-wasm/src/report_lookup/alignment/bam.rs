@@ -153,12 +153,14 @@ fn observe_bam_variant<R: std::io::Read + std::io::Seek>(
                         .unwrap_or("variant")
                 ))
             })?;
+            let alternate_lengths = indel_alternate_lengths(variant, alternate);
             observe_bam_indel_with_reader(
                 reader,
                 label,
                 &locus,
                 reference,
                 alternate,
+                &alternate_lengths,
                 variant.rsids.first().cloned(),
                 assembly,
             )
@@ -360,6 +362,7 @@ fn observe_bam_indel_with_reader<R: std::io::Read + std::io::Seek>(
     locus: &GenomicLocus,
     reference: &str,
     alternate: &str,
+    alternate_lengths: &[usize],
     matched_rsid: Option<String>,
     assembly: Option<Assembly>,
 ) -> Result<VariantObservation, RuntimeError> {
@@ -380,8 +383,12 @@ fn observe_bam_indel_with_reader<R: std::io::Read + std::io::Seek>(
         if alignment_record.is_unmapped || !record_overlaps_locus(&alignment_record, locus) {
             continue;
         }
-        let classification =
-            classify_expected_indel(&alignment_record, locus, reference.len(), alternate)?;
+        let classification = classify_expected_indel_lengths(
+            &alignment_record,
+            locus,
+            reference.len(),
+            alternate_lengths,
+        )?;
         if !classification.covering {
             continue;
         }
@@ -421,6 +428,21 @@ fn observe_bam_indel_with_reader<R: std::io::Read + std::io::Seek>(
             locus.chrom, locus.start, locus.end, depth, ref_count, alt_count, evidence_label
         )],
     })
+}
+
+fn indel_alternate_lengths(variant: &VariantSpec, fallback_alternate: &str) -> Vec<usize> {
+    let mut lengths = variant
+        .observed_alternates
+        .iter()
+        .map(String::len)
+        .filter(|len| *len > 0)
+        .collect::<Vec<_>>();
+    if lengths.is_empty() {
+        lengths.push(fallback_alternate.len());
+    }
+    lengths.sort_unstable();
+    lengths.dedup();
+    lengths
 }
 
 fn read_bam_header<R: std::io::Read + std::io::Seek>(
@@ -470,7 +492,7 @@ mod pileup;
 
 use pileup::{
     BamSnpPileupCounts, bam_alignment_record, bam_base_quality_at_reference_position,
-    classify_expected_indel, describe_copy_number_decision_rule, describe_snp_decision_rule,
-    indel_at_anchor, infer_copy_number_genotype, infer_snp_genotype, normalize_pileup_base,
-    record_overlaps_locus, spans_position,
+    classify_expected_indel_lengths, describe_copy_number_decision_rule,
+    describe_snp_decision_rule, indel_at_anchor, infer_copy_number_genotype, infer_snp_genotype,
+    normalize_pileup_base, record_overlaps_locus, spans_position,
 };

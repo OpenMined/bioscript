@@ -396,6 +396,7 @@ mod tests {
             grch38_assembly_ref: None,
             reference: Some("A".to_owned()),
             alternate: Some("G".to_owned()),
+            observed_alternates: vec!["G".to_owned()],
             kind: Some(VariantKind::Snp),
             deletion_length: None,
             motifs: Vec::new(),
@@ -1530,6 +1531,7 @@ mod tests {
             &locus("chr_test", 1000, 1000),
             "A",
             "AT",
+            &[2],
             Some("mini_indel".to_owned()),
             Some(Assembly::Grch38),
         )
