@@ -124,6 +124,23 @@ pub(super) fn variant_observed_alt_alleles_from_yaml(value: &serde_yaml::Value) 
         .unwrap_or_default()
 }
 
+pub(super) fn variant_alt_alleles_from_yaml(value: &serde_yaml::Value) -> Vec<String> {
+    value
+        .as_mapping()
+        .and_then(|mapping| mapping.get(serde_yaml::Value::String("alleles".to_owned())))
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|mapping| mapping.get(serde_yaml::Value::String("alts".to_owned())))
+        .and_then(serde_yaml::Value::as_sequence)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_yaml::Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::participant_id_from_name;

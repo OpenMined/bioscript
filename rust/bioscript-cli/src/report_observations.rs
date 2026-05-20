@@ -17,11 +17,22 @@ fn app_observation_from_manifest_row(
         &manifest_path.display().to_string(),
     )?;
     let manifest = task.manifest;
-    let (gene, observed_alt_alleles, source) = if row_path.contains('#') {
-        (String::new(), Vec::new(), serde_json::Value::Null)
+    let (gene, alt_alleles, observed_alt_alleles, source) = if row_path.contains('#') {
+        (
+            String::new(),
+            manifest
+                .spec
+                .alternate
+                .clone()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            manifest.spec.observed_alternates.clone(),
+            serde_json::Value::Null,
+        )
     } else {
         (
             variant_manifest_gene(&manifest_path)?,
+            variant_alt_alleles(&manifest_path)?,
             variant_observed_alt_alleles(&manifest_path)?,
             variant_primary_source(&manifest_path)?,
         )
@@ -34,6 +45,7 @@ fn app_observation_from_manifest_row(
             manifest,
             gene,
             source,
+            alt_alleles,
             observed_alt_alleles,
             inferred_sex,
             fallback_assembly,
@@ -107,6 +119,27 @@ fn variant_observed_alt_alleles(path: &Path) -> Result<Vec<String>, String> {
             mapping
                 .get(serde_yaml::Value::String("observed_alts".to_owned()))
         })
+        .and_then(serde_yaml::Value::as_sequence)
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(items
+        .iter()
+        .filter_map(serde_yaml::Value::as_str)
+        .map(ToOwned::to_owned)
+        .collect())
+}
+
+fn variant_alt_alleles(path: &Path) -> Result<Vec<String>, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read variant YAML {}: {err}", path.display()))?;
+    let value: serde_yaml::Value = serde_yaml::from_str(&text)
+        .map_err(|err| format!("failed to parse variant YAML {}: {err}", path.display()))?;
+    let Some(items) = value
+        .as_mapping()
+        .and_then(|mapping| mapping.get(serde_yaml::Value::String("alleles".to_owned())))
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|mapping| mapping.get(serde_yaml::Value::String("alts".to_owned())))
         .and_then(serde_yaml::Value::as_sequence)
     else {
         return Ok(Vec::new());
