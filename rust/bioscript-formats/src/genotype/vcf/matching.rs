@@ -142,6 +142,51 @@ pub(crate) fn vcf_row_matches_variant(
     }
 }
 
+pub(crate) fn vcf_row_genotype_for_variant(row: &ParsedVcfRow, variant: &VariantSpec) -> String {
+    if !matches!(
+        variant.kind,
+        Some(VariantKind::Deletion | VariantKind::Insertion | VariantKind::Indel)
+    ) {
+        return row.genotype.clone();
+    }
+
+    let parts: Vec<&str> = row.genotype.split('/').collect();
+    if parts.len() <= 1 {
+        return row.genotype.clone();
+    }
+
+    let alternates: Vec<&str> = row.alternates.iter().map(String::as_str).collect();
+    let mut tokens = Vec::with_capacity(parts.len());
+    for part in parts {
+        if part.eq_ignore_ascii_case(&row.reference) {
+            tokens.push(super::super::vcf_tokens::vcf_reference_token(
+                &row.reference,
+                &alternates,
+            ));
+        } else if let Some(alternate) = row
+            .alternates
+            .iter()
+            .find(|alternate| alternate.eq_ignore_ascii_case(part))
+        {
+            tokens.push(super::super::vcf_tokens::vcf_alt_token(
+                &row.reference,
+                alternate,
+            ));
+        } else {
+            return row.genotype.clone();
+        }
+    }
+
+    if tokens
+        .iter()
+        .all(|token| token.chars().count() == 1 && token != "--")
+    {
+        return super::super::normalize_genotype(&tokens.join(""));
+    }
+
+    row.genotype.clone()
+}
+
 fn snp_row_has_catalog_allele(row: &ParsedVcfRow, variant: &VariantSpec) -> bool {
     let Some(alternate) = variant.alternate.as_ref() else {
         return true;

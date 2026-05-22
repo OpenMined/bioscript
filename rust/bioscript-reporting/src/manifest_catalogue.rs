@@ -87,8 +87,13 @@ fn catalogue_row_task(
         columns.value(row, "identifier.aliases"),
         columns.separator("identifier.aliases"),
     ));
-    rsids.sort();
-    rsids.dedup();
+    let mut deduped_rsids = Vec::with_capacity(rsids.len());
+    for rsid in rsids {
+        if !deduped_rsids.iter().any(|seen| seen == &rsid) {
+            deduped_rsids.push(rsid);
+        }
+    }
+    let rsids = deduped_rsids;
     let alternates = split_list(
         columns.value(row, "alleles.alts"),
         columns.separator("alleles.alts"),

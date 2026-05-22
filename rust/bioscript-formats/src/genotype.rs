@@ -712,6 +712,15 @@ mod tests {
             Some("--")
         );
         assert_eq!(genotype_from_vcf_gt("2/2", "A", &["G"]), None);
+        assert_eq!(
+            genotype_from_vcf_gt("0/1", "TTTTTTTTTTTTT", &["TTTTTTTTTTTT"]).as_deref(),
+            Some("TTTTTTTTTTTTT/TTTTTTTTTTTT")
+        );
+        assert_eq!(
+            genotype_from_vcf_gt("0/2", "TTTTTTTTTTTTT", &["TTTTTTTTTTTT", "TTTTTTTTTTTTTT"])
+                .as_deref(),
+            Some("TTTTTTTTTTTTT/TTTTTTTTTTTTTT")
+        );
         assert_eq!(vcf_reference_token("AT", &["A"]), "I");
         assert_eq!(vcf_reference_token("A", &["AT"]), "D");
         assert_eq!(vcf_reference_token("A", &["<NON_REF>"]), "A");

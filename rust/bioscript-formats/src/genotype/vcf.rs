@@ -309,7 +309,10 @@ fn resolve_vcf_row(
                     backend: backend.backend_name().to_owned(),
                     matched_rsid: Some(rsid.clone()),
                     assembly: targets.detected_assembly,
-                    genotype: Some(row.genotype.clone()),
+                    genotype: Some(matching::vcf_row_genotype_for_variant(
+                        row,
+                        &targets.variants[target_idx],
+                    )),
                     evidence: vec![
                         format!("resolved by rsid {rsid}"),
                         format!("source line: {}", row.raw_line),
@@ -339,7 +342,10 @@ fn resolve_vcf_row(
                     backend: backend.backend_name().to_owned(),
                     matched_rsid: row.rsid.clone(),
                     assembly: targets.detected_assembly,
-                    genotype: Some(row.genotype.clone()),
+                    genotype: Some(matching::vcf_row_genotype_for_variant(
+                        row,
+                        &targets.variants[target_idx],
+                    )),
                     evidence: vec![
                         format!("resolved by locus {}:{}", row.chrom, row.position),
                         format!("source line: {}", row.raw_line),
