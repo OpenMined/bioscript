@@ -7,7 +7,7 @@ use noodles::tabix;
 
 use bioscript_core::{Assembly, GenomicLocus, RuntimeError, VariantObservation, VariantSpec};
 
-use super::{parse_vcf_record, vcf_row_matches_variant};
+use super::{matching::vcf_row_genotype_for_variant, parse_vcf_record, vcf_row_matches_variant};
 
 /// Observe a SNP at `locus` over an already-built tabix-indexed bgzipped VCF
 /// reader. Caller builds `csi::io::IndexedReader::new(reader, tabix_index)`
@@ -208,7 +208,7 @@ where
                 backend: "vcf".to_owned(),
                 matched_rsid: matched_rsid.or_else(|| row.rsid.clone()),
                 assembly,
-                genotype: Some(row.genotype.clone()),
+                genotype: Some(vcf_row_genotype_for_variant(&row, variant)),
                 evidence: vec![format!("{label}: resolved by indexed locus {locus_label}")],
                 ..VariantObservation::default()
             });

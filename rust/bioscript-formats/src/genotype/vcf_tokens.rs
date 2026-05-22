@@ -15,21 +15,40 @@ pub(crate) fn genotype_from_vcf_gt(
         return Some("--".to_owned());
     }
 
-    let ref_token = vcf_reference_token(reference, alternates);
-    let mut out = String::new();
+    let mut indexes = Vec::with_capacity(parts.len());
     for part in parts {
         let Ok(idx) = part.parse::<usize>() else {
             return Some("--".to_owned());
         };
+        indexes.push(idx);
+    }
+
+    let alternate_only = indexes.iter().all(|idx| *idx > 0);
+    let mut tokens = Vec::with_capacity(indexes.len());
+    for idx in indexes {
         if idx == 0 {
-            out.push_str(&ref_token);
+            tokens.push(normalize_sequence_token(reference));
         } else {
             let alt = alternates.get(idx - 1)?;
-            out.push_str(&vcf_alt_token(reference, alt));
+            if is_symbolic_vcf_alt(alt) {
+                return Some("--".to_owned());
+            }
+            if alternate_only {
+                tokens.push(vcf_alt_token(reference, alt));
+            } else {
+                tokens.push(normalize_sequence_token(alt));
+            }
         }
     }
 
-    Some(normalize_genotype(&out))
+    if tokens
+        .iter()
+        .all(|token| token.chars().count() == 1 && token != "--")
+    {
+        return Some(normalize_genotype(&tokens.join("")));
+    }
+
+    Some(tokens.join("/"))
 }
 
 pub(crate) fn vcf_reference_token(reference: &str, alternates: &[&str]) -> String {

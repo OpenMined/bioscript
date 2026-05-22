@@ -58,14 +58,17 @@ pub(super) fn normalize_app_genotype(
     if display.is_empty() {
         return ("./.".to_owned(), "unknown".to_owned());
     }
-    if matches!(kind, Some(VariantKind::Deletion))
-        && ref_allele.len() != 1
-        && display
-            .chars()
-            .filter(char::is_ascii_alphabetic)
-            .all(|allele| matches!(allele.to_ascii_uppercase(), 'I' | 'D'))
+    if let Some((reference_token, alternate_token)) =
+        indel_display_tokens(display, ref_allele, alt_allele, kind)
     {
-        return normalize_app_genotype(display, "I", "D", None, chrom, inferred_sex);
+        return normalize_app_genotype(
+            display,
+            &reference_token,
+            &alternate_token,
+            None,
+            chrom,
+            inferred_sex,
+        );
     }
     if let Some(normalized) = normalize_long_allele_genotype(display, ref_allele, alt_allele) {
         return normalized;
@@ -107,6 +110,33 @@ pub(super) fn normalize_app_genotype(
         (0, 2) => ("1/1".to_owned(), "hom_alt".to_owned()),
         _ => (display.to_owned(), "unknown".to_owned()),
     }
+}
+
+fn indel_display_tokens(
+    display: &str,
+    ref_allele: &str,
+    _alt_allele: &str,
+    kind: Option<VariantKind>,
+) -> Option<(String, String)> {
+    if ref_allele.len() <= 1
+        || !matches!(kind, Some(VariantKind::Deletion | VariantKind::Insertion))
+    {
+        return None;
+    }
+    if !display
+        .chars()
+        .filter(char::is_ascii_alphabetic)
+        .all(|allele| matches!(allele.to_ascii_uppercase(), 'I' | 'D'))
+    {
+        return None;
+    }
+    if matches!(kind, Some(VariantKind::Deletion)) {
+        return Some(("I".to_owned(), "D".to_owned()));
+    }
+    if matches!(kind, Some(VariantKind::Insertion)) {
+        return Some(("D".to_owned(), "I".to_owned()));
+    }
+    None
 }
 
 fn normalize_long_allele_genotype(

@@ -338,6 +338,12 @@ fn render_app_observation_json(input: AppObservationJson) -> serde_json::Value {
     } else {
         gene
     };
+    let canonical_rsid = manifest.spec.rsids.first().filter(|rsid| !rsid.is_empty());
+    let matched_rsid = row.get("matched_rsid").filter(|rsid| !rsid.is_empty());
+    let alias_match_note = matched_rsid
+        .filter(|matched| canonical_rsid.is_some_and(|canonical| canonical != *matched))
+        .filter(|matched| manifest.spec.rsids.iter().any(|rsid| rsid == *matched))
+        .map(|matched| format!("matched alias: {matched}"));
     let source = if source.is_null() {
         manifest_default_source(&row, &manifest)
     } else {
@@ -349,7 +355,7 @@ fn render_app_observation_json(input: AppObservationJson) -> serde_json::Value {
         "assay_version": "1.0",
         "variant_key": manifest.name,
         "variant_path": row_path,
-        "rsid": row.get("matched_rsid").filter(|value| !value.is_empty()).cloned().or_else(|| manifest.spec.rsids.first().cloned()),
+        "rsid": canonical_rsid.cloned().or_else(|| matched_rsid.cloned()),
         "gene": gene,
         "assembly": if assembly.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(assembly.to_uppercase()) },
         "chrom": chrom,
@@ -377,6 +383,8 @@ fn render_app_observation_json(input: AppObservationJson) -> serde_json::Value {
         "match_quality": if weak_indel_match { serde_json::Value::String("weak".to_owned()) } else { serde_json::Value::Null },
         "match_notes": if weak_indel_match {
             serde_json::Value::String("consumer genotype file reported an insertion/deletion token at the marker, not sequence-resolved evidence for the exact deletion allele".to_owned())
+        } else if let Some(note) = alias_match_note {
+            serde_json::Value::String(note)
         } else {
             serde_json::Value::Null
         },
@@ -397,10 +405,10 @@ fn manifest_default_source(
     manifest: &VariantManifest,
 ) -> serde_json::Value {
     let rsid = row
-        .get("matched_rsid")
+        .get("rsid")
         .filter(|rsid| !rsid.is_empty())
-        .or_else(|| row.get("rsid").filter(|rsid| !rsid.is_empty()))
-        .or_else(|| manifest.spec.rsids.first().filter(|rsid| !rsid.is_empty()));
+        .or_else(|| manifest.spec.rsids.first().filter(|rsid| !rsid.is_empty()))
+        .or_else(|| row.get("matched_rsid").filter(|rsid| !rsid.is_empty()));
     let Some(rsid) = rsid else {
         return serde_json::Value::Null;
     };
@@ -442,6 +450,32 @@ mod tests {
                 None,
             ),
             ("0/1".to_owned(), "het".to_owned())
+        );
+    }
+
+    #[test]
+    fn repeat_indel_insertion_deletion_tokens_remain_ambiguous_without_sequence_alleles() {
+        assert_eq!(
+            normalize_app_genotype(
+                "II",
+                "TTTTTTTTTTTTT",
+                "TTTTTTTTTTTT",
+                Some(VariantKind::Indel),
+                "19",
+                None,
+            ),
+            ("II".to_owned(), "unknown".to_owned())
+        );
+        assert_eq!(
+            normalize_app_genotype(
+                "ID",
+                "TTTTTTTTTTTTT",
+                "TTTTTTTTTTTT",
+                Some(VariantKind::Indel),
+                "19",
+                None,
+            ),
+            ("ID".to_owned(), "unknown".to_owned())
         );
     }
 
