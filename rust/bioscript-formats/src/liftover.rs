@@ -192,10 +192,11 @@ impl ChainIndex {
         let mut best: Option<&ChainBlock> = None;
         loop {
             let block = &chrom_blocks.blocks[i];
-            if block.source_start <= pos0 && pos0 < block.source_end {
-                if best.is_none_or(|candidate| compare_blocks(block, candidate).is_gt()) {
-                    best = Some(block);
-                }
+            if block.source_start <= pos0
+                && pos0 < block.source_end
+                && best.is_none_or(|candidate| compare_blocks(block, candidate).is_gt())
+            {
+                best = Some(block);
             }
 
             if let Some(candidate) = best
@@ -322,18 +323,15 @@ pub fn convert_23andme_reader_with_chain<R: BufRead, W: Write, U: Write>(
             continue;
         }
 
-        let pos = match fields[2].parse::<i64>() {
-            Ok(pos) => pos,
-            Err(_) => {
-                stats.unmapped += 1;
-                writeln!(
-                    unmapped,
-                    "{}\t{}\t{}\t{}\tnon_integer_position",
-                    fields[0], fields[1], fields[2], fields[3]
-                )
-                .map_err(write_error("unmapped report"))?;
-                continue;
-            }
+        let Ok(pos) = fields[2].parse::<i64>() else {
+            stats.unmapped += 1;
+            writeln!(
+                unmapped,
+                "{}\t{}\t{}\t{}\tnon_integer_position",
+                fields[0], fields[1], fields[2], fields[3]
+            )
+            .map_err(write_error("unmapped report"))?;
+            continue;
         };
 
         let Some(lifted) = chain.lookup(Assembly::Grch37, Assembly::Grch38, &fields[1], pos) else {

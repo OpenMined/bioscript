@@ -22,7 +22,25 @@ use noodles::vcf::{
         },
     },
 };
-use std::io::{BufRead, BufReader};
+use std::{
+    io::{BufRead, BufReader},
+    path::Path,
+};
+
+type BcfRecord<'a> = (&'a str, i64, &'a str, &'a str, &'a str, &'a [f32]);
+
+struct LiftedVariants {
+    txt_genotypes: Vec<String>,
+    variants: Vec<VariantSpec>,
+}
+
+struct Concordance {
+    queried: usize,
+    found: usize,
+    matched: usize,
+    mismatched: usize,
+    examples: Vec<String>,
+}
 
 fn locus(chrom: &str, start: i64, end: i64) -> GenomicLocus {
     GenomicLocus {
@@ -32,7 +50,7 @@ fn locus(chrom: &str, start: i64, end: i64) -> GenomicLocus {
     }
 }
 
-fn bcf_bytes(records: &[(&str, i64, &str, &str, &str, &[f32])]) -> Vec<u8> {
+fn bcf_bytes(records: &[BcfRecord<'_>]) -> Vec<u8> {
     let header = vcf::Header::builder()
         .add_filter("PASS", Map::<Filter>::pass())
         .add_contig("chr6", Map::<Contig>::new())
@@ -71,6 +89,87 @@ fn bcf_bytes(records: &[(&str, i64, &str, &str, &str, &[f32])]) -> Vec<u8> {
     writer.try_finish().unwrap();
     drop(writer);
     data
+}
+
+fn lifted_text_variants(lifted: &Path) -> LiftedVariants {
+    let mut txt_genotypes = Vec::new();
+    let mut variants = Vec::new();
+    let file = fs::File::open(lifted).unwrap();
+    for line in BufReader::new(file).lines() {
+        let line = line.unwrap();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() < 4 {
+            continue;
+        }
+        let chrom = fields[1];
+        if matches!(chrom, "Y" | "MT" | "M") {
+            continue;
+        }
+        let genotype = fields[3].trim().to_ascii_uppercase();
+        if !is_acgt_genotype(&genotype) {
+            continue;
+        }
+        let Ok(pos) = fields[2].parse::<i64>() else {
+            continue;
+        };
+        txt_genotypes.push(normalized_acgt_genotype(&genotype));
+        variants.push(VariantSpec {
+            rsids: vec![fields[0].to_owned()],
+            grch38: Some(locus(chrom, pos, pos)),
+            kind: Some(VariantKind::Snp),
+            ..VariantSpec::default()
+        });
+    }
+
+    LiftedVariants {
+        txt_genotypes,
+        variants,
+    }
+}
+
+fn bcf_concordance(
+    bcf_zip: &Path,
+    variants: &[VariantSpec],
+    txt_genotypes: &[String],
+) -> Concordance {
+    let bcf_store = GenotypeStore::from_file(bcf_zip).unwrap();
+    let observations = bcf_store.lookup_variants(variants).unwrap();
+    let mut concordance = Concordance {
+        queried: 0,
+        found: 0,
+        matched: 0,
+        mismatched: 0,
+        examples: Vec::new(),
+    };
+
+    for (idx, observation) in observations.iter().enumerate() {
+        concordance.queried += 1;
+        let Some(bcf_genotype) = observation.genotype.as_deref() else {
+            continue;
+        };
+        concordance.found += 1;
+        if normalized_acgt_genotype(bcf_genotype) == txt_genotypes[idx] {
+            concordance.matched += 1;
+        } else {
+            concordance.mismatched += 1;
+            if concordance.examples.len() < 8 {
+                let locus = variants[idx].grch38.as_ref().unwrap();
+                concordance.examples.push(format!(
+                    "{} {}:{} txt={} bcf={}",
+                    variants[idx].rsids[0],
+                    locus.chrom,
+                    locus.start,
+                    txt_genotypes[idx],
+                    bcf_genotype
+                ));
+            }
+        }
+    }
+
+    concordance
 }
 
 #[test]
@@ -282,87 +381,40 @@ fn local_23andme_lifted_text_broadly_matches_real_bcf_zip_when_enabled() {
     let unmapped = dir.join("unmapped.tsv");
     convert_23andme_grch37_to_grch38(&raw_txt, &lifted, &unmapped).unwrap();
 
-    let mut txt_genotypes = Vec::new();
-    let mut variants = Vec::new();
-    let file = fs::File::open(&lifted).unwrap();
-    for line in BufReader::new(file).lines() {
-        let line = line.unwrap();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let fields: Vec<&str> = line.split('\t').collect();
-        if fields.len() < 4 {
-            continue;
-        }
-        let chrom = fields[1];
-        if matches!(chrom, "Y" | "MT" | "M") {
-            continue;
-        }
-        let genotype = fields[3].trim().to_ascii_uppercase();
-        if genotype.is_empty()
-            || genotype == "--"
-            || !genotype
-                .chars()
-                .all(|base| matches!(base, 'A' | 'C' | 'G' | 'T'))
-        {
-            continue;
-        }
-        let Ok(pos) = fields[2].parse::<i64>() else {
-            continue;
-        };
-        txt_genotypes.push(normalized_acgt_genotype(&genotype));
-        variants.push(VariantSpec {
-            rsids: vec![fields[0].to_owned()],
-            grch38: Some(locus(chrom, pos, pos)),
-            kind: Some(VariantKind::Snp),
-            ..VariantSpec::default()
-        });
-    }
-
-    let bcf_store = GenotypeStore::from_file(&bcf_zip).unwrap();
-    let observations = bcf_store.lookup_variants(&variants).unwrap();
-
-    let mut queried = 0usize;
-    let mut found = 0usize;
-    let mut matched = 0usize;
-    let mut mismatched = 0usize;
-    let mut examples = Vec::new();
-    for (idx, observation) in observations.iter().enumerate() {
-        queried += 1;
-        let Some(bcf_genotype) = observation.genotype.as_deref() else {
-            continue;
-        };
-        found += 1;
-        if normalized_acgt_genotype(bcf_genotype) == txt_genotypes[idx] {
-            matched += 1;
-        } else {
-            mismatched += 1;
-            if examples.len() < 8 {
-                let locus = variants[idx].grch38.as_ref().unwrap();
-                examples.push(format!(
-                    "{} {}:{} txt={} bcf={}",
-                    variants[idx].rsids[0],
-                    locus.chrom,
-                    locus.start,
-                    txt_genotypes[idx],
-                    bcf_genotype
-                ));
-            }
-        }
-    }
+    let lifted_variants = lifted_text_variants(&lifted);
+    let concordance = bcf_concordance(
+        &bcf_zip,
+        &lifted_variants.variants,
+        &lifted_variants.txt_genotypes,
+    );
 
     eprintln!(
-        "local 23andMe BCF broad concordance: queried={queried} found={found} matched={matched} mismatched={mismatched} missing={}",
-        queried - found
+        "local 23andMe BCF broad concordance: queried={queried} found={found} matched={matched} mismatched={mismatched} missing={missing}",
+        queried = concordance.queried,
+        found = concordance.found,
+        matched = concordance.matched,
+        mismatched = concordance.mismatched,
+        missing = concordance.queried - concordance.found
     );
-    if !examples.is_empty() {
-        eprintln!("mismatch examples: {}", examples.join("; "));
+    if !concordance.examples.is_empty() {
+        eprintln!("mismatch examples: {}", concordance.examples.join("; "));
     }
-    assert!(queried > 500_000, "expected broad 23andMe SNP comparison");
     assert!(
-        found > 500_000,
+        concordance.queried > 500_000,
+        "expected broad 23andMe SNP comparison"
+    );
+    assert!(
+        concordance.found > 500_000,
         "expected most lifted SNPs to be present in BCF"
     );
+}
+
+fn is_acgt_genotype(genotype: &str) -> bool {
+    !genotype.is_empty()
+        && genotype != "--"
+        && genotype
+            .chars()
+            .all(|base| matches!(base, 'A' | 'C' | 'G' | 'T'))
 }
 
 fn normalized_acgt_genotype(genotype: &str) -> String {
