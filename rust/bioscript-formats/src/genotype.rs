@@ -12,6 +12,7 @@ use bioscript_core::{RuntimeError, VariantObservation};
 mod alignment_bytes;
 mod backends;
 mod bam_backend;
+mod bcf;
 mod cache;
 mod common;
 mod cram_backend;
@@ -39,8 +40,8 @@ use io::{
     select_zip_entry,
 };
 use types::{
-    AlignmentBytesBackend, BamBackend, CramBackend, DelimitedBackend, QueryBackend, RsidMapBackend,
-    VcfBackend,
+    AlignmentBytesBackend, BamBackend, BcfBackend, BcfSource, CramBackend, DelimitedBackend,
+    QueryBackend, RsidMapBackend, VcfBackend,
 };
 pub use types::{
     BackendCapabilities, GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, QueryKind,
@@ -123,6 +124,17 @@ impl GenotypeStore {
             )),
             GenotypeSourceFormat::Zip => Self::from_zip_file(path, options),
             GenotypeSourceFormat::Vcf => Ok(Self::from_vcf_file(path, options)),
+            GenotypeSourceFormat::Bcf => {
+                if path
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .ends_with(".zip")
+                {
+                    Self::from_zip_file(path, options)
+                } else {
+                    Ok(Self::from_bcf_file(path, options))
+                }
+            }
             GenotypeSourceFormat::Cram => Self::from_cram_file(path, options),
             GenotypeSourceFormat::Bam => Ok(Self::from_bam_file(path, options)),
         }
@@ -137,6 +149,13 @@ impl GenotypeStore {
         if lower.ends_with(".zip") || bytes_look_like_zip(bytes) {
             return Self::from_zip_bytes(name, bytes);
         }
+        if lower.ends_with(".bcf") {
+            return Ok(Self::from_bcf_bytes(
+                name,
+                bytes,
+                &GenotypeLoadOptions::default(),
+            ));
+        }
         let reader = BufReader::new(Cursor::new(bytes));
         if lower.ends_with(".vcf") || bytes_look_like_vcf(bytes) {
             return Self::from_vcf_reader(reader, name);
@@ -148,6 +167,33 @@ impl GenotypeStore {
         let mut archive = ZipArchive::new(Cursor::new(bytes)).map_err(|err| {
             RuntimeError::Io(format!("failed to read genotype zip {name}: {err}"))
         })?;
+        let bcf_entries = collect_bcf_zip_entries_from_archive(&mut archive, name)?;
+        if !bcf_entries.is_empty() {
+            let mut entries = Vec::with_capacity(bcf_entries.len());
+            for entry_name in bcf_entries {
+                let mut entry = archive.by_name(&entry_name).map_err(|err| {
+                    RuntimeError::Io(format!(
+                        "failed to open genotype entry {entry_name} in {name}: {err}"
+                    ))
+                })?;
+                let mut data = Vec::new();
+                std::io::Read::read_to_end(&mut entry, &mut data).map_err(|err| {
+                    RuntimeError::Io(format!(
+                        "failed to read genotype entry {entry_name} in {name}: {err}"
+                    ))
+                })?;
+                entries.push((entry_name, data));
+            }
+            return Ok(Self {
+                backend: QueryBackend::Bcf(BcfBackend {
+                    source: BcfSource::ZipBytes {
+                        name: name.to_owned(),
+                        entries,
+                    },
+                    options: GenotypeLoadOptions::default(),
+                }),
+            });
+        }
         let mut selected = None;
         for idx in 0..archive.len() {
             let entry = archive.by_index(idx).map_err(|err| {
@@ -159,6 +205,7 @@ impl GenotypeStore {
             let entry_name = entry.name().to_owned();
             let lower = entry_name.to_ascii_lowercase();
             if lower.ends_with(".vcf")
+                || lower.ends_with(".bcf")
                 || lower.ends_with(".txt")
                 || lower.ends_with(".tsv")
                 || lower.ends_with(".csv")
@@ -187,6 +234,20 @@ impl GenotypeStore {
         if selected.to_ascii_lowercase().ends_with(".vcf") {
             return Self::from_vcf_reader(reader, &label);
         }
+        if selected.to_ascii_lowercase().ends_with(".bcf") {
+            let mut entry = reader.into_inner();
+            let mut data = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut data).map_err(|err| {
+                RuntimeError::Io(format!(
+                    "failed to read genotype entry {selected} in {name}: {err}"
+                ))
+            })?;
+            return Ok(Self::from_bcf_bytes(
+                &label,
+                &data,
+                &GenotypeLoadOptions::default(),
+            ));
+        }
         Self::from_delimited_reader(GenotypeSourceFormat::Zip, reader, &label)
     }
 
@@ -199,7 +260,40 @@ impl GenotypeStore {
         }
     }
 
+    fn from_bcf_file(path: &Path, options: &GenotypeLoadOptions) -> Self {
+        Self {
+            backend: QueryBackend::Bcf(BcfBackend {
+                source: BcfSource::File(path.to_path_buf()),
+                options: options.clone(),
+            }),
+        }
+    }
+
+    fn from_bcf_bytes(name: &str, bytes: &[u8], options: &GenotypeLoadOptions) -> Self {
+        Self {
+            backend: QueryBackend::Bcf(BcfBackend {
+                source: BcfSource::Bytes {
+                    name: name.to_owned(),
+                    data: bytes.to_vec(),
+                },
+                options: options.clone(),
+            }),
+        }
+    }
+
     fn from_zip_file(path: &Path, options: &GenotypeLoadOptions) -> Result<Self, RuntimeError> {
+        let bcf_entries = collect_bcf_zip_entries(path)?;
+        if !bcf_entries.is_empty() {
+            return Ok(Self {
+                backend: QueryBackend::Bcf(BcfBackend {
+                    source: BcfSource::ZipFile {
+                        path: path.to_path_buf(),
+                        entries: bcf_entries,
+                    },
+                    options: options.clone(),
+                }),
+            });
+        }
         let selected = select_zip_entry(path)?;
         let lower = selected.to_ascii_lowercase();
         if lower.ends_with(".vcf") || lower.ends_with(".vcf.gz") {
@@ -306,6 +400,43 @@ impl GenotypeStore {
             }),
         }
     }
+}
+
+fn collect_bcf_zip_entries(path: &Path) -> Result<Vec<String>, RuntimeError> {
+    let file = File::open(path).map_err(|err| {
+        RuntimeError::Io(format!(
+            "failed to open genotype zip {}: {err}",
+            path.display()
+        ))
+    })?;
+    let mut archive = ZipArchive::new(file).map_err(|err| {
+        RuntimeError::Io(format!(
+            "failed to read genotype zip {}: {err}",
+            path.display()
+        ))
+    })?;
+    collect_bcf_zip_entries_from_archive(&mut archive, &path.display().to_string())
+}
+
+fn collect_bcf_zip_entries_from_archive<R: std::io::Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+    label: &str,
+) -> Result<Vec<String>, RuntimeError> {
+    let mut entries = Vec::new();
+    for idx in 0..archive.len() {
+        let entry = archive.by_index(idx).map_err(|err| {
+            RuntimeError::Io(format!("failed to inspect genotype zip {label}: {err}"))
+        })?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().to_owned();
+        if name.to_ascii_lowercase().ends_with(".bcf") {
+            entries.push(name);
+        }
+    }
+    entries.sort();
+    Ok(entries)
 }
 
 fn bytes_look_like_zip(bytes: &[u8]) -> bool {

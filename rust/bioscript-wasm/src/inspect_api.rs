@@ -138,6 +138,7 @@ fn render_kind(k: DetectedKind) -> &'static str {
     match k {
         DetectedKind::GenotypeText => "genotype_text",
         DetectedKind::Vcf => "vcf",
+        DetectedKind::Bcf => "bcf",
         DetectedKind::AlignmentCram => "alignment_cram",
         DetectedKind::AlignmentBam => "alignment_bam",
         DetectedKind::ReferenceFasta => "reference_fasta",

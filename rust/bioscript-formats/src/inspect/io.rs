@@ -63,6 +63,7 @@ pub(crate) fn select_zip_entry_from_bytes(bytes: &[u8]) -> Result<String, Runtim
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".vcf")
             || lower.ends_with(".vcf.gz")
+            || lower.ends_with(".bcf")
             || lower.ends_with(".txt")
             || lower.ends_with(".tsv")
             || lower.ends_with(".csv")
@@ -173,6 +174,7 @@ pub(crate) fn select_zip_entry(path: &Path) -> Result<String, RuntimeError> {
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".vcf")
             || lower.ends_with(".vcf.gz")
+            || lower.ends_with(".bcf")
             || lower.ends_with(".txt")
             || lower.ends_with(".tsv")
             || lower.ends_with(".csv")

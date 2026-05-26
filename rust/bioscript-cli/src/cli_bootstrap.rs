@@ -11,7 +11,7 @@ use std::{
 use bioscript_formats::{
     GenotypeLoadOptions, GenotypeSourceFormat, GenotypeStore, InferredSex, InspectOptions,
     PrepareRequest, SexDetectionConfidence, SexInference, inspect_file, prepare_indexes,
-    shell_flags,
+    shell_flags, convert_23andme_grch37_to_grch38,
 };
 use bioscript_runtime::{BioscriptRuntime, RuntimeConfig, StageTiming};
 use bioscript_schema::{
@@ -57,7 +57,7 @@ fn run_cli() -> Result<(), String> {
     Ok(())
 }
 
-const USAGE: &str = "usage: bioscript <script.py|manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--input-file <path>] [--output-file <path>] [--observations-file <path>] [--asset id=path] [--participant-id <id>] [--trace-report <path>] [--timing-report <path>] [--filter key=value] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript report <manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> --input-file <path> [--input-file <path>...] --output-dir <dir> [--html] [--open] [--root <dir>] [--input-format auto|text|zip|vcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--allow-md5-mismatch] [--detect-sex] [--sample-sex male|female|unknown] [--analysis-max-duration-ms N]\n       bioscript review <manifest.yaml|package.yaml|package.zip> --cases <cases.yaml> --output-dir <dir> [--html] [--root <dir>] [--filter key=value]\n       bioscript import-package <package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--output-dir <dir>]\n       bioscript validate-variants <path> [--report <file>]\n       bioscript validate-panels <path> [--report <file>]\n       bioscript validate-assays <path> [--report <file>]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|cram] [--cache-dir <path>]\n       bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--detect-sex]";
+const USAGE: &str = "usage: bioscript <script.py|manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--input-file <path>] [--output-file <path>] [--observations-file <path>] [--asset id=path] [--participant-id <id>] [--trace-report <path>] [--timing-report <path>] [--filter key=value] [--input-format auto|text|zip|vcf|bcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--auto-index] [--cache-dir <path>] [--max-duration-ms N] [--max-memory-bytes N] [--max-allocations N] [--max-recursion-depth N]\n       bioscript report <manifest.yaml|package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> --input-file <path> [--input-file <path>...] --output-dir <dir> [--html] [--open] [--root <dir>] [--input-format auto|text|zip|vcf|bcf|cram] [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--allow-md5-mismatch] [--detect-sex] [--sample-sex male|female|unknown] [--analysis-max-duration-ms N]\n       bioscript review <manifest.yaml|package.yaml|package.zip> --cases <cases.yaml> --output-dir <dir> [--html] [--root <dir>] [--filter key=value]\n       bioscript import-package <package.yaml|package.zip|https://.../package.yaml|https://.../package.zip> [--root <dir>] [--output-dir <dir>]\n       bioscript validate-variants <path> [--report <file>]\n       bioscript validate-panels <path> [--report <file>]\n       bioscript validate-assays <path> [--report <file>]\n       bioscript prepare [--root <dir>] [--input-file <path>] [--reference-file <path>] [--input-format auto|text|zip|vcf|bcf|cram] [--cache-dir <path>]\n       bioscript inspect <path> [--input-index <path>] [--reference-file <path>] [--reference-index <path>] [--detect-sex]\n       bioscript liftover-23andme <input.txt> <output.txt> [--unmapped <unmapped.tsv>]";
 
 struct CliOptions {
     script_path: Option<PathBuf>,
@@ -90,6 +90,7 @@ fn dispatch_subcommand(args: &[String]) -> Result<bool, String> {
         "validate-assays" => run_validate_assays(rest).map(|()| true),
         "prepare" => run_prepare(rest).map(|()| true),
         "inspect" => run_inspect(rest).map(|()| true),
+        "liftover-23andme" => run_liftover_23andme(rest).map(|()| true),
         _ => Ok(false),
     }
 }

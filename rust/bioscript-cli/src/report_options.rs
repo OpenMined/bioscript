@@ -312,7 +312,11 @@ fn loader_with_inspection(
     let mut loader = base.clone();
     if loader.format.is_none() {
         loader.format = if inspection.container == bioscript_formats::FileContainer::Zip {
-            Some(GenotypeSourceFormat::Zip)
+            if inspection.detected_kind == bioscript_formats::DetectedKind::Bcf {
+                Some(GenotypeSourceFormat::Bcf)
+            } else {
+                Some(GenotypeSourceFormat::Zip)
+            }
         } else {
             match inspection.detected_kind {
                 bioscript_formats::DetectedKind::AlignmentBam => {
@@ -322,6 +326,7 @@ fn loader_with_inspection(
                     Some(GenotypeSourceFormat::Cram)
                 }
                 bioscript_formats::DetectedKind::Vcf => Some(GenotypeSourceFormat::Vcf),
+                bioscript_formats::DetectedKind::Bcf => Some(GenotypeSourceFormat::Bcf),
                 bioscript_formats::DetectedKind::GenotypeText => Some(GenotypeSourceFormat::Text),
                 _ => None,
             }

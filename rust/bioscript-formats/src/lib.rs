@@ -11,6 +11,7 @@
 pub mod alignment;
 mod genotype;
 mod inspect;
+mod liftover;
 mod prepare;
 
 pub use genotype::{
@@ -23,5 +24,9 @@ pub use inspect::{
     DetectedKind, DetectionConfidence, FileContainer, FileInspection, InferredSex, InspectOptions,
     SexDetectionConfidence, SexInference, SourceMetadata, infer_sex_from_alignment_reader,
     infer_sex_from_named_reader, infer_sex_from_text_lines, inspect_bytes, inspect_file,
+};
+pub use liftover::{
+    ChainIndex, LiftOverOptions, LiftedLocus, LiftoverStats, convert_23andme_grch37_to_grch38,
+    grch37_to_grch38_chain,
 };
 pub use prepare::{PrepareRequest, PreparedPaths, prepare_indexes, shell_flags};
