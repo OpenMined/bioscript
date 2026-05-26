@@ -89,6 +89,7 @@ pub(crate) fn render_kind(value: DetectedKind) -> &'static str {
     match value {
         DetectedKind::GenotypeText => "genotype_text",
         DetectedKind::Vcf => "vcf",
+        DetectedKind::Bcf => "bcf",
         DetectedKind::AlignmentCram => "alignment_cram",
         DetectedKind::AlignmentBam => "alignment_bam",
         DetectedKind::ReferenceFasta => "reference_fasta",

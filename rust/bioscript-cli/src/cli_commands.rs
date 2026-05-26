@@ -112,6 +112,53 @@ fn run_inspect(args: Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
+fn run_liftover_23andme(args: Vec<String>) -> Result<(), String> {
+    let mut input: Option<PathBuf> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut unmapped: Option<PathBuf> = None;
+
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--unmapped" => {
+                unmapped = Some(PathBuf::from(
+                    iter.next().ok_or("--unmapped requires a path")?,
+                ));
+            }
+            other if input.is_none() => input = Some(PathBuf::from(other)),
+            other if output.is_none() => output = Some(PathBuf::from(other)),
+            other => return Err(format!("unexpected argument: {other}")),
+        }
+    }
+
+    let Some(input) = input else {
+        return Err(
+            "usage: bioscript liftover-23andme <input.txt> <output.txt> [--unmapped <unmapped.tsv>]"
+                .to_owned(),
+        );
+    };
+    let Some(output) = output else {
+        return Err(
+            "usage: bioscript liftover-23andme <input.txt> <output.txt> [--unmapped <unmapped.tsv>]"
+                .to_owned(),
+        );
+    };
+    let unmapped = unmapped.unwrap_or_else(|| output.with_extension("unmapped.tsv"));
+
+    let stats = convert_23andme_grch37_to_grch38(&input, &output, &unmapped)
+        .map_err(|err| err.to_string())?;
+    println!("total_markers={}", stats.total_markers);
+    println!("mapped={}", stats.mapped);
+    println!("unmapped={}", stats.unmapped);
+    println!(
+        "reverse_strand_genotypes={}",
+        stats.reverse_strand_genotypes
+    );
+    println!("output={}", output.display());
+    println!("unmapped_report={}", unmapped.display());
+    Ok(())
+}
+
 fn run_validate_variants(args: Vec<String>) -> Result<(), String> {
     let mut path: Option<PathBuf> = None;
     let mut report_path: Option<PathBuf> = None;
@@ -321,6 +368,20 @@ alleles:
         assert!(run_inspect(vec!["sample.cram".to_owned(), "--input-index".to_owned()])
             .unwrap_err()
             .contains("--input-index requires"));
+
+        assert!(run_liftover_23andme(Vec::new())
+            .unwrap_err()
+            .contains("usage"));
+        assert!(run_liftover_23andme(vec!["input.txt".to_owned()])
+            .unwrap_err()
+            .contains("usage"));
+        assert!(run_liftover_23andme(vec![
+            "input.txt".to_owned(),
+            "output.txt".to_owned(),
+            "--unmapped".to_owned(),
+        ])
+        .unwrap_err()
+        .contains("--unmapped requires"));
     }
 
     #[test]
@@ -361,6 +422,35 @@ alleles:
         ])
         .unwrap_err()
         .contains("unexpected argument"));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn liftover_23andme_command_uses_bundled_chain() {
+        let dir = temp_dir("liftover");
+        let input = dir.join("genome.txt");
+        let output = dir.join("genome.grch38.txt");
+        let unmapped = dir.join("unmapped.tsv");
+        fs::write(
+            &input,
+            "# We are using reference human assembly build 37\n\
+rs1800437\t19\t46181392\tCG\n",
+        )
+        .unwrap();
+
+        run_liftover_23andme(vec![
+            input.display().to_string(),
+            output.display().to_string(),
+            "--unmapped".to_owned(),
+            unmapped.display().to_string(),
+        ])
+        .unwrap();
+
+        let lifted = fs::read_to_string(&output).unwrap();
+        assert!(lifted.contains("# Coordinates lifted"));
+        assert!(lifted.contains("rs1800437\t19\t45678134\tCG"));
+        assert!(fs::read_to_string(&unmapped).unwrap().contains("reason"));
 
         fs::remove_dir_all(dir).unwrap();
     }

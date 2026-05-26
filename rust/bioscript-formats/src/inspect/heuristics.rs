@@ -422,9 +422,10 @@ pub(crate) fn classify_confidence(
         DetectedKind::Vcf if looks_like_vcf_lines(sample_lines) => {
             DetectionConfidence::Authoritative
         }
-        DetectedKind::AlignmentCram | DetectedKind::AlignmentBam | DetectedKind::ReferenceFasta => {
-            DetectionConfidence::Authoritative
-        }
+        DetectedKind::Bcf
+        | DetectedKind::AlignmentCram
+        | DetectedKind::AlignmentBam
+        | DetectedKind::ReferenceFasta => DetectionConfidence::Authoritative,
         DetectedKind::GenotypeText if source.is_some() => DetectionConfidence::StrongHeuristic,
         DetectedKind::GenotypeText => DetectionConfidence::WeakHeuristic,
         DetectedKind::Unknown => DetectionConfidence::Unknown,

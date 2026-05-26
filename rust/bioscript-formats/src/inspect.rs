@@ -57,6 +57,7 @@ pub enum FileContainer {
 pub enum DetectedKind {
     GenotypeText,
     Vcf,
+    Bcf,
     AlignmentCram,
     AlignmentBam,
     ReferenceFasta,
@@ -126,6 +127,19 @@ pub fn inspect_bytes(
 
     if lower.ends_with(".zip") {
         let selected_entry = select_zip_entry_from_bytes(bytes)?;
+        if selected_entry.to_ascii_lowercase().ends_with(".bcf") {
+            let mut inspection = inspect_from_bcf(
+                path,
+                FileContainer::Zip,
+                Some(selected_entry),
+                options,
+                started.elapsed().as_millis(),
+            );
+            inspection
+                .evidence
+                .push("selected BCF zip entry".to_owned());
+            return Ok(inspection);
+        }
         let sample_lines = read_zip_sample_lines_from_bytes(bytes, &selected_entry)?;
         let mut inspection = inspect_from_textual_sample(
             path,
@@ -151,6 +165,9 @@ pub fn inspect_bytes(
     } else if lower.ends_with(".bam") {
         evidence.push("extension .bam".to_owned());
         DetectedKind::AlignmentBam
+    } else if lower.ends_with(".bcf") {
+        evidence.push("extension .bcf".to_owned());
+        DetectedKind::Bcf
     } else if is_reference_path(path) {
         evidence.push("reference fasta extension".to_owned());
         DetectedKind::ReferenceFasta
@@ -177,6 +194,7 @@ pub fn inspect_bytes(
         DetectedKind::AlignmentCram | DetectedKind::AlignmentBam | DetectedKind::ReferenceFasta => {
             Vec::new()
         }
+        DetectedKind::Bcf => Vec::new(),
         _ => read_plain_sample_lines_from_bytes(&lower, bytes)?,
     };
     let inspection_context = inspect_context_name(&lower, options);
@@ -239,6 +257,19 @@ pub fn inspect_file(path: &Path, options: &InspectOptions) -> Result<FileInspect
 
     if lower.ends_with(".zip") {
         let selected_entry = select_zip_entry(path)?;
+        if selected_entry.to_ascii_lowercase().ends_with(".bcf") {
+            let mut inspection = inspect_from_bcf(
+                path,
+                FileContainer::Zip,
+                Some(selected_entry),
+                options,
+                started.elapsed().as_millis(),
+            );
+            inspection
+                .evidence
+                .push("selected BCF zip entry".to_owned());
+            return Ok(inspection);
+        }
         let sample_lines = read_zip_sample_lines(path, &selected_entry)?;
         let mut inspection = inspect_from_textual_sample(
             path,
@@ -261,6 +292,9 @@ pub fn inspect_file(path: &Path, options: &InspectOptions) -> Result<FileInspect
     } else if lower.ends_with(".bam") {
         evidence.push("extension .bam".to_owned());
         DetectedKind::AlignmentBam
+    } else if lower.ends_with(".bcf") {
+        evidence.push("extension .bcf".to_owned());
+        DetectedKind::Bcf
     } else if is_reference_path(path) {
         evidence.push("reference fasta extension".to_owned());
         DetectedKind::ReferenceFasta
@@ -287,6 +321,7 @@ pub fn inspect_file(path: &Path, options: &InspectOptions) -> Result<FileInspect
         DetectedKind::AlignmentCram | DetectedKind::AlignmentBam | DetectedKind::ReferenceFasta => {
             Vec::new()
         }
+        DetectedKind::Bcf => Vec::new(),
         _ => read_plain_sample_lines(path)?,
     };
     let inspection_context = inspect_context_name(&lower, options);
@@ -398,6 +433,33 @@ fn inspect_from_textual_sample(
         evidence,
         warnings: Vec::new(),
         duration_ms: 0,
+    }
+}
+
+fn inspect_from_bcf(
+    path: &Path,
+    container: FileContainer,
+    selected_entry: Option<String>,
+    options: &InspectOptions,
+    duration_ms: u128,
+) -> FileInspection {
+    let (has_index, index_path) = detect_index(path, DetectedKind::Bcf, options);
+    FileInspection {
+        path: path.to_path_buf(),
+        container,
+        detected_kind: DetectedKind::Bcf,
+        confidence: DetectionConfidence::Authoritative,
+        source: None,
+        assembly: Some(Assembly::Grch38),
+        phased: None,
+        selected_entry,
+        has_index,
+        index_path,
+        reference_matches: None,
+        inferred_sex: None,
+        evidence: vec!["BCF input".to_owned()],
+        warnings: Vec::new(),
+        duration_ms,
     }
 }
 

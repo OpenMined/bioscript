@@ -76,6 +76,8 @@ fn zip_bytes(entry_name: &str, contents: &[u8]) -> Vec<u8> {
 mod alignment_tests;
 #[path = "file_formats/basic.rs"]
 mod basic;
+#[path = "file_formats/bcf.rs"]
+mod bcf;
 #[path = "file_formats/cram.rs"]
 mod cram;
 #[path = "file_formats/delimited.rs"]

@@ -21,7 +21,9 @@ mod matching;
 mod reader;
 
 pub use matching::{choose_variant_locus_for_assembly, imputed_reference_observation};
-pub(crate) use matching::{normalize_chromosome_name, vcf_row_matches_variant};
+pub(crate) use matching::{
+    normalize_chromosome_name, vcf_row_genotype_for_variant, vcf_row_matches_variant,
+};
 pub use reader::{observe_vcf_snp_with_reader, observe_vcf_variant_with_reader};
 
 #[derive(Debug, Clone)]

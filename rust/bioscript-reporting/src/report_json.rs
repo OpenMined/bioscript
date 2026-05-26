@@ -141,6 +141,7 @@ fn detected_kind_name(value: bioscript_formats::DetectedKind) -> &'static str {
     match value {
         bioscript_formats::DetectedKind::GenotypeText => "genotype_text",
         bioscript_formats::DetectedKind::Vcf => "vcf",
+        bioscript_formats::DetectedKind::Bcf => "bcf",
         bioscript_formats::DetectedKind::AlignmentCram => "alignment_cram",
         bioscript_formats::DetectedKind::AlignmentBam => "alignment_bam",
         bioscript_formats::DetectedKind::ReferenceFasta => "reference_fasta",

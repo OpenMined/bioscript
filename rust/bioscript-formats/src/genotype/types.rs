@@ -14,6 +14,7 @@ pub(crate) enum QueryBackend {
     RsidMap(RsidMapBackend),
     Delimited(DelimitedBackend),
     Vcf(VcfBackend),
+    Bcf(BcfBackend),
     Cram(CramBackend),
     Bam(BamBackend),
     /// In-memory CRAM/BAM: alignment + index (+ reference for CRAM) held as
@@ -64,6 +65,29 @@ pub(crate) struct VcfBackend {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct BcfBackend {
+    pub(crate) source: BcfSource,
+    pub(crate) options: GenotypeLoadOptions,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum BcfSource {
+    File(PathBuf),
+    ZipFile {
+        path: PathBuf,
+        entries: Vec<String>,
+    },
+    Bytes {
+        name: String,
+        data: Vec<u8>,
+    },
+    ZipBytes {
+        name: String,
+        entries: Vec<(String, Vec<u8>)>,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct CramBackend {
     pub(crate) path: PathBuf,
     pub(crate) options: GenotypeLoadOptions,
@@ -107,6 +131,7 @@ pub enum GenotypeSourceFormat {
     Text,
     Zip,
     Vcf,
+    Bcf,
     Cram,
     Bam,
 }
@@ -119,6 +144,7 @@ impl FromStr for GenotypeSourceFormat {
             "txt" | "text" | "genotype" => Ok(Self::Text),
             "zip" => Ok(Self::Zip),
             "vcf" => Ok(Self::Vcf),
+            "bcf" => Ok(Self::Bcf),
             "cram" => Ok(Self::Cram),
             "bam" => Ok(Self::Bam),
             other => Err(format!("unsupported input format: {other}")),

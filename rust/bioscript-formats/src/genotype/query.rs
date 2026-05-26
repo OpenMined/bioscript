@@ -13,10 +13,12 @@ impl GenotypeStore {
                 rsid_lookup: true,
                 locus_lookup: false,
             },
-            QueryBackend::Delimited(_) | QueryBackend::Vcf(_) => BackendCapabilities {
-                rsid_lookup: true,
-                locus_lookup: true,
-            },
+            QueryBackend::Delimited(_) | QueryBackend::Vcf(_) | QueryBackend::Bcf(_) => {
+                BackendCapabilities {
+                    rsid_lookup: true,
+                    locus_lookup: true,
+                }
+            }
             QueryBackend::Cram(_) | QueryBackend::Bam(_) | QueryBackend::AlignmentBytes(_) => {
                 BackendCapabilities {
                     rsid_lookup: false,
@@ -48,6 +50,7 @@ impl GenotypeStore {
             QueryBackend::RsidMap(map) => map.backend_name(),
             QueryBackend::Delimited(backend) => backend.backend_name(),
             QueryBackend::Vcf(backend) => backend.backend_name(),
+            QueryBackend::Bcf(backend) => backend.backend_name(),
             QueryBackend::Cram(backend) => backend.backend_name(),
             QueryBackend::Bam(backend) => backend.backend_name(),
             QueryBackend::AlignmentBytes(backend) => backend.backend_name(),
@@ -60,6 +63,7 @@ impl GenotypeStore {
             QueryBackend::RsidMap(map) => Ok(map.values.get(rsid).cloned()),
             QueryBackend::Delimited(backend) => backend.get(rsid),
             QueryBackend::Vcf(backend) => backend.get(rsid),
+            QueryBackend::Bcf(backend) => backend.get(rsid),
             QueryBackend::Cram(backend) => backend
                 .lookup_variant(&VariantSpec {
                     rsids: vec![rsid.to_owned()],
@@ -111,6 +115,7 @@ impl GenotypeStore {
             QueryBackend::RsidMap(map) => map.lookup_variant(variant),
             QueryBackend::Delimited(backend) => backend.lookup_variant(variant),
             QueryBackend::Vcf(backend) => backend.lookup_variant(variant),
+            QueryBackend::Bcf(backend) => backend.lookup_variant(variant),
             QueryBackend::Cram(backend) => backend.lookup_variant(variant),
             QueryBackend::Bam(backend) => backend.lookup_variant(variant),
             QueryBackend::AlignmentBytes(backend) => backend.lookup_variant(variant),
@@ -175,6 +180,9 @@ impl GenotypeStore {
             return backend.lookup_variants(variants);
         }
         if let QueryBackend::Vcf(backend) = &self.backend {
+            return backend.lookup_variants(variants);
+        }
+        if let QueryBackend::Bcf(backend) = &self.backend {
             return backend.lookup_variants(variants);
         }
         if let QueryBackend::Cram(backend) = &self.backend {

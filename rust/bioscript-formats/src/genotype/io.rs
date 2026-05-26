@@ -58,6 +58,7 @@ pub(crate) fn select_zip_entry(path: &Path) -> Result<String, RuntimeError> {
             || lower.ends_with(".tsv")
             || lower.ends_with(".vcf")
             || lower.ends_with(".vcf.gz")
+            || lower.ends_with(".bcf")
         {
             return Ok(name);
         }
@@ -116,6 +117,9 @@ pub(crate) fn detect_source_format(
     }
     if lower.ends_with(".vcf") || lower.ends_with(".vcf.gz") {
         return Ok(GenotypeSourceFormat::Vcf);
+    }
+    if lower.ends_with(".bcf") {
+        return Ok(GenotypeSourceFormat::Bcf);
     }
 
     let lines = read_plain_lines(path)?;
