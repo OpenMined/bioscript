@@ -29,3 +29,6 @@ links:
 - repo: madhavajay/noodles
   at: noodles
   branch: madhava/bioscript
+- repo: madhavajay/noodles
+  at: repos/htslib-rs/noodles
+  branch: madhava/bioscript
