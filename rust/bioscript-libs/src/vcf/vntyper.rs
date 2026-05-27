@@ -34,8 +34,7 @@ pub fn vntyper_kestrel_rows(records: &[VcfRecord]) -> Vec<VcfRecord> {
         let motif_pass = survived && is_valid_frameshift;
         let depth_confidence_pass =
             row.get("Confidence").map(String::as_str) != Some(NEGATIVE_LABEL);
-        let alt_filter_pass =
-            row.get("alt_filter_pass").map(String::as_str) == Some("True");
+        let alt_filter_pass = row.get("alt_filter_pass").map(String::as_str) == Some("True");
         let passes_vntyper_filters =
             is_valid_frameshift && depth_confidence_pass && alt_filter_pass && motif_pass;
         row.insert("motif_filter_pass".to_owned(), title_bool(motif_pass));

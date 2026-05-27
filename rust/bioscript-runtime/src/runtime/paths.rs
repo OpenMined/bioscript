@@ -24,10 +24,8 @@ impl BioscriptRuntime {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!(
-            "bioscript-vfs-{}-{nanos}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("bioscript-vfs-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&dir).map_err(|err| {
             RuntimeError::Io(format!(
                 "failed to create materialized vfs root {}: {err}",

@@ -66,9 +66,7 @@ impl BioscriptRuntime {
 
         let pos_to_usize = |index: usize, label: &str| -> Result<usize, RuntimeError> {
             usize::try_from(expect_int_arg(args, index, "kestrel.run_native")?).map_err(|_| {
-                RuntimeError::InvalidArguments(format!(
-                    "kestrel.run_native {label} must be >= 0"
-                ))
+                RuntimeError::InvalidArguments(format!("kestrel.run_native {label} must be >= 0"))
             })
         };
 
@@ -88,8 +86,7 @@ impl BioscriptRuntime {
         let mut options = NativeKestrelRunOptions::new(sample_name);
         if args.len() == 9 {
             options.minimum_difference =
-                u32::try_from(pos_to_usize(6, "minimum_difference")? as u64)
-                    .unwrap_or(u32::MAX);
+                u32::try_from(pos_to_usize(6, "minimum_difference")? as u64).unwrap_or(u32::MAX);
             options.max_haplotypes = pos_to_usize(7, "max_haplotypes")?;
             options.max_saved_states = pos_to_usize(8, "max_saved_states")?;
         }
@@ -116,7 +113,8 @@ impl BioscriptRuntime {
         if let Some(v) = optional_int_kwarg(kwargs, "minimum_difference", "kestrel.run_native")? {
             options.minimum_difference = nonneg_u32(v, "minimum_difference")?;
         }
-        if let Some(v) = optional_float_kwarg(kwargs, "difference_quantile", "kestrel.run_native")? {
+        if let Some(v) = optional_float_kwarg(kwargs, "difference_quantile", "kestrel.run_native")?
+        {
             options.difference_quantile = v as f32;
         }
         if let Some(v) = optional_bool_kwarg(kwargs, "anchor_both_ends", "kestrel.run_native")? {
