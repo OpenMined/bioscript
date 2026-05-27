@@ -152,6 +152,13 @@ pub(crate) fn detect_source(
         } else if normalized.contains(" v5 ") || lower_name.contains("/v5/") {
             platform_version = Some("v5".to_owned());
             evidence.push("v5 token".to_owned());
+        } else if normalized.contains(" v6 ")
+            || normalized.contains(" r6 ")
+            || lower_name.contains("/v6/")
+            || lower_name.contains("/r6/")
+        {
+            platform_version = Some("r6".to_owned());
+            evidence.push("v6/r6 token".to_owned());
         }
     } else if normalized.contains("ancestrydna") || normalized.contains("ancestry com dna") {
         vendor = Some("AncestryDNA".to_owned());
