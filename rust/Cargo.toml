@@ -38,3 +38,9 @@ noodles-refget = { path = "../noodles/noodles-refget" }
 noodles-sam = { path = "../noodles/noodles-sam" }
 noodles-tabix = { path = "../noodles/noodles-tabix" }
 noodles-vcf = { path = "../noodles/noodles-vcf" }
+
+[patch."https://github.com/madhavajay/htslib-rs.git"]
+htslib-rs = { path = "../vendor/rust/htslib-rs/crates/htslib-rs" }
+
+[patch."https://github.com/madhavajay/noodles.git"]
+noodles = { path = "../noodles/noodles" }
