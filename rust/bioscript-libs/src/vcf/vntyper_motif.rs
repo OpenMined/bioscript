@@ -1,4 +1,4 @@
-//! Faithful port of upstream VNtyper `motif_correction_and_annotation`.
+//! Faithful port of upstream `VNtyper` `motif_correction_and_annotation`.
 //!
 //! This is a whole-set operation (left/right split by position,
 //! frameshift/depth-priority dedupe per genomic locus, the legacy GG
@@ -23,8 +23,14 @@ pub(super) struct MotifCorrection {
 
 fn row_pos(row: &VcfRecord) -> i64 {
     row.get("POS")
-        .and_then(|value| value.parse::<f64>().ok())
-        .unwrap_or(0.0) as i64
+        .and_then(|value| {
+            value.parse::<i64>().ok().or_else(|| {
+                value
+                    .split_once('.')
+                    .and_then(|(integer, _)| integer.parse::<i64>().ok())
+            })
+        })
+        .unwrap_or(0)
 }
 
 fn row_depth_score(row: &VcfRecord) -> f64 {
@@ -43,8 +49,8 @@ fn gg_word_match(alt: &str, gg: &str) -> bool {
     alt == gg
 }
 
-/// Sort by (is_valid_frameshift, Depth_Score, POS) descending, then keep the
-/// first row per (POS, REF, ALT) locus. Port of upstream
+/// Sort by (`is_valid_frameshift`, `Depth_Score`, `POS`) descending, then keep the
+/// first row per (`POS`, `REF`, `ALT`) locus. Port of upstream
 /// `_prioritize_frameshift_and_dedupe`.
 fn prioritize_and_dedupe(rows: &[VcfRecord], mut items: Vec<usize>) -> Vec<usize> {
     items.sort_by(|&a, &b| {
@@ -131,19 +137,17 @@ pub(super) fn motif_correction(rows: &[VcfRecord]) -> MotifCorrection {
         let kept: Vec<usize> = motif_right
             .into_iter()
             .filter(|&idx| {
-                !EXCLUDE_MOTIFS_RIGHT
-                    .contains(&motif_by_index.get(&idx).map(String::as_str).unwrap_or(""))
+                !EXCLUDE_MOTIFS_RIGHT.contains(&motif_by_index.get(&idx).map_or("", String::as_str))
             })
             .collect();
         let kept = prioritize_and_dedupe(rows, kept);
         let any_allowed = kept.iter().any(|&idx| {
-            MOTIFS_FOR_ALT_GG.contains(&motif_by_index.get(&idx).map(String::as_str).unwrap_or(""))
+            MOTIFS_FOR_ALT_GG.contains(&motif_by_index.get(&idx).map_or("", String::as_str))
         });
         if any_allowed {
             kept.into_iter()
                 .filter(|&idx| {
-                    MOTIFS_FOR_ALT_GG
-                        .contains(&motif_by_index.get(&idx).map(String::as_str).unwrap_or(""))
+                    MOTIFS_FOR_ALT_GG.contains(&motif_by_index.get(&idx).map_or("", String::as_str))
                 })
                 .collect()
         } else {
@@ -153,9 +157,9 @@ pub(super) fn motif_correction(rows: &[VcfRecord]) -> MotifCorrection {
         motif_right
     };
 
-    for idx in motif_right.into_iter().chain(motif_left.into_iter()) {
+    for idx in motif_right.into_iter().chain(motif_left) {
         let alt = rows[idx].get("ALT").map(String::as_str).unwrap_or_default();
-        let motif = motif_by_index.get(&idx).map(String::as_str).unwrap_or("");
+        let motif = motif_by_index.get(&idx).map_or("", String::as_str);
         if EXCLUDE_ALTS_COMBINED.contains(&alt) {
             continue;
         }

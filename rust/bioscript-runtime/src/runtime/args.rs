@@ -131,7 +131,10 @@ pub(crate) fn optional_float_kwarg(
             // Accept int literals where a float is expected (e.g. 7 -> 7.0).
             let parsed = match value {
                 MontyObject::Float(value) => *value,
-                MontyObject::Int(value) => *value as f64,
+                MontyObject::Int(value) => value
+                    .to_string()
+                    .parse::<f64>()
+                    .expect("i64 string must parse as f64"),
                 _ => {
                     return Err(RuntimeError::InvalidArguments(format!(
                         "{function_name} expected keyword {name} to be a number"

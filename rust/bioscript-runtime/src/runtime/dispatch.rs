@@ -27,24 +27,26 @@ impl BioscriptRuntime {
             ("PysamModule", "AlignmentFile") => self.method_pysam_alignment_file(args, kwargs),
             ("PysamAlignmentFile", "fetch") => self.method_pysam_alignment_file_fetch(args, kwargs),
             ("PyfaidxModule", "Fasta") => self.method_pyfaidx_fasta(args, kwargs),
-            ("BcftoolsModule", "sort") => self.method_bcftools_sort_native(args, kwargs),
+            ("BcftoolsModule", "sort" | "sort_native") => {
+                self.method_bcftools_sort_native(args, kwargs)
+            }
             ("BcftoolsModule", "plan_sort") => self.method_bcftools_sort(args, kwargs),
-            ("BcftoolsModule", "index") => self.method_bcftools_index_native(args, kwargs),
+            ("BcftoolsModule", "index" | "index_native") => {
+                self.method_bcftools_index_native(args, kwargs)
+            }
             ("BcftoolsModule", "plan_index") => self.method_bcftools_index(args, kwargs),
-            ("BcftoolsModule", "view") => self.method_bcftools_view_native(args, kwargs),
+            ("BcftoolsModule", "view" | "view_native") => {
+                self.method_bcftools_view_native(args, kwargs)
+            }
             ("BcftoolsModule", "plan_view") => self.method_bcftools_view(args, kwargs),
             ("BcftoolsModule", "view_filter") => self.method_bcftools_view_filter(args, kwargs),
             ("BcftoolsModule", "plan_view_filter") => {
                 self.method_bcftools_view_filter(args, kwargs)
             }
-            ("BcftoolsModule", "norm") => self.method_bcftools_norm(args, kwargs),
-            ("BcftoolsModule", "plan_norm") => self.method_bcftools_norm(args, kwargs),
+            ("BcftoolsModule", "norm" | "plan_norm") => self.method_bcftools_norm(args, kwargs),
             ("BcftoolsModule", "view_header_native") => {
                 self.method_bcftools_view_header_native(args, kwargs)
             }
-            ("BcftoolsModule", "view_native") => self.method_bcftools_view_native(args, kwargs),
-            ("BcftoolsModule", "sort_native") => self.method_bcftools_sort_native(args, kwargs),
-            ("BcftoolsModule", "index_native") => self.method_bcftools_index_native(args, kwargs),
             ("VcfModule", "VariantFile") => self.method_vcf_variant_file(args, kwargs),
             ("VcfModule", "read_kestrel") => self.method_vcf_read_kestrel(args, kwargs),
             ("VcfModule", "read_vntyper_kestrel") => {
@@ -53,8 +55,9 @@ impl BioscriptRuntime {
             ("VcfModule", "build_vntyper_report_json") => {
                 self.method_vcf_build_vntyper_report_json(args, kwargs)
             }
-            ("KestrelModule", "build_command") => self.method_kestrel_build_command(args, kwargs),
-            ("KestrelModule", "plan_command") => self.method_kestrel_build_command(args, kwargs),
+            ("KestrelModule", "build_command" | "plan_command") => {
+                self.method_kestrel_build_command(args, kwargs)
+            }
             ("KestrelModule", "run_native") => self.method_kestrel_run_native(args, kwargs),
             ("SamtoolsModule", "view") => self.method_samtools_view_region_native(args, kwargs),
             ("SamtoolsModule", "plan_view") => self.method_samtools_view(args, kwargs),
@@ -68,17 +71,17 @@ impl BioscriptRuntime {
             ("SamtoolsModule", "plan_fastq") => self.method_samtools_fastq(args, kwargs),
             ("SamtoolsModule", "sort") => self.method_samtools_sort_native(args, kwargs),
             ("SamtoolsModule", "plan_sort") => self.method_samtools_sort(args, kwargs),
-            ("SamtoolsModule", "depth") => self.method_samtools_depth_native(args, kwargs),
+            ("SamtoolsModule", "depth" | "depth_native") => {
+                self.method_samtools_depth_native(args, kwargs)
+            }
             ("SamtoolsModule", "plan_depth") => self.method_samtools_depth(args, kwargs),
             ("SamtoolsModule", "index") => self.method_samtools_index_native(args, kwargs),
             ("SamtoolsModule", "plan_index") => self.method_samtools_index(args, kwargs),
-            ("SamtoolsModule", "faidx") => self.method_samtools_faidx(args, kwargs),
-            ("SamtoolsModule", "plan_faidx") => self.method_samtools_faidx(args, kwargs),
+            ("SamtoolsModule", "faidx" | "plan_faidx") => self.method_samtools_faidx(args, kwargs),
             ("SamtoolsModule", "view_region_native") => {
                 self.method_samtools_view_region_native(args, kwargs)
             }
             ("SamtoolsModule", "fastq_native") => self.method_samtools_fastq_native(args, kwargs),
-            ("SamtoolsModule", "depth_native") => self.method_samtools_depth_native(args, kwargs),
             ("GenotypeFile", "get") => self.method_genotype_get(args, kwargs),
             ("GenotypeFile", "lookup_variant") => self.method_genotype_lookup_variant(args, kwargs),
             ("GenotypeFile", "lookup_variant_details") => {

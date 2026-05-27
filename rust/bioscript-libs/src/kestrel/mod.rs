@@ -29,6 +29,10 @@ pub struct KestrelRunConfig {
 }
 
 impl KestrelRunConfig {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "constructor mirrors Kestrel CLI inputs"
+    )]
     pub fn vntyper(
         jar_path: impl Into<PathBuf>,
         reference_vntr: impl Into<PathBuf>,

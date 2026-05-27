@@ -1,3 +1,5 @@
+#![allow(clippy::similar_names)]
+
 use std::{
     fs,
     path::PathBuf,
@@ -36,24 +38,25 @@ fn vntyper_bioscript_program_runs_through_runtime() {
         std::process::id()
     ));
     fs::create_dir_all(&fixture_dir).unwrap();
-    let bam_source = root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam");
-    let bai_source =
+    let alignment_source =
+        root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam");
+    let alignment_index_source =
         root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam.bai");
     let bam_path = fixture_dir.join("input.bam");
     let bai_path = fixture_dir.join("input.bam.bai");
     let reference_path = fixture_dir.join("ref.fa");
     let output_dir = fixture_dir.join("out");
     fs::create_dir_all(&output_dir).unwrap();
-    fs::copy(bam_source, &bam_path).unwrap();
-    fs::copy(bai_source, &bai_path).unwrap();
+    fs::copy(alignment_source, &bam_path).unwrap();
+    fs::copy(alignment_index_source, &bai_path).unwrap();
     fs::write(&reference_path, ">ref1\nAAAACCCCGGGGTTTT\n").unwrap();
     let output_arg = output_path
         .strip_prefix(&root)
         .unwrap()
         .display()
         .to_string();
-    let bam_arg = bam_path.strip_prefix(&root).unwrap().display().to_string();
-    let bai_arg = bai_path.strip_prefix(&root).unwrap().display().to_string();
+    let alignment_arg = bam_path.strip_prefix(&root).unwrap().display().to_string();
+    let index_arg = bai_path.strip_prefix(&root).unwrap().display().to_string();
     let reference_arg = reference_path
         .strip_prefix(&root)
         .unwrap()
@@ -71,8 +74,8 @@ fn vntyper_bioscript_program_runs_through_runtime() {
             root.join("ports/vntyper/bioscript/vntyper.bs"),
             None,
             vec![
-                ("input_file", MontyObject::String(bam_arg)),
-                ("input_bai", MontyObject::String(bai_arg)),
+                ("input_file", MontyObject::String(alignment_arg)),
+                ("input_bai", MontyObject::String(index_arg)),
                 ("bam_region", MontyObject::String("ref1:1-10".to_owned())),
                 ("vntr_region", MontyObject::String("ref1:1-10".to_owned())),
                 ("reference_fasta", MontyObject::String(reference_arg)),
@@ -216,24 +219,25 @@ fn vntyper_bam_native_bioscript_program_runs_through_runtime() {
     let output_path = unique_output_path(&root);
     let fixture_dir = root.join(format!("target/vntyper-runtime-bam-{}", std::process::id()));
     fs::create_dir_all(&fixture_dir).unwrap();
-    let bam_source = root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam");
-    let bai_source =
+    let alignment_source =
+        root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam");
+    let alignment_index_source =
         root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam.bai");
     let bam_path = fixture_dir.join("input.bam");
     let bai_path = fixture_dir.join("input.bam.bai");
     let reference_path = fixture_dir.join("ref.fa");
     let output_dir = fixture_dir.join("out");
     fs::create_dir_all(&output_dir).unwrap();
-    fs::copy(bam_source, &bam_path).unwrap();
-    fs::copy(bai_source, &bai_path).unwrap();
+    fs::copy(alignment_source, &bam_path).unwrap();
+    fs::copy(alignment_index_source, &bai_path).unwrap();
     fs::write(&reference_path, ">ref1\nAAAACCCCGGGGTTTT\n").unwrap();
     let output_arg = output_path
         .strip_prefix(&root)
         .unwrap()
         .display()
         .to_string();
-    let bam_arg = bam_path.strip_prefix(&root).unwrap().display().to_string();
-    let bai_arg = bai_path.strip_prefix(&root).unwrap().display().to_string();
+    let alignment_arg = bam_path.strip_prefix(&root).unwrap().display().to_string();
+    let index_arg = bai_path.strip_prefix(&root).unwrap().display().to_string();
     let reference_arg = reference_path
         .strip_prefix(&root)
         .unwrap()
@@ -251,8 +255,8 @@ fn vntyper_bam_native_bioscript_program_runs_through_runtime() {
             root.join("ports/vntyper/bioscript/vntyper-bam-native.bs"),
             None,
             vec![
-                ("input_file", MontyObject::String(bam_arg)),
-                ("input_bai", MontyObject::String(bai_arg)),
+                ("input_file", MontyObject::String(alignment_arg)),
+                ("input_bai", MontyObject::String(index_arg)),
                 ("bam_region", MontyObject::String("ref1:1-10".to_owned())),
                 ("vntr_region", MontyObject::String("ref1:1-10".to_owned())),
                 ("reference_fasta", MontyObject::String(reference_arg)),

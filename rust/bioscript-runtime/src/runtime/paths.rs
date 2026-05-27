@@ -22,8 +22,7 @@ impl BioscriptRuntime {
         }
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_nanos());
         let dir =
             std::env::temp_dir().join(format!("bioscript-vfs-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&dir).map_err(|err| {

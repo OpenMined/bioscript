@@ -132,8 +132,9 @@ fn vntyper_kestrel_row(record: &VcfRecord) -> VcfRecord {
         .unwrap_or(0.0);
     let ref_len = row.get("REF").map_or(0, String::len);
     let alt_len = row.get("ALT").map_or(0, String::len);
-    let delta = alt_len as isize - ref_len as isize;
-    let frame_score = delta as f64 / 3.0;
+    let delta = i32::try_from(alt_len).expect("ALT allele length must fit in i32")
+        - i32::try_from(ref_len).expect("REF allele length must fit in i32");
+    let frame_score = f64::from(delta) / 3.0;
     let direction = delta.signum();
     let frameshift_amount = delta.unsigned_abs() % 3;
     let is_frameshift = delta % 3 != 0;
@@ -155,7 +156,7 @@ fn vntyper_kestrel_row(record: &VcfRecord) -> VcfRecord {
         .or_else(|| row.get("CHROM"))
         .cloned()
         .unwrap_or_default();
-    let pos = parse_row_float(&row, "POS") as i64;
+    let pos = parse_row_i64(&row, "POS");
     row.insert("Motifs".to_owned(), motifs.clone());
     row.insert("Motif_fasta".to_owned(), motifs);
     row.insert("POS_fasta".to_owned(), pos.to_string());
@@ -307,6 +308,18 @@ fn parse_row_float(row: &VcfRecord, key: &str) -> f64 {
     row.get(key)
         .and_then(|value| value.parse::<f64>().ok())
         .unwrap_or(0.0)
+}
+
+fn parse_row_i64(row: &VcfRecord, key: &str) -> i64 {
+    row.get(key)
+        .and_then(|value| {
+            value.parse::<i64>().ok().or_else(|| {
+                value
+                    .split_once('.')
+                    .and_then(|(integer, _)| integer.parse::<i64>().ok())
+            })
+        })
+        .unwrap_or(0)
 }
 
 fn metadata_value<'a>(metadata: &'a VcfRecord, key: &str, default: &'a str) -> &'a str {

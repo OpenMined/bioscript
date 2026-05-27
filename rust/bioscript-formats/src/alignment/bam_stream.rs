@@ -143,9 +143,10 @@ impl DepthSummary {
             };
         }
         let region_length = depths.len();
+        let region_length_f64 = usize_to_f64(region_length);
         let uncovered_bases = depths.iter().filter(|depth| **depth == 0).count();
         let sum = depths.iter().map(|depth| f64::from(*depth)).sum::<f64>();
-        let mean = sum / region_length as f64;
+        let mean = sum / region_length_f64;
         let stdev = (depths
             .iter()
             .map(|depth| {
@@ -153,14 +154,14 @@ impl DepthSummary {
                 delta * delta
             })
             .sum::<f64>()
-            / region_length as f64)
+            / region_length_f64)
             .sqrt();
         let min = depths.iter().copied().min().unwrap_or(0);
         let max = depths.iter().copied().max().unwrap_or(0);
         depths.sort_unstable();
-        let median = if region_length % 2 == 0 {
+        let median = if region_length.is_multiple_of(2) {
             let upper = region_length / 2;
-            (f64::from(depths[upper - 1]) + f64::from(depths[upper])) / 2.0
+            f64::midpoint(f64::from(depths[upper - 1]), f64::from(depths[upper]))
         } else {
             f64::from(depths[region_length / 2])
         };
@@ -172,9 +173,13 @@ impl DepthSummary {
             max,
             region_length,
             uncovered_bases,
-            percent_uncovered: uncovered_bases as f64 / region_length as f64 * 100.0,
+            percent_uncovered: usize_to_f64(uncovered_bases) / region_length_f64 * 100.0,
         }
     }
+}
+
+fn usize_to_f64(value: usize) -> f64 {
+    f64::from(u32::try_from(value).expect("BAM depth region length must fit in u32"))
 }
 
 pub(crate) fn build_region(locus: &GenomicLocus) -> Result<Region, RuntimeError> {
@@ -212,10 +217,10 @@ fn add_record_depth(record: &AlignmentRecord, locus_start: i64, depths: &mut [u3
             | AlignmentOpKind::SequenceMismatch => {
                 for offset in 0..op.len {
                     let pos = reference_position + i64::try_from(offset).unwrap_or(i64::MAX);
-                    if let Ok(index) = usize::try_from(pos - locus_start) {
-                        if let Some(depth) = depths.get_mut(index) {
-                            *depth = depth.saturating_add(1);
-                        }
+                    if let Ok(index) = usize::try_from(pos - locus_start)
+                        && let Some(depth) = depths.get_mut(index)
+                    {
+                        *depth = depth.saturating_add(1);
                     }
                 }
                 reference_position += i64::try_from(op.len).unwrap_or(i64::MAX);

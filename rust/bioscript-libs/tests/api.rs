@@ -1,3 +1,5 @@
+#![allow(clippy::float_cmp)]
+
 use std::{
     io::{Read, Write},
     path::PathBuf,

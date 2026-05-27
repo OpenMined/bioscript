@@ -13,12 +13,12 @@ impl CramBackend {
     }
 
     /// A CRAM without an external reference can't be pileup-genotyped here
-    /// (reference-compressed reads need `--reference-file`; a no_ref / embedded
+    /// (reference-compressed reads need `--reference-file`; a `no_ref` / embedded
     /// CRAM stores bases but this backend's variant query path still needs the
     /// reference allele context). Rather than abort the whole report, report
     /// the variant as missing so the run degrades to a partial result. An
     /// advanced assay whose analysis consumes the raw aligned reads (e.g.
-    /// VNtyper running Kestrel over the MUC1 slice) still works.
+    /// `VNtyper` running Kestrel over the MUC1 slice) still works.
     fn reference_missing_observation(&self) -> VariantObservation {
         VariantObservation {
             backend: self.backend_name().to_owned(),

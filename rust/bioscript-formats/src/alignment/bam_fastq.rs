@@ -221,7 +221,7 @@ enum FastqSegment {
 
 enum FastqWriter {
     Plain(BufWriter<File>),
-    Gzip(GzEncoder<BufWriter<File>>),
+    Gzip(Box<GzEncoder<BufWriter<File>>>),
 }
 
 impl FastqWriter {
@@ -230,7 +230,10 @@ impl FastqWriter {
             .map_err(|err| RuntimeError::Io(format!("failed to create FASTQ: {err}")))?;
         let writer = BufWriter::new(file);
         if path.extension().and_then(|ext| ext.to_str()) == Some("gz") {
-            Ok(Self::Gzip(GzEncoder::new(writer, Compression::default())))
+            Ok(Self::Gzip(Box::new(GzEncoder::new(
+                writer,
+                Compression::default(),
+            ))))
         } else {
             Ok(Self::Plain(writer))
         }
@@ -241,7 +244,7 @@ impl FastqWriter {
             Self::Plain(mut writer) => writer
                 .flush()
                 .map_err(|err| RuntimeError::Io(format!("failed to flush FASTQ: {err}"))),
-            Self::Gzip(writer) => writer
+            Self::Gzip(writer) => (*writer)
                 .finish()
                 .and_then(|mut writer| writer.flush())
                 .map_err(|err| RuntimeError::Io(format!("failed to finish FASTQ gzip: {err}"))),

@@ -82,3 +82,7 @@ examples/**/.nextflow*
 # the CRAM/noodles migration; not part of the build).
 context/
 /repos/
+
+# Local-only cargo env overrides (macOS Xcode CC/CXX/SDKROOT etc.).
+# Belongs per-developer; recreate locally if your toolchain needs it.
+rust/.cargo/config.toml

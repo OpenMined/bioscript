@@ -17,7 +17,7 @@ use super::{
 
 /// Every keyword argument `kestrel.run_native` accepts. These mirror the
 /// public Kestrel run configuration so bioscript scripts can drive the
-/// engine the same way the CLI / VNtyper does.
+/// engine the same way the CLI / `VNtyper` does.
 const KESTREL_RUN_NATIVE_KWARGS: &[&str] = &[
     "kmer_size",
     "sample_name",
@@ -36,6 +36,10 @@ const KESTREL_RUN_NATIVE_KWARGS: &[&str] = &[
 ];
 
 impl BioscriptRuntime {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "method maps the public Kestrel keyword surface into one native call"
+    )]
     pub(super) fn method_kestrel_run_native(
         &self,
         args: &[MontyObject],

@@ -80,12 +80,12 @@ pub fn faidx(fasta: &Path) -> LibResult<CommandSpec> {
 
 /// Make an explicitly-provided index discoverable by samtools-rs/HTSlib.
 ///
-/// HTSlib's primary index discovery is co-location: for a data file `X` it
+/// `HTSlib`'s primary index discovery is co-location: for a data file `X` it
 /// probes `X.csi` then `X.bai`. The runtime hands us the genome and its index
 /// as two independent (often materialized-temp) paths, so when the caller
 /// passes an index that is not already co-located we mirror it next to the
-/// data file under HTSlib's expected name. This keeps the samtools port
-/// faithful to upstream (which finds the index by HTSlib lookup) while still
+/// data file under `HTSlib`'s expected name. This keeps the samtools port
+/// faithful to upstream (which finds the index by `HTSlib` lookup) while still
 /// honoring an explicit index argument.
 fn colocate_index(bam: &Path, index: Option<&Path>) -> LibResult<()> {
     let Some(index) = index else {
@@ -192,9 +192,10 @@ fn depth_summary(depths: impl IntoIterator<Item = u32>) -> DepthSummary {
         };
     }
     let region_length = depths.len();
+    let region_length_f64 = usize_to_f64(region_length);
     let uncovered_bases = depths.iter().filter(|depth| **depth == 0).count();
     let sum = depths.iter().map(|depth| f64::from(*depth)).sum::<f64>();
-    let mean = sum / region_length as f64;
+    let mean = sum / region_length_f64;
     let stdev = (depths
         .iter()
         .map(|depth| {
@@ -202,14 +203,14 @@ fn depth_summary(depths: impl IntoIterator<Item = u32>) -> DepthSummary {
             delta * delta
         })
         .sum::<f64>()
-        / region_length as f64)
+        / region_length_f64)
         .sqrt();
     let min = depths.iter().copied().min().unwrap_or(0);
     let max = depths.iter().copied().max().unwrap_or(0);
     depths.sort_unstable();
     let median = if region_length % 2 == 0 {
         let upper = region_length / 2;
-        (f64::from(depths[upper - 1]) + f64::from(depths[upper])) / 2.0
+        f64::midpoint(f64::from(depths[upper - 1]), f64::from(depths[upper]))
     } else {
         f64::from(depths[region_length / 2])
     };
@@ -221,8 +222,12 @@ fn depth_summary(depths: impl IntoIterator<Item = u32>) -> DepthSummary {
         max,
         region_length,
         uncovered_bases,
-        percent_uncovered: uncovered_bases as f64 / region_length as f64 * 100.0,
+        percent_uncovered: usize_to_f64(uncovered_bases) / region_length_f64 * 100.0,
     }
+}
+
+fn usize_to_f64(value: usize) -> f64 {
+    f64::from(u32::try_from(value).expect("samtools depth region length must fit in u32"))
 }
 
 fn fastq_record_count(path: &Path) -> LibResult<usize> {
@@ -240,11 +245,12 @@ fn fastq_record_count(path: &Path) -> LibResult<usize> {
     Ok(content.lines().step_by(4).count())
 }
 
-fn samtools_error(err: std::io::Error) -> LibError {
+fn samtools_error(err: impl std::fmt::Display) -> LibError {
     LibError::InvalidArguments(err.to_string())
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::*;
 

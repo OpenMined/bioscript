@@ -87,6 +87,10 @@ impl BioscriptRuntime {
     }
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "helper is used in Result-returning methods"
+)]
 fn command_argv_object(
     runtime: &BioscriptRuntime,
     method: &str,

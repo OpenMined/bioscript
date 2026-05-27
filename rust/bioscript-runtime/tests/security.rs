@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_lines)]
+
 use std::{
     fs,
     path::PathBuf,
@@ -170,6 +172,10 @@ if __name__ == "__main__":
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "single integration scenario checks every structured tool command alias"
+)]
 fn bioscript_vntyper_tool_modules_build_structured_commands() {
     let dir = temp_dir("tool-command-timing");
     let runtime = run_script_with_inputs(
