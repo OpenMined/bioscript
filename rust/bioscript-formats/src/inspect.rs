@@ -444,12 +444,17 @@ fn inspect_from_bcf(
     duration_ms: u128,
 ) -> FileInspection {
     let (has_index, index_path) = detect_index(path, DetectedKind::Bcf, options);
+    let path_lower = path.to_string_lossy().to_ascii_lowercase();
+    let source_context = selected_entry
+        .as_ref()
+        .map(|entry| format!("{path_lower}\n{}", entry.to_ascii_lowercase()))
+        .unwrap_or(path_lower);
     FileInspection {
         path: path.to_path_buf(),
         container,
         detected_kind: DetectedKind::Bcf,
         confidence: DetectionConfidence::Authoritative,
-        source: None,
+        source: detect_source(&source_context, &[], DetectedKind::Bcf),
         assembly: Some(Assembly::Grch38),
         phased: None,
         selected_entry,
@@ -655,6 +660,38 @@ mod tests {
         assert_eq!(
             zip_inspection.selected_entry.as_deref(),
             Some("nested/sample.vcf.gz")
+        );
+
+        let cursor = Cursor::new(Vec::new());
+        let mut bcf_zip_writer = zip::ZipWriter::new(cursor);
+        bcf_zip_writer
+            .start_file(
+                "23andMe_R6/chr1.bcf",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        bcf_zip_writer.write_all(b"bcf placeholder").unwrap();
+        let bcf_zip_bytes = bcf_zip_writer.finish().unwrap().into_inner();
+        let bcf_zip_inspection = inspect_bytes(
+            "sample_23andMe_R6.zip",
+            &bcf_zip_bytes,
+            &InspectOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(bcf_zip_inspection.detected_kind, DetectedKind::Bcf);
+        assert_eq!(
+            bcf_zip_inspection
+                .source
+                .as_ref()
+                .and_then(|source| source.vendor.as_deref()),
+            Some("23andMe")
+        );
+        assert_eq!(
+            bcf_zip_inspection
+                .source
+                .as_ref()
+                .and_then(|source| source.platform_version.as_deref()),
+            Some("r6")
         );
 
         let missing = read_zip_sample_lines_from_bytes(&zip_bytes, "missing.vcf").unwrap_err();
