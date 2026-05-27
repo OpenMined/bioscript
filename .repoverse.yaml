@@ -18,17 +18,17 @@ provides:
 - madhavajay/noodles
 links:
 - repo: madhavajay/htslib-rs
-  at: vendor/rust/bcftools-rs/htslib-rs
+  at: vendor/rust/bcftools-rs/repos/htslib-rs
   branch: main
 - repo: madhavajay/htslib-rs
   at: vendor/rust/htslib-rs
   branch: main
 - repo: madhavajay/htslib-rs
-  at: vendor/rust/samtools-rs/htslib-rs
+  at: vendor/rust/samtools-rs/repos/htslib-rs
   branch: main
 - repo: madhavajay/noodles
   at: noodles
   branch: madhava/bioscript
 - repo: madhavajay/noodles
-  at: repos/htslib-rs/noodles
+  at: repos/htslib-rs/repos/noodles
   branch: madhava/bioscript

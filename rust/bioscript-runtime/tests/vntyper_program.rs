@@ -36,8 +36,8 @@ fn vntyper_bioscript_program_runs_through_runtime() {
         std::process::id()
     ));
     fs::create_dir_all(&fixture_dir).unwrap();
-    let bam_source = root.join("vendor/rust/samtools-rs/samtools/test/stat/11_target.bam");
-    let bai_source = root.join("vendor/rust/samtools-rs/samtools/test/stat/11_target.bam.bai");
+    let bam_source = root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam");
+    let bai_source = root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam.bai");
     let bam_path = fixture_dir.join("input.bam");
     let bai_path = fixture_dir.join("input.bam.bai");
     let reference_path = fixture_dir.join("ref.fa");
@@ -215,8 +215,8 @@ fn vntyper_bam_native_bioscript_program_runs_through_runtime() {
     let output_path = unique_output_path(&root);
     let fixture_dir = root.join(format!("target/vntyper-runtime-bam-{}", std::process::id()));
     fs::create_dir_all(&fixture_dir).unwrap();
-    let bam_source = root.join("vendor/rust/samtools-rs/samtools/test/stat/11_target.bam");
-    let bai_source = root.join("vendor/rust/samtools-rs/samtools/test/stat/11_target.bam.bai");
+    let bam_source = root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam");
+    let bai_source = root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam.bai");
     let bam_path = fixture_dir.join("input.bam");
     let bai_path = fixture_dir.join("input.bam.bai");
     let reference_path = fixture_dir.join("ref.fa");

@@ -6,7 +6,7 @@ from bioscript import vcf
 
 def main():
     sample = participant_id
-    work_prefix = output_dir + "/" + sample
+    work_prefix = output_file + "." + sample
     sliced_bam = work_prefix + "_sliced.bam"
     fastq_1 = work_prefix + "_R1.fastq.gz"
     fastq_2 = work_prefix + "_R2.fastq.gz"

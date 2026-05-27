@@ -20,6 +20,7 @@ impl BioscriptRuntime {
             ("Bioscript", "variant") => self.method_variant(args, kwargs),
             ("Bioscript", "query_plan") => self.method_query_plan(args, kwargs),
             ("Bioscript", "write_tsv") => self.method_write_tsv(args, kwargs),
+            ("Bioscript", "read_tsv") => self.method_read_tsv(args, kwargs),
             ("Bioscript", "read_text") => self.method_read_text(args, kwargs),
             ("Bioscript", "write_text") => self.method_write_text(args, kwargs),
             ("Bioscript", "exists") => self.method_exists(args, kwargs),

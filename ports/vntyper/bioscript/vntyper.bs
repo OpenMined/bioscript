@@ -1,77 +1,57 @@
 from bioscript import bcftools
 from bioscript import kestrel
 from bioscript import samtools
-from bioscript import vcf
 
 
 def main():
     sample = participant_id
-    work_prefix = output_dir + "/" + sample
-    sliced_bam = work_prefix + "_sliced.bam"
-    fastq_1 = work_prefix + "_R1.fastq.gz"
-    fastq_2 = work_prefix + "_R2.fastq.gz"
-    kestrel_vcf = work_prefix + "_kestrel.vcf"
-    sorted_vcf = work_prefix + "_kestrel.sorted.vcf.gz"
-    kestrel_tsv = work_prefix + "_kestrel_result.tsv"
-    report_json = work_prefix + "_report.json"
+    work_dir = "vntyper"
+    bam_region = "chr1:155158000-155163000"
+    vntr_region = "chr1:155160500-155162000"
 
-    samtools.view_region_native(input_file, bam_region, sliced_bam, input_bai)
-    fastq_summary = samtools.fastq_native(
+    sliced_bam = work_dir + "/" + sample + "_sliced.bam"
+    fastq_1 = work_dir + "/" + sample + "_R1.fastq.gz"
+    fastq_2 = work_dir + "/" + sample + "_R2.fastq.gz"
+
+    view_command = samtools.plan_view_region(
         input_file,
         bam_region,
+        sliced_bam,
+        False,
+    )
+    index_command = samtools.plan_index(sliced_bam)
+    fastq_command = samtools.plan_fastq(
+        sliced_bam,
         fastq_1,
         fastq_2,
-        input_bai,
     )
-    depth_summary = samtools.depth_native(input_file, vntr_region, input_bai)
-    native_vcf = kestrel.run_native(
-        reference_fasta,
-        [fastq_1, fastq_2],
-        kestrel_vcf,
-        kmer_size,
+    depth_command = samtools.plan_depth(sliced_bam, vntr_region)
+
+    kestrel_command = kestrel.plan_command(
+        "ports/vntyper/kestrel/kestrel.jar",
+        "ports/vntyper/vntyper/reference/All_Pairwise_and_Self_Merged_MUC1_motifs_filtered.fa",
+        work_dir + "/kestrel/output.vcf",
+        work_dir + "/kestrel/output.sam",
+        work_dir + "/kestrel/tmp",
         sample,
-        minimum_difference,
-        max_haplotypes,
-        max_saved_states,
+        fastq_1,
+        fastq_2,
     )
-    bcftools.sort(kestrel_vcf, sorted_vcf)
-    bcftools.index(sorted_vcf)
-    rows = vcf.read_vntyper_kestrel(kestrel_vcf)
-    bioscript.write_tsv(kestrel_tsv, rows)
-    report_json_text = vcf.build_vntyper_report_json(
-        sample,
-        {
-            "bam": input_file,
-            "bai": input_bai,
-            "fastq_1": fastq_1,
-            "fastq_2": fastq_2,
-            "reference_fasta": reference_fasta,
-            "vcf": kestrel_vcf,
-            "sorted_vcf": sorted_vcf,
-            "kestrel_tsv": kestrel_tsv,
-        },
-        rows,
-        {"alignment_pipeline": "native bioscript samtools/kestrel"},
-        depth_summary,
-    )
-    bioscript.write_text(report_json, report_json_text)
+    sorted_vcf = work_dir + "/kestrel/output.sorted.vcf.gz"
+    bcftools_sort_command = bcftools.plan_sort(work_dir + "/kestrel/output.vcf", sorted_vcf)
+    bcftools_index_command = bcftools.plan_index(sorted_vcf)
 
     report = {
         "participant_id": sample,
-        "input_file": input_file,
-        "input_bai": input_bai,
         "bam_region": bam_region,
         "vntr_region": vntr_region,
-        "sliced_bam": sliced_bam,
-        "fastq_1": fastq_1,
-        "fastq_2": fastq_2,
-        "fastq_read1_records": fastq_summary["read1_records"],
-        "fastq_read2_records": fastq_summary["read2_records"],
-        "depth_region_length": depth_summary["region_length"],
-        "kestrel_vcf": native_vcf,
-        "sorted_vcf": sorted_vcf,
-        "kestrel_tsv": kestrel_tsv,
-        "report_json": report_json,
+        "samtools_view_command": view_command,
+        "samtools_index_command": index_command,
+        "samtools_fastq_command": fastq_command,
+        "samtools_depth_command": depth_command,
+        "kestrel_command": kestrel_command,
+        "bcftools_sort_command": bcftools_sort_command,
+        "bcftools_index_command": bcftools_index_command,
     }
     bioscript.write_tsv(output_file, [report])
 

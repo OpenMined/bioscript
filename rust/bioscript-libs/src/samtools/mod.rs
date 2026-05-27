@@ -137,7 +137,7 @@ pub fn fastq_native(
     let sliced_bam = temp_dir.path().join("slice.bam");
     let other_fastq = temp_dir.path().join("other.fastq.gz");
     let singleton_fastq = temp_dir.path().join("singleton.fastq.gz");
-    samtools_native::view_region_templates_native(bam, region, &sliced_bam, false, None)
+    samtools_native::view_region_native(bam, region, &sliced_bam, None, None)
         .map_err(samtools_error)?;
     samtools_native::fastq_native(
         &sliced_bam,
