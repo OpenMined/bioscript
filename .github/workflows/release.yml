@@ -1,6 +1,13 @@
 name: Release Docker Image
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'rust/**'
+      - 'docker/**'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/docker-build.yml'
   workflow_dispatch:
     inputs:
       bump:
@@ -26,6 +33,7 @@ permissions:
 
 jobs:
   version:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.new.outputs.version }}
@@ -44,7 +52,9 @@ jobs:
           CURRENT="$(tr -d '[:space:]' < VERSION)"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
 
-          case "${{ inputs.bump }}" in
+          BUMP="${{ inputs.bump || 'patch' }}"
+
+          case "$BUMP" in
             major)
               NEW_VERSION="$((MAJOR + 1)).0.0"
               ;;
@@ -56,6 +66,10 @@ jobs:
               ;;
             custom)
               NEW_VERSION="${{ inputs.custom_version }}"
+              ;;
+            *)
+              echo "Invalid bump type: $BUMP" >&2
+              exit 1
               ;;
           esac
 
