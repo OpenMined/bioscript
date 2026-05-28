@@ -12,7 +12,7 @@ on:
           - minor
           - major
           - custom
-        default: 'minor'
+        default: 'patch'
       custom_version:
         description: 'Custom version, without v prefix. Required when bump=custom.'
         required: false

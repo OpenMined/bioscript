@@ -8,22 +8,10 @@ on:
         required: false
         type: string
   push:
-    branches: [main]
     tags:
       - 'v*'
-    paths:
-      - 'rust/**'
-      - 'docker/**'
-      - 'VERSION'
-      - '.github/workflows/docker-build.yml'
   release:
     types: [published]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Image version tag, without v prefix. Defaults to VERSION.'
-        required: false
-        type: string
 
 env:
   REGISTRY: ghcr.io
