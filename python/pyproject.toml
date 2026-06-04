@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "bioscript"
+version = "0.1.0"
+description = "Python-facing BioScript compatibility shims"
+requires-python = ">=3.11"
+
+[tool.maturin]
+manifest-path = "../rust/bioscript-python/Cargo.toml"
+module-name = "bioscript._native"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

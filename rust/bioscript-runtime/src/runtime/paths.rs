@@ -1,10 +1,117 @@
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::fs;
+
 use bioscript_core::RuntimeError;
 
 use super::{BioscriptRuntime, deepest_existing_ancestor};
 
 impl BioscriptRuntime {
+    /// Real on-disk temp directory mirroring the virtual filesystem. Native
+    /// tool facades (samtools/kestrel/bcftools) can only operate on real
+    /// files, so when the analysis runs under a virtual filesystem we mirror
+    /// every virtual path `/X` to `<materialized_root>/X` and write virtual
+    /// content there on first access. Created lazily on first resolve.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn materialized_root(&self) -> Result<PathBuf, RuntimeError> {
+        let mut guard = self
+            .state
+            .materialized_root
+            .lock()
+            .expect("materialized_root mutex poisoned");
+        if let Some(dir) = guard.as_ref() {
+            return Ok(dir.clone());
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let dir =
+            std::env::temp_dir().join(format!("bioscript-vfs-{}-{nanos}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to create materialized vfs root {}: {err}",
+                dir.display()
+            ))
+        })?;
+        *guard = Some(dir.clone());
+        Ok(dir)
+    }
+
+    fn materialized_root_if_set(&self) -> Option<PathBuf> {
+        self.state
+            .materialized_root
+            .lock()
+            .expect("materialized_root mutex poisoned")
+            .clone()
+    }
+
+    /// Canonical virtual key for a raw virtual path (e.g. `/input/genotypes`).
+    fn canonical_virtual_key(raw_path: &str) -> String {
+        let normalized = raw_path.replace('\\', "/");
+        if normalized.starts_with('/') {
+            normalized
+        } else {
+            format!("/{normalized}")
+        }
+    }
+
+    /// Write the virtual content backing `raw_path` (script-provided config
+    /// files or text written earlier in the run) to its mirrored real path so
+    /// native tools can read it. No-op if the real file already exists (e.g.
+    /// a prior native tool produced it).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn materialize_virtual_content(
+        &self,
+        raw_path: &str,
+        real_path: &Path,
+    ) -> Result<(), RuntimeError> {
+        if real_path.exists() {
+            return Ok(());
+        }
+        let key = Self::canonical_virtual_key(raw_path);
+        if let Some(parent) = real_path.parent() {
+            fs::create_dir_all(parent).map_err(|err| {
+                RuntimeError::Io(format!(
+                    "failed to create materialized dir {}: {err}",
+                    parent.display()
+                ))
+            })?;
+        }
+        if let Some(bytes) = self.config.virtual_binary_files.get(&key) {
+            fs::write(real_path, bytes).map_err(|err| {
+                RuntimeError::Io(format!(
+                    "failed to materialize {}: {err}",
+                    real_path.display()
+                ))
+            })?;
+            return Ok(());
+        }
+        if let Some(text) = self.config.virtual_text_files.get(&key) {
+            fs::write(real_path, text).map_err(|err| {
+                RuntimeError::Io(format!(
+                    "failed to materialize {}: {err}",
+                    real_path.display()
+                ))
+            })?;
+            return Ok(());
+        }
+        let written = self
+            .state
+            .virtual_written_text_files
+            .lock()
+            .expect("virtual file mutex poisoned");
+        if let Some(text) = written.get(&key) {
+            fs::write(real_path, text).map_err(|err| {
+                RuntimeError::Io(format!(
+                    "failed to materialize {}: {err}",
+                    real_path.display()
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
     pub(super) fn resolve_user_path(&self, raw_path: &str) -> Result<PathBuf, RuntimeError> {
         let path = Path::new(raw_path);
         if path_is_rooted(path) {
@@ -19,7 +126,16 @@ impl BioscriptRuntime {
                         Component::RootDir | Component::CurDir | Component::Normal(_) => {}
                     }
                 }
-                return Ok(path.to_path_buf());
+                // Mirror the virtual path into the real materialized root so
+                // native tool facades receive a real on-disk path.
+                #[cfg(target_arch = "wasm32")]
+                return Ok(PathBuf::from(Self::canonical_virtual_key(raw_path)));
+
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let rel = raw_path.trim_start_matches('/');
+                    return Ok(self.materialized_root()?.join(rel));
+                }
             }
             return Err(RuntimeError::InvalidArguments(format!(
                 "absolute paths are not allowed: {raw_path}"
@@ -43,13 +159,33 @@ impl BioscriptRuntime {
         raw_path: &str,
     ) -> Result<PathBuf, RuntimeError> {
         let path = self.resolve_user_path(raw_path)?;
-        if self.virtual_file_exists(raw_path) {
-            return Ok(path);
-        }
-        if self.uses_virtual_files() && path_is_rooted(Path::new(raw_path)) {
-            return Err(RuntimeError::Io(format!(
-                "virtual file does not exist: {raw_path}"
-            )));
+        if self.uses_virtual_files() {
+            #[cfg(target_arch = "wasm32")]
+            {
+                if self.read_virtual_text_file(&path).is_some()
+                    || self.read_virtual_binary_file(&path).is_some()
+                {
+                    return Ok(path);
+                }
+                return Err(RuntimeError::Io(format!(
+                    "virtual file does not exist: {raw_path}"
+                )));
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                // `path` is the mirrored real path. Write any backing virtual
+                // content (script-provided config files, or text the script
+                // wrote earlier) to disk so native tools can read it. Files a
+                // prior native tool already produced are left untouched.
+                self.materialize_virtual_content(raw_path, &path)?;
+                if path.exists() {
+                    return Ok(path);
+                }
+                return Err(RuntimeError::Io(format!(
+                    "virtual file does not exist: {raw_path}"
+                )));
+            }
         }
         let canonical = path.canonicalize().map_err(|err| {
             RuntimeError::Io(format!("failed to resolve {}: {err}", path.display()))
@@ -68,7 +204,23 @@ impl BioscriptRuntime {
                     "virtual write path must be under /work or /output: {raw_path}"
                 )));
             }
+            #[cfg(target_arch = "wasm32")]
             return Ok(path);
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                // `path` is the mirrored real path under the materialized root;
+                // make sure its parent exists so native tools can write there.
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).map_err(|err| {
+                        RuntimeError::Io(format!(
+                            "failed to create materialized dir {}: {err}",
+                            parent.display()
+                        ))
+                    })?;
+                }
+                return Ok(path);
+            }
         }
         if path.exists() {
             let canonical = path.canonicalize().map_err(|err| {
@@ -94,18 +246,19 @@ impl BioscriptRuntime {
         !self.config.virtual_text_files.is_empty() || !self.config.virtual_binary_files.is_empty()
     }
 
-    fn virtual_file_exists(&self, raw_path: &str) -> bool {
-        self.config.virtual_text_files.contains_key(raw_path)
-            || self.config.virtual_binary_files.contains_key(raw_path)
-            || self
-                .state
-                .virtual_written_text_files
-                .lock()
-                .expect("virtual file mutex poisoned")
-                .contains_key(raw_path)
-    }
-
     pub(super) fn virtual_key(&self, path: &Path) -> String {
+        // A mirrored real path (under the materialized root) maps back to its
+        // canonical virtual key `/X` so the in-memory virtual text store stays
+        // consistent with the script-provided config keys and the report
+        // runner's `/output/...` lookups.
+        if let Some(mat) = self.materialized_root_if_set()
+            && let Ok(rel) = path.strip_prefix(&mat)
+        {
+            return format!("/{}", rel.display()).replace('\\', "/");
+        }
+        if self.uses_virtual_files() && path_is_rooted(path) {
+            return path.display().to_string().replace('\\', "/");
+        }
         path.strip_prefix(&self.root)
             .unwrap_or(path)
             .display()

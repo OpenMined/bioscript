@@ -34,15 +34,23 @@ fn forced_cram_backend_reports_reference_and_coordinate_errors_without_reading_c
         },
     )
     .unwrap();
-    let err = store_without_reference
+    // A CRAM without an external reference is best-effort: it reports the
+    // variant as missing instead of erroring, so an advanced assay whose
+    // analysis consumes the raw aligned reads still runs.
+    let observation = store_without_reference
         .lookup_variant(&VariantSpec {
             rsids: vec!["rs1".to_owned()],
             ..VariantSpec::default()
         })
-        .unwrap_err();
+        .unwrap();
+    assert_eq!(observation.backend, "cram");
+    assert!(observation.genotype.is_none());
     assert!(
-        format!("{err:?}").contains("without --reference-file"),
-        "{err:?}"
+        observation
+            .evidence
+            .iter()
+            .any(|line| line.contains("no --reference-file")),
+        "{observation:?}"
     );
 
     let store = forced_cram_store(&dir, "GRCh38.fa");

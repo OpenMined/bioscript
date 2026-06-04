@@ -1,0 +1,19 @@
+[package]
+name = "bioscript-libs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bioscript-core = { path = "../bioscript-core" }
+bioscript-formats = { path = "../bioscript-formats" }
+bcftools-rs = { path = "../../vendor/rust/bcftools-rs/crates/bcftools-rs" }
+flate2 = "1.1.9"
+htslib-rs = { path = "../../vendor/rust/htslib-rs/crates/htslib-rs" }
+kanalyze = { path = "../../vendor/rust/kestrel-rs/crates/kanalyze" }
+kestrel = { path = "../../vendor/rust/kestrel-rs/crates/kestrel" }
+samtools-rs = { path = "../../vendor/rust/samtools-rs/crates/samtools-rs" }
+serde_json = "1"
+tempfile = "3"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }

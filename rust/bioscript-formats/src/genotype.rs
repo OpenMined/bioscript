@@ -1552,8 +1552,18 @@ mod tests {
             },
         )
         .unwrap();
-        let err = missing_reference.lookup_variant(&snp).unwrap_err();
-        assert!(err.to_string().contains("without --reference-file"));
+        // No external reference: best-effort missing observation rather
+        // than a hard error (an advanced assay's analysis reads the raw
+        // aligned data directly).
+        let missing_obs = missing_reference.lookup_variant(&snp).unwrap();
+        assert_eq!(missing_obs.backend, "cram");
+        assert!(missing_obs.genotype.is_none());
+        assert!(
+            missing_obs
+                .evidence
+                .iter()
+                .any(|line| line.contains("no --reference-file"))
+        );
 
         let err = store.get("rs-only").unwrap_err();
         assert!(err.to_string().contains("needs GRCh37/GRCh38 coordinates"));

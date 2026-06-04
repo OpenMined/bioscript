@@ -81,3 +81,8 @@ examples/**/.nextflow*
 # Read-only reference material (htslib/rust-htslib source trees used during
 # the CRAM/noodles migration; not part of the build).
 context/
+/repos/
+
+# Local-only cargo env overrides (macOS Xcode CC/CXX/SDKROOT etc.).
+# Belongs per-developer; recreate locally if your toolchain needs it.
+rust/.cargo/config.toml

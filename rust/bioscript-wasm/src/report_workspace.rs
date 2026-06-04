@@ -68,7 +68,8 @@ impl bioscript_reporting::ReportWorkspace for PackageWorkspace {
         fallback_assembly: Option<Assembly>,
     ) -> Result<serde_json::Value, String> {
         let row_path = row.get("path").cloned().unwrap_or_default();
-        let (manifest, gene, source, alt_alleles, observed_alt_alleles) = if row_path.contains('#') {
+        let (manifest, gene, source, alt_alleles, observed_alt_alleles) = if row_path.contains('#')
+        {
             let task = bioscript_reporting::load_variant_manifest_task_by_path(self, &row_path)?;
             let alt_alleles = task
                 .manifest

@@ -1,0 +1,291 @@
+#![allow(clippy::similar_names)]
+
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use bioscript_runtime::{BioscriptRuntime, RuntimeConfig};
+use monty::MontyObject;
+
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace rust dir")
+        .parent()
+        .expect("repo root")
+        .to_path_buf()
+}
+
+fn unique_output_path(root: &std::path::Path) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock drift")
+        .as_nanos();
+    root.join(format!(
+        "target/vntyper-runtime-plan-{}-{nanos}.tsv",
+        std::process::id()
+    ))
+}
+
+#[test]
+fn vntyper_bioscript_program_runs_through_runtime() {
+    let root = repo_root();
+    let output_path = unique_output_path(&root);
+    let fixture_dir = root.join(format!(
+        "target/vntyper-runtime-main-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&fixture_dir).unwrap();
+    let alignment_source =
+        root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam");
+    let alignment_index_source =
+        root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam.bai");
+    let bam_path = fixture_dir.join("input.bam");
+    let bai_path = fixture_dir.join("input.bam.bai");
+    let reference_path = fixture_dir.join("ref.fa");
+    let output_dir = fixture_dir.join("out");
+    fs::create_dir_all(&output_dir).unwrap();
+    fs::copy(alignment_source, &bam_path).unwrap();
+    fs::copy(alignment_index_source, &bai_path).unwrap();
+    fs::write(&reference_path, ">ref1\nAAAACCCCGGGGTTTT\n").unwrap();
+    let output_arg = output_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let alignment_arg = bam_path.strip_prefix(&root).unwrap().display().to_string();
+    let index_arg = bai_path.strip_prefix(&root).unwrap().display().to_string();
+    let reference_arg = reference_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let output_dir_arg = output_dir
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let runtime = BioscriptRuntime::with_config(&root, RuntimeConfig::default()).unwrap();
+
+    runtime
+        .run_file(
+            root.join("ports/vntyper/bioscript/vntyper.bs"),
+            None,
+            vec![
+                ("input_file", MontyObject::String(alignment_arg)),
+                ("input_bai", MontyObject::String(index_arg)),
+                ("bam_region", MontyObject::String("ref1:1-10".to_owned())),
+                ("vntr_region", MontyObject::String("ref1:1-10".to_owned())),
+                ("reference_fasta", MontyObject::String(reference_arg)),
+                ("kmer_size", MontyObject::Int(4)),
+                ("minimum_difference", MontyObject::Int(1)),
+                ("max_haplotypes", MontyObject::Int(4)),
+                ("max_saved_states", MontyObject::Int(4)),
+                ("output_dir", MontyObject::String(output_dir_arg)),
+                ("output_file", MontyObject::String(output_arg)),
+                ("participant_id", MontyObject::String("main-bam".to_owned())),
+            ],
+        )
+        .unwrap();
+
+    let summary = fs::read_to_string(&output_path).unwrap();
+    assert!(summary.contains("sliced_bam"));
+    assert!(summary.contains("fastq_read1_records"));
+    assert!(summary.contains("report_json"));
+    assert!(output_dir.join("main-bam_kestrel_result.tsv").exists());
+    assert!(output_dir.join("main-bam_report.json").exists());
+    fs::remove_file(output_path).unwrap();
+    fs::remove_dir_all(fixture_dir).unwrap();
+}
+
+#[test]
+fn vntyper_fastq_bioscript_program_runs_through_runtime() {
+    let root = repo_root();
+    let output_path = unique_output_path(&root);
+    let fixture_dir = root.join(format!(
+        "target/vntyper-runtime-native-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&fixture_dir).unwrap();
+    let reference_path = fixture_dir.join("ref.fa");
+    let fastq_1_path = fixture_dir.join("r1.fastq");
+    let fastq_2_path = fixture_dir.join("r2.fastq");
+    let output_dir = fixture_dir.join("out");
+    fs::write(&reference_path, ">chr1\nAAAACCCCGGGGTTTT\n").unwrap();
+    fs::write(
+        &fastq_1_path,
+        "@r1\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n@r2\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n@r3\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n",
+    )
+    .unwrap();
+    fs::write(
+        &fastq_2_path,
+        "@r4\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n@r5\nAAAATCCCGGGGTTTT\n+\nIIIIIIIIIIIIIIII\n",
+    )
+    .unwrap();
+    let output_arg = output_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let reference_arg = reference_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let fastq_1_arg = fastq_1_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let fastq_2_arg = fastq_2_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let output_dir_arg = output_dir
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let runtime = BioscriptRuntime::with_config(&root, RuntimeConfig::default()).unwrap();
+
+    runtime
+        .run_file(
+            root.join("ports/vntyper/bioscript/vntyper-fastq.bs"),
+            None,
+            vec![
+                ("fastq_1", MontyObject::String(fastq_1_arg)),
+                ("fastq_2", MontyObject::String(fastq_2_arg)),
+                ("reference_fasta", MontyObject::String(reference_arg)),
+                ("kmer_size", MontyObject::Int(4)),
+                ("minimum_difference", MontyObject::Int(1)),
+                ("max_haplotypes", MontyObject::Int(4)),
+                ("max_saved_states", MontyObject::Int(4)),
+                ("output_dir", MontyObject::String(output_dir_arg)),
+                ("output_file", MontyObject::String(output_arg)),
+                ("participant_id", MontyObject::String("positive".to_owned())),
+            ],
+        )
+        .unwrap();
+
+    let plan = fs::read_to_string(&output_path).unwrap();
+    assert!(plan.contains("fastq_1"));
+    assert!(plan.contains("kestrel_vcf"));
+    assert!(plan.contains("first_variant_alt"));
+    assert!(plan.contains("first_variant_confidence"));
+    assert!(plan.contains("Low_Precision"));
+    // The summary reports the variant at the expected substitution locus
+    // (reference AAAAC..., reads AAAAT... => chr1:5 ref C). kestrel-rs is
+    // now bug-compatible with Java Kestrel and emits the full
+    // motif-equivalent record set, so the *first* selected alt is no
+    // longer guaranteed to be the C>T row (here it is C>A). Assert the
+    // stable locus in the summary and the canonical C>T call in the
+    // deterministic engine VCF instead of a brittle "\tT" substring.
+    assert!(plan.contains("\tchr1\t"), "PLAN={plan}");
+    assert!(plan.contains("\t5\t"), "PLAN={plan}");
+    let output_vcf = output_dir.join("positive/kestrel/output.vcf");
+    assert!(output_vcf.exists());
+    let vcf_text = fs::read_to_string(&output_vcf).unwrap();
+    assert!(
+        vcf_text.contains("chr1\t5\t.\tC\tT"),
+        "expected canonical C>T call in kestrel VCF: {vcf_text}"
+    );
+    assert!(
+        output_dir
+            .join("positive/kestrel/output.sorted.vcf.gz")
+            .exists()
+    );
+    let kestrel_tsv = output_dir.join("positive/kestrel_result.tsv");
+    assert!(kestrel_tsv.exists());
+    let tsv = fs::read_to_string(&kestrel_tsv).unwrap();
+    assert!(tsv.contains("Confidence"));
+    assert!(tsv.contains("passes_vntyper_filters"));
+    let report_json = output_dir.join("positive/report.json");
+    assert!(report_json.exists());
+    let report = fs::read_to_string(&report_json).unwrap();
+    assert!(report.contains("\"algorithm_results\""));
+    assert!(report.contains("\"kestrel\""));
+    assert!(report.contains("\"Low_Precision\""));
+    assert!(report.contains("\"native bioscript kestrel from FASTQ\""));
+    fs::remove_file(output_path).unwrap();
+    fs::remove_dir_all(fixture_dir).unwrap();
+}
+
+#[test]
+fn vntyper_bam_native_bioscript_program_runs_through_runtime() {
+    let root = repo_root();
+    let output_path = unique_output_path(&root);
+    let fixture_dir = root.join(format!("target/vntyper-runtime-bam-{}", std::process::id()));
+    fs::create_dir_all(&fixture_dir).unwrap();
+    let alignment_source =
+        root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam");
+    let alignment_index_source =
+        root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam.bai");
+    let bam_path = fixture_dir.join("input.bam");
+    let bai_path = fixture_dir.join("input.bam.bai");
+    let reference_path = fixture_dir.join("ref.fa");
+    let output_dir = fixture_dir.join("out");
+    fs::create_dir_all(&output_dir).unwrap();
+    fs::copy(alignment_source, &bam_path).unwrap();
+    fs::copy(alignment_index_source, &bai_path).unwrap();
+    fs::write(&reference_path, ">ref1\nAAAACCCCGGGGTTTT\n").unwrap();
+    let output_arg = output_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let alignment_arg = bam_path.strip_prefix(&root).unwrap().display().to_string();
+    let index_arg = bai_path.strip_prefix(&root).unwrap().display().to_string();
+    let reference_arg = reference_path
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let output_dir_arg = output_dir
+        .strip_prefix(&root)
+        .unwrap()
+        .display()
+        .to_string();
+    let runtime = BioscriptRuntime::with_config(&root, RuntimeConfig::default()).unwrap();
+
+    runtime
+        .run_file(
+            root.join("ports/vntyper/bioscript/vntyper-bam-native.bs"),
+            None,
+            vec![
+                ("input_file", MontyObject::String(alignment_arg)),
+                ("input_bai", MontyObject::String(index_arg)),
+                ("bam_region", MontyObject::String("ref1:1-10".to_owned())),
+                ("vntr_region", MontyObject::String("ref1:1-10".to_owned())),
+                ("reference_fasta", MontyObject::String(reference_arg)),
+                ("kmer_size", MontyObject::Int(4)),
+                ("minimum_difference", MontyObject::Int(1)),
+                ("max_haplotypes", MontyObject::Int(4)),
+                ("max_saved_states", MontyObject::Int(4)),
+                ("output_dir", MontyObject::String(output_dir_arg)),
+                ("output_file", MontyObject::String(output_arg)),
+                ("participant_id", MontyObject::String("tiny-bam".to_owned())),
+            ],
+        )
+        .unwrap();
+
+    let summary = fs::read_to_string(&output_path).unwrap();
+    assert!(summary.contains("sliced_bam"));
+    assert!(summary.contains("fastq_read1_records"));
+    assert!(summary.contains("depth_region_length"));
+    assert!(output_dir.join("tiny-bam_sliced.bam").exists());
+    assert!(output_dir.join("tiny-bam_R1.fastq.gz").exists());
+    assert!(output_dir.join("tiny-bam_R2.fastq.gz").exists());
+    assert!(output_dir.join("tiny-bam_kestrel.vcf").exists());
+    assert!(output_dir.join("tiny-bam_kestrel.sorted.vcf.gz").exists());
+    assert!(output_dir.join("tiny-bam_kestrel_result.tsv").exists());
+    let report_json = output_dir.join("tiny-bam_report.json");
+    assert!(report_json.exists());
+    let report = fs::read_to_string(&report_json).unwrap();
+    assert!(report.contains("\"native bioscript samtools/kestrel\""));
+    assert!(report.contains("\"region_length\""));
+    fs::remove_file(output_path).unwrap();
+    fs::remove_dir_all(fixture_dir).unwrap();
+}

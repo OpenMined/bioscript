@@ -12,17 +12,31 @@ impl CramBackend {
         "cram"
     }
 
+    /// A CRAM without an external reference can't be pileup-genotyped here
+    /// (reference-compressed reads need `--reference-file`; a `no_ref` / embedded
+    /// CRAM stores bases but this backend's variant query path still needs the
+    /// reference allele context). Rather than abort the whole report, report
+    /// the variant as missing so the run degrades to a partial result. An
+    /// advanced assay whose analysis consumes the raw aligned reads (e.g.
+    /// `VNtyper` running Kestrel over the MUC1 slice) still works.
+    fn reference_missing_observation(&self) -> VariantObservation {
+        VariantObservation {
+            backend: self.backend_name().to_owned(),
+            evidence: vec![format!(
+                "CRAM variant query skipped for {}: no --reference-file; \
+                 reported as missing (analysis consumes raw reads directly)",
+                self.path.display()
+            )],
+            ..VariantObservation::default()
+        }
+    }
+
     pub(crate) fn lookup_variant(
         &self,
         variant: &VariantSpec,
     ) -> Result<VariantObservation, RuntimeError> {
         let Some(reference_file) = self.options.reference_file.as_ref() else {
-            return Err(RuntimeError::Unsupported(format!(
-                "backend '{}' cannot satisfy query '{}' for {} without --reference-file",
-                self.backend_name(),
-                describe_query(variant),
-                self.path.display()
-            )));
+            return Ok(self.reference_missing_observation());
         };
 
         let Some((assembly, locus)) = choose_variant_locus(variant, reference_file) else {
@@ -69,11 +83,10 @@ impl CramBackend {
         variants: &[VariantSpec],
     ) -> Result<Vec<VariantObservation>, RuntimeError> {
         let Some(reference_file) = self.options.reference_file.as_ref() else {
-            return Err(RuntimeError::Unsupported(format!(
-                "backend '{}' cannot satisfy CRAM variant queries for {} without --reference-file",
-                self.backend_name(),
-                self.path.display()
-            )));
+            return Ok(variants
+                .iter()
+                .map(|_| self.reference_missing_observation())
+                .collect());
         };
 
         let mut indexed: Vec<(usize, &VariantSpec)> = variants.iter().enumerate().collect();
@@ -258,10 +271,24 @@ mod tests {
             ..VariantSpec::default()
         };
 
-        let err = backend(None).lookup_variant(&variant).unwrap_err();
-        let message = err.to_string();
-        assert!(message.contains("without --reference-file"));
-        assert!(message.contains("sample.cram"));
+        // A CRAM without an external reference is now best-effort: instead
+        // of erroring it reports the variant as missing so an advanced
+        // assay whose analysis consumes the raw aligned reads still runs.
+        let observation = backend(None).lookup_variant(&variant).unwrap();
+        assert_eq!(observation.backend, "cram");
+        assert!(observation.genotype.is_none());
+        assert!(
+            observation
+                .evidence
+                .iter()
+                .any(|line| line.contains("no --reference-file"))
+        );
+        assert!(
+            observation
+                .evidence
+                .iter()
+                .any(|line| line.contains("sample.cram"))
+        );
 
         let observation = backend(Some(PathBuf::from("ref.fa")))
             .unsupported_locus_observation(&variant, Path::new("ref.fa"));

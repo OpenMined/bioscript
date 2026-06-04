@@ -6,6 +6,8 @@ members = [
     "bioscript-ffi",
     "bioscript-formats",
     "bioscript-reporting",
+    "bioscript-libs",
+    "bioscript-python",
     "bioscript-runtime",
     "bioscript-schema",
     "bioscript-wasm",
@@ -31,3 +33,9 @@ noodles-fasta = { path = "../noodles/noodles-fasta" }
 noodles-sam = { path = "../noodles/noodles-sam" }
 noodles-tabix = { path = "../noodles/noodles-tabix" }
 noodles-vcf = { path = "../noodles/noodles-vcf" }
+
+[patch."https://github.com/madhavajay/htslib-rs.git"]
+htslib-rs = { path = "../vendor/rust/htslib-rs/crates/htslib-rs" }
+
+[patch."https://github.com/madhavajay/noodles.git"]
+noodles = { path = "../noodles/noodles" }
