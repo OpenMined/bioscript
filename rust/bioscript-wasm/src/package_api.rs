@@ -39,6 +39,7 @@ struct PackageResolutionJs {
     entrypoint: String,
     files: Vec<PackageFileJs>,
     name: Option<String>,
+    result_entrypoint: Option<String>,
     resources: Vec<PackageResourceJs>,
 }
 
@@ -57,6 +58,7 @@ struct PackageReleaseJs {
 struct PackageDescriptor {
     entrypoint: PathBuf,
     name: Option<String>,
+    result_entrypoint: Option<PathBuf>,
 }
 
 struct ExtractedPackageFile {
@@ -143,6 +145,9 @@ pub fn resolve_package_zip_bytes(
         entrypoint,
         files: files_js,
         name: descriptor.name,
+        result_entrypoint: descriptor
+            .result_entrypoint
+            .map(|path| path.display().to_string().replace('\\', "/")),
         resources,
     })
     .map_err(|err| JsError::new(&format!("failed to encode package response: {err}")))
@@ -319,6 +324,7 @@ fn load_package_descriptor(files: &[ExtractedPackageFile]) -> Result<PackageDesc
                 return Ok(PackageDescriptor {
                     entrypoint: PathBuf::from(name),
                     name: package_name,
+                    result_entrypoint: None,
                 });
             }
             if schema != "bioscript:package:1.0" {
@@ -336,9 +342,11 @@ fn load_package_descriptor(files: &[ExtractedPackageFile]) -> Result<PackageDesc
                 .and_then(|mapping| mapping.get(serde_yaml::Value::String("name".to_owned())))
                 .and_then(serde_yaml::Value::as_str)
                 .map(ToOwned::to_owned);
+            let result_entrypoint = package_result_entrypoint(&value)?;
             return Ok(PackageDescriptor {
                 entrypoint: checked_relative_package_path(entrypoint)?,
                 name,
+                result_entrypoint,
             });
         }
     }
@@ -347,12 +355,40 @@ fn load_package_descriptor(files: &[ExtractedPackageFile]) -> Result<PackageDesc
             return Ok(PackageDescriptor {
                 entrypoint: PathBuf::from(candidate),
                 name: None,
+                result_entrypoint: None,
             });
         }
     }
     Err(format!(
         "package does not contain {PACKAGE_DESCRIPTOR}, {LEGACY_PACKAGE_DESCRIPTOR}, panel.yaml, assay.yaml, or variant.yaml"
     ))
+}
+
+fn package_result_entrypoint(value: &serde_yaml::Value) -> Result<Option<PathBuf>, String> {
+    let Some(mapping) = value.as_mapping() else {
+        return Ok(None);
+    };
+    let Some(result) = mapping.get(serde_yaml::Value::String("result".to_owned())) else {
+        return Ok(None);
+    };
+    if let Some(path) = result.as_mapping().and_then(|mapping| {
+        mapping
+            .get(serde_yaml::Value::String("entrypoint".to_owned()))
+            .and_then(serde_yaml::Value::as_str)
+    }) {
+        return checked_relative_package_path(path).map(Some);
+    }
+    if let Some(path) = result.as_mapping().and_then(|mapping| {
+        mapping
+            .get(serde_yaml::Value::String("primary_html".to_owned()))
+            .and_then(serde_yaml::Value::as_str)
+    }) {
+        return checked_relative_package_path(path).map(Some);
+    }
+    if let Some(path) = result.as_str() {
+        return checked_relative_package_path(path).map(Some);
+    }
+    Ok(None)
 }
 
 fn checked_relative_package_path(raw: &str) -> Result<PathBuf, String> {
@@ -388,7 +424,22 @@ fn is_allowed_package_file(path: &Path) -> bool {
             .is_some_and(|ext| {
                 matches!(
                     ext.to_ascii_lowercase().as_str(),
-                    "yaml" | "yml" | "py" | "md" | "txt" | "tsv" | "json" | "jsonl"
+                    "yaml"
+                        | "yml"
+                        | "py"
+                        | "md"
+                        | "txt"
+                        | "tsv"
+                        | "json"
+                        | "jsonl"
+                        | "fa"
+                        | "fasta"
+                        | "fna"
+                        | "fai"
+                        | "vcf"
+                        | "tbi"
+                        | "bai"
+                        | "crai"
                 )
             })
 }

@@ -17,12 +17,16 @@ fn supported_modules() -> Vec<&'static str> {
 fn samtools_view_region_native(
     bam: &str,
     index: Option<&str>,
+    reference_fasta: Option<&str>,
+    reference_index: Option<&str>,
     region: &str,
     output_bam: &str,
 ) -> PyResult<usize> {
     bioscript_libs::samtools::view_region_native(
         PathBuf::from(bam).as_path(),
         index.map(PathBuf::from).as_deref(),
+        reference_fasta.map(PathBuf::from).as_deref(),
+        reference_index.map(PathBuf::from).as_deref(),
         region,
         PathBuf::from(output_bam).as_path(),
     )
@@ -57,6 +61,8 @@ fn samtools_depth_native(
 fn samtools_fastq_native(
     bam: &str,
     index: Option<&str>,
+    reference_fasta: Option<&str>,
+    reference_index: Option<&str>,
     region: &str,
     fastq_1: &str,
     fastq_2: &str,
@@ -64,6 +70,8 @@ fn samtools_fastq_native(
     let summary = bioscript_libs::samtools::fastq_native(
         PathBuf::from(bam).as_path(),
         index.map(PathBuf::from).as_deref(),
+        reference_fasta.map(PathBuf::from).as_deref(),
+        reference_index.map(PathBuf::from).as_deref(),
         region,
         PathBuf::from(fastq_1).as_path(),
         PathBuf::from(fastq_2).as_path(),

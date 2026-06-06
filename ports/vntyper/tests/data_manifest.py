@@ -41,7 +41,7 @@ EXPECTED_OUTPUTS = [
 ]
 REPRESENTATIVE_BAM_CASES = {
     "positive": DATA_ROOT / "example_6449_hg19_subset.bam",
-    "negative": DATA_ROOT / "example_66bf_hg19_subset.bam",
+    "negative": DATA_ROOT / "example_7a61_hg19_subset.bam",
 }
 REPRESENTATIVE_FASTQ_CASES = {
     "positive": (
@@ -49,8 +49,8 @@ REPRESENTATIVE_FASTQ_CASES = {
         DATA_ROOT / "example_6449_hg19_subset_R2.fastq.gz",
     ),
     "negative": (
-        DATA_ROOT / "example_66bf_hg19_subset_R1.fastq.gz",
-        DATA_ROOT / "example_66bf_hg19_subset_R2.fastq.gz",
+        DATA_ROOT / "example_7a61_hg19_subset_R1.fastq.gz",
+        DATA_ROOT / "example_7a61_hg19_subset_R2.fastq.gz",
     ),
 }
 

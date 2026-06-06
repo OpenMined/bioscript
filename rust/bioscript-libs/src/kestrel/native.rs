@@ -1,8 +1,10 @@
-use std::io::Write;
+use std::cell::RefCell;
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use flate2::read::MultiGzDecoder;
-use kanalyze::comp::reader::FileSequenceSource;
+use kanalyze::comp::reader::{FileSequenceSource, SequenceFormat, SequenceRecord};
 use kestrel::io::{InputSample, StreamableOutput};
 use kestrel::runner::KestrelRunner;
 use tempfile::TempDir;
@@ -123,8 +125,50 @@ pub fn call_fastq_paths_to_vcf_references<'a>(
     run_kestrel_to_string(&temp, &[reference_path], &fastq_paths, kmer_size, options)
 }
 
+pub fn call_fastq_bytes_to_vcf_references(
+    references: &[NativeReferenceRegion],
+    fastq_inputs: &[(String, Vec<u8>)],
+    kmer_size: usize,
+    options: &NativeKestrelRunOptions,
+) -> LibResult<String> {
+    let reference_sources = references
+        .iter()
+        .enumerate()
+        .map(|(index, reference)| {
+            FileSequenceSource::from_records(
+                format!("reference_{}.fa", index + 1),
+                SequenceFormat::Fasta,
+                i32::try_from(index + 1).unwrap_or(i32::MAX),
+                vec![SequenceRecord {
+                    name: reference.reference_name.clone(),
+                    sequence: reference.sequence.as_bytes().to_vec(),
+                }],
+            )
+            .map_err(kestrel_error)
+        })
+        .collect::<LibResult<Vec<_>>>()?;
+    let fastq_sources = fastq_inputs
+        .iter()
+        .enumerate()
+        .map(|(index, (name, bytes))| {
+            FileSequenceSource::from_records(
+                name,
+                SequenceFormat::Fastq,
+                i32::try_from(index + 1).unwrap_or(i32::MAX),
+                parse_fastq_records(name, bytes)?,
+            )
+            .map_err(kestrel_error)
+        })
+        .collect::<LibResult<Vec<_>>>()?;
+    run_kestrel_sources_to_string(reference_sources, fastq_sources, kmer_size, options)
+}
+
 pub fn load_reference_regions(path: &Path) -> LibResult<Vec<NativeReferenceRegion>> {
     let content = std::fs::read_to_string(path).map_err(io_error)?;
+    load_reference_regions_from_str(&content)
+}
+
+pub fn load_reference_regions_from_str(content: &str) -> LibResult<Vec<NativeReferenceRegion>> {
     let mut records = Vec::new();
     let mut current_name: Option<String> = None;
     let mut current_sequence = String::new();
@@ -158,16 +202,85 @@ pub fn load_reference_regions(path: &Path) -> LibResult<Vec<NativeReferenceRegio
         records.push(NativeReferenceRegion::new(name, current_sequence, "."));
     }
     if records.is_empty() {
-        return Err(LibError::InvalidArguments(format!(
-            "FASTA file contains no records: {}",
-            path.display()
-        )));
+        return Err(LibError::InvalidArguments(
+            "FASTA content contains no records".to_owned(),
+        ));
     }
     for record in &records {
         validate_name(&record.reference_name)?;
         validate_sequence(&record.sequence)?;
     }
     Ok(records)
+}
+
+fn parse_fastq_records(name: &str, bytes: &[u8]) -> LibResult<Vec<SequenceRecord>> {
+    let data = if is_gzip_name(name) {
+        let mut decoded = Vec::new();
+        MultiGzDecoder::new(Cursor::new(bytes))
+            .read_to_end(&mut decoded)
+            .map_err(io_error)?;
+        decoded
+    } else {
+        bytes.to_vec()
+    };
+    let mut records = Vec::new();
+    let text = String::from_utf8(data).map_err(|err| {
+        LibError::InvalidArguments(format!("FASTQ input {name} is not UTF-8: {err}"))
+    })?;
+    let mut lines = text.lines();
+    while let Some(header) = lines.next() {
+        let Some(sequence) = lines.next() else {
+            return Err(LibError::InvalidArguments(format!(
+                "FASTQ input {name} has a truncated record"
+            )));
+        };
+        let Some(plus) = lines.next() else {
+            return Err(LibError::InvalidArguments(format!(
+                "FASTQ input {name} has a truncated record"
+            )));
+        };
+        let Some(_qualities) = lines.next() else {
+            return Err(LibError::InvalidArguments(format!(
+                "FASTQ input {name} has a truncated record"
+            )));
+        };
+        if !header.starts_with('@') || !plus.starts_with('+') {
+            return Err(LibError::InvalidArguments(format!(
+                "FASTQ input {name} has an invalid record"
+            )));
+        }
+        records.push(SequenceRecord {
+            name: header.trim_start_matches('@').to_owned(),
+            sequence: sequence.as_bytes().to_vec(),
+        });
+    }
+    Ok(records)
+}
+
+fn run_kestrel_sources_to_string(
+    reference_sources: Vec<FileSequenceSource>,
+    fastq_sources: Vec<FileSequenceSource>,
+    kmer_size: usize,
+    options: &NativeKestrelRunOptions,
+) -> LibResult<String> {
+    let buffer = Rc::new(RefCell::new(Vec::new()));
+    let mut runner = configured_runner_inner(None, Path::new("calls.vcf"), kmer_size, options)?;
+    runner.set_output_file(Some(StreamableOutput::from_buffer(
+        buffer.clone(),
+        Some("calls.vcf"),
+    )));
+
+    for reference_source in reference_sources {
+        runner.add_reference(reference_source);
+    }
+    runner.add_sample(
+        InputSample::new(Some(&options.sample_name), fastq_sources).map_err(kestrel_error)?,
+    );
+
+    runner.run().map_err(kestrel_error)?;
+    String::from_utf8(buffer.borrow().clone()).map_err(|err| {
+        LibError::InvalidArguments(format!("Kestrel VCF output is not UTF-8: {err}"))
+    })
 }
 
 fn run_kestrel_to_string(
@@ -202,12 +315,28 @@ fn configured_runner(
     kmer_size: usize,
     options: &NativeKestrelRunOptions,
 ) -> LibResult<KestrelRunner> {
+    configured_runner_inner(
+        Some(&temp.path().display().to_string()),
+        output_path,
+        kmer_size,
+        options,
+    )
+}
+
+fn configured_runner_inner(
+    temp_dir_name: Option<&str>,
+    output_path: &Path,
+    kmer_size: usize,
+    options: &NativeKestrelRunOptions,
+) -> LibResult<KestrelRunner> {
     let mut runner = KestrelRunner::new();
     runner.set_k_size(kmer_size).map_err(kestrel_error)?;
     runner.set_output_path(output_path);
     runner.set_output_format("vcf").map_err(kestrel_error)?;
     runner.set_log_file(Some(StreamableOutput::stderr()));
-    runner.set_temp_dir_name(Some(&temp.path().display().to_string()));
+    if let Some(temp_dir_name) = temp_dir_name {
+        runner.set_temp_dir_name(Some(temp_dir_name));
+    }
     runner.set_kmer_count_in_memory(true);
     runner.set_count_reverse_kmers(true);
     runner
@@ -307,6 +436,10 @@ fn is_gzip_path(path: &Path) -> bool {
     path.extension()
         .and_then(std::ffi::OsStr::to_str)
         .is_some_and(|extension| extension.eq_ignore_ascii_case("gz"))
+}
+
+fn is_gzip_name(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".gz")
 }
 
 fn validate_name(name: &str) -> LibResult<()> {

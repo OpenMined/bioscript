@@ -1,0 +1,16 @@
+schema: bioscript:package:1.0
+version: "1.0"
+name: vntyper_muc1
+label: MUC1 VNTR (VNtyper)
+summary: >
+  BioScript package for running the VNtyper MUC1 VNTR assay from aligned
+  BAM/CRAM genome inputs.
+entrypoint: assay.yaml
+result:
+  entrypoint: summary_report.html
+tags:
+  - type:risk
+  - gene:MUC1
+  - kind:vntr
+package:
+  publish: true

@@ -93,6 +93,7 @@ fn run_interpretations_for_report(
             script_path: &script_path,
             input_file: options.input_file,
             output_file: &output_file,
+            output_dir: options.output_dir,
             observations_file: &observations_file,
             participant_id: options.participant_id,
             loader: options.loader,
@@ -129,6 +130,7 @@ struct BioscriptAnalysisScriptInput<'a> {
     script_path: &'a Path,
     input_file: &'a Path,
     output_file: &'a Path,
+    output_dir: &'a Path,
     observations_file: &'a Path,
     participant_id: &'a str,
     loader: &'a GenotypeLoadOptions,
@@ -152,7 +154,7 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
     })?;
     let script_text = fs::read_to_string(input.script_path)
         .map_err(|err| format!("failed to read analysis script {}: {err}", input.script_path.display()))?;
-    let virtual_input_file = "/input/genotypes".to_owned();
+    let virtual_input_file = virtual_genotype_input_path(input.loader);
     let virtual_observations_file = "/work/observations.tsv".to_owned();
     let output_extension = input
         .output_file
@@ -162,6 +164,21 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
     let virtual_output_file = format!("/output/results.{output_extension}");
     let script_virtual_path = virtual_pipeline_path(input.script_path, "analysis.py");
     let manifest_virtual_path = virtual_pipeline_path(input.manifest_path, "manifest.yaml");
+    let virtual_input_index = input
+        .loader
+        .input_index
+        .as_ref()
+        .map(|_| virtual_genotype_index_path(input.loader));
+    let virtual_reference_file = input
+        .loader
+        .reference_file
+        .as_ref()
+        .map(|_| "/input/reference.fa".to_owned());
+    let virtual_reference_index = input
+        .loader
+        .reference_index
+        .as_ref()
+        .map(|_| "/input/reference.fa.fai".to_owned());
     let AnalysisVirtualTextFiles {
         text_files: virtual_text_files,
         asset_paths,
@@ -175,9 +192,49 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
     )?;
     let mut virtual_binary_files = BTreeMap::new();
     virtual_binary_files.insert(virtual_input_file.clone(), input_bytes);
+    if let (Some(real_path), Some(virtual_path)) =
+        (&input.loader.input_index, &virtual_input_index)
+    {
+        virtual_binary_files.insert(
+            virtual_path.clone(),
+            fs::read(real_path).map_err(|err| {
+                format!("failed to read analysis input index {}: {err}", real_path.display())
+            })?,
+        );
+    }
+    if let (Some(real_path), Some(virtual_path)) =
+        (&input.loader.reference_file, &virtual_reference_file)
+    {
+        virtual_binary_files.insert(
+            virtual_path.clone(),
+            fs::read(real_path).map_err(|err| {
+                format!("failed to read analysis reference {}: {err}", real_path.display())
+            })?,
+        );
+    }
+    if let (Some(real_path), Some(virtual_path)) =
+        (&input.loader.reference_index, &virtual_reference_index)
+    {
+        virtual_binary_files.insert(
+            virtual_path.clone(),
+            fs::read(real_path).map_err(|err| {
+                format!(
+                    "failed to read analysis reference index {}: {err}",
+                    real_path.display()
+                )
+            })?,
+        );
+    }
+    let mut runtime_loader = input.loader.clone();
+    runtime_loader.input_index = virtual_input_index.as_ref().map(PathBuf::from);
+    runtime_loader.reference_file = virtual_reference_file.as_ref().map(PathBuf::from);
+    runtime_loader.reference_index = virtual_reference_index.as_ref().map(PathBuf::from);
     let context = analysis_context(
         input.participant_id,
         &virtual_input_file,
+        virtual_input_index.as_deref(),
+        virtual_reference_file.as_deref(),
+        virtual_reference_index.as_deref(),
         &script_virtual_path,
         &manifest_virtual_path,
         &asset_paths,
@@ -188,7 +245,7 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
         input.runtime_root.to_path_buf(),
         RuntimeConfig {
             limits,
-            loader: input.loader.clone(),
+            loader: runtime_loader,
             context,
             virtual_binary_files,
             virtual_text_files,
@@ -202,6 +259,30 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
             None,
             vec![
                 ("input_file", monty::MontyObject::String(virtual_input_file)),
+                (
+                    "input_index",
+                    optional_string_object(virtual_input_index.as_deref()),
+                ),
+                (
+                    "input_bai",
+                    optional_string_object(virtual_input_index.as_deref()),
+                ),
+                (
+                    "reference_fasta",
+                    optional_string_object(virtual_reference_file.as_deref()),
+                ),
+                (
+                    "alignment_reference_fasta",
+                    optional_string_object(virtual_reference_file.as_deref()),
+                ),
+                (
+                    "reference_index",
+                    optional_string_object(virtual_reference_index.as_deref()),
+                ),
+                (
+                    "alignment_reference_index",
+                    optional_string_object(virtual_reference_index.as_deref()),
+                ),
                 ("output_file", monty::MontyObject::String(virtual_output_file.clone())),
                 ("observations_file", monty::MontyObject::String(virtual_observations_file)),
                 ("asset_paths", monty_string_dict(&asset_paths)),
@@ -213,6 +294,7 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
         )
         .map_err(|err| err.to_string())?;
     let written = runtime.virtual_written_text_files();
+    let written_binary = runtime.virtual_written_binary_files();
     let output_text = written
         .get(&virtual_output_file)
         .ok_or_else(|| format!("analysis did not write {virtual_output_file}"))?;
@@ -226,7 +308,12 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
             input.output_file.display()
         )
     })?;
-    persist_virtual_output_files(&written, &virtual_output_file, input.output_file)
+    persist_virtual_output_files(
+        &written,
+        &written_binary,
+        &virtual_output_file,
+        input.output_dir,
+    )
 }
 
 struct AnalysisVirtualTextFiles {
@@ -271,27 +358,17 @@ fn collect_analysis_virtual_text_files(
 
 fn persist_virtual_output_files(
     written: &BTreeMap<String, String>,
+    written_binary: &BTreeMap<String, Vec<u8>>,
     primary_virtual_output_file: &str,
-    primary_output_file: &Path,
+    output_dir: &Path,
 ) -> Result<(), String> {
-    let Some(output_dir) = primary_output_file.parent() else {
-        return Ok(());
-    };
     for (virtual_path, text) in written {
         if virtual_path == primary_virtual_output_file {
             continue;
         }
-        let Some(relative) = virtual_path.strip_prefix("/output/") else {
+        let Some(output_path) = virtual_output_path(output_dir, virtual_path)? else {
             continue;
         };
-        let relative_path = Path::new(relative);
-        if relative_path
-            .components()
-            .any(|component| !matches!(component, std::path::Component::Normal(_)))
-        {
-            return Err(format!("analysis wrote invalid output path {virtual_path}"));
-        }
-        let output_path = output_dir.join(relative_path);
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|err| format!("failed to create output dir {}: {err}", parent.display()))?;
@@ -299,7 +376,32 @@ fn persist_virtual_output_files(
         fs::write(&output_path, text)
             .map_err(|err| format!("failed to write analysis output {}: {err}", output_path.display()))?;
     }
+    for (virtual_path, bytes) in written_binary {
+        let Some(output_path) = virtual_output_path(output_dir, virtual_path)? else {
+            continue;
+        };
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("failed to create output dir {}: {err}", parent.display()))?;
+        }
+        fs::write(&output_path, bytes)
+            .map_err(|err| format!("failed to write analysis output {}: {err}", output_path.display()))?;
+    }
     Ok(())
+}
+
+fn virtual_output_path(output_dir: &Path, virtual_path: &str) -> Result<Option<PathBuf>, String> {
+    let Some(relative) = virtual_path.strip_prefix("/output/") else {
+        return Ok(None);
+    };
+    let relative_path = Path::new(relative);
+    if relative_path
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!("analysis wrote invalid output path {virtual_path}"));
+    }
+    Ok(Some(output_dir.join(relative_path)))
 }
 
 fn virtual_pipeline_path(path: &Path, fallback: &str) -> String {
@@ -310,9 +412,30 @@ fn virtual_pipeline_path(path: &Path, fallback: &str) -> String {
     format!("/input/pipeline/{name}")
 }
 
+fn virtual_genotype_input_path(loader: &GenotypeLoadOptions) -> String {
+    match loader.format {
+        Some(GenotypeSourceFormat::Bam) => "/input/genotypes.bam",
+        Some(GenotypeSourceFormat::Cram) => "/input/genotypes.cram",
+        _ => "/input/genotypes",
+    }
+    .to_owned()
+}
+
+fn virtual_genotype_index_path(loader: &GenotypeLoadOptions) -> String {
+    match loader.format {
+        Some(GenotypeSourceFormat::Bam) => "/input/genotypes.bam.bai",
+        Some(GenotypeSourceFormat::Cram) => "/input/genotypes.cram.crai",
+        _ => "/input/input.index",
+    }
+    .to_owned()
+}
+
 fn analysis_context(
     participant_id: &str,
     input_file: &str,
+    input_index: Option<&str>,
+    reference_file: Option<&str>,
+    reference_index: Option<&str>,
     script_path: &str,
     manifest_path: &str,
     asset_paths: &BTreeMap<String, String>,
@@ -326,10 +449,12 @@ fn analysis_context(
         ),
         (
             "input_files".to_owned(),
-            monty_string_dict(&BTreeMap::from([(
-                "genotypes".to_owned(),
-                input_file.to_owned(),
-            )])),
+            monty_string_dict(&optional_input_files(
+                input_file,
+                input_index,
+                reference_file,
+                reference_index,
+            )),
         ),
         (
             "pipeline_files".to_owned(),
@@ -347,7 +472,57 @@ fn analysis_context(
             "output_file".to_owned(),
             monty::MontyObject::String(output_file.to_owned()),
         ),
+        (
+            "input_index".to_owned(),
+            optional_string_object(input_index),
+        ),
+        (
+            "input_bai".to_owned(),
+            optional_string_object(input_index),
+        ),
+        (
+            "reference_fasta".to_owned(),
+            optional_string_object(reference_file),
+        ),
+        (
+            "alignment_reference_fasta".to_owned(),
+            optional_string_object(reference_file),
+        ),
+        (
+            "reference_index".to_owned(),
+            optional_string_object(reference_index),
+        ),
+        (
+            "alignment_reference_index".to_owned(),
+            optional_string_object(reference_index),
+        ),
     ])
+}
+
+fn optional_input_files(
+    input_file: &str,
+    input_index: Option<&str>,
+    reference_file: Option<&str>,
+    reference_index: Option<&str>,
+) -> BTreeMap<String, String> {
+    let mut files = BTreeMap::from([("genotypes".to_owned(), input_file.to_owned())]);
+    if let Some(path) = input_index {
+        files.insert("input_index".to_owned(), path.to_owned());
+        files.insert("bai".to_owned(), path.to_owned());
+    }
+    if let Some(path) = reference_file {
+        files.insert("reference_fasta".to_owned(), path.to_owned());
+    }
+    if let Some(path) = reference_index {
+        files.insert("reference_index".to_owned(), path.to_owned());
+    }
+    files
+}
+
+fn optional_string_object(value: Option<&str>) -> monty::MontyObject {
+    value.map_or(monty::MontyObject::None, |value| {
+        monty::MontyObject::String(value.to_owned())
+    })
 }
 
 fn parse_analysis_output(
@@ -516,6 +691,96 @@ if __name__ == "__main__":
         assert!(output
             .join("analysis/sample/score.observations.tsv")
             .exists());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn run_interpretations_virtualizes_auxiliary_alignment_inputs() {
+        let dir = temp_dir("analysis-auxiliary-inputs");
+        let manifest = dir.join("assay.yaml");
+        let script = dir.join("analysis.bs");
+        let input = dir.join("sample.bam");
+        let input_index = dir.join("sample.bam.bai");
+        let reference = dir.join("reference.fa");
+        let reference_index = dir.join("reference.fa.fai");
+        let output = dir.join("out");
+        fs::write(&input, b"alignment bytes").unwrap();
+        fs::write(&input_index, b"index bytes").unwrap();
+        fs::write(&reference, b">chr1\nACGT\n").unwrap();
+        fs::write(&reference_index, b"chr1\t4\t6\t4\t5\n").unwrap();
+        fs::write(&manifest, "schema: bioscript:assay:1.0\nname: assay-one\n").unwrap();
+        fs::write(
+            &script,
+            r#"
+def main():
+    input_files = bioscript.context["input_files"]
+    bioscript.write_tsv(output_file, [
+        {
+            "input_file": input_file,
+            "input_index": input_index,
+            "input_bai": input_bai,
+            "context_input_index": bioscript.context["input_index"],
+            "context_input_bai": bioscript.context["input_bai"],
+            "input_files_index": input_files["input_index"],
+            "reference_fasta": reference_fasta,
+            "alignment_reference_fasta": alignment_reference_fasta,
+            "reference_index": reference_index,
+            "alignment_reference_index": alignment_reference_index,
+            "input_files_reference": input_files["reference_fasta"],
+            "input_files_reference_index": input_files["reference_index"],
+        }
+    ])
+
+if __name__ == "__main__":
+    main()
+"#,
+        )
+        .unwrap();
+        let interpretation = PanelInterpretation {
+            id: "paths".to_owned(),
+            label: Some("Paths".to_owned()),
+            kind: "bioscript".to_owned(),
+            path: "analysis.bs".to_owned(),
+            output_format: Some("tsv".to_owned()),
+            derived_from: Vec::new(),
+            assets: Vec::new(),
+            emits: Vec::new(),
+            logic: None,
+        };
+        let loader = GenotypeLoadOptions {
+            format: Some(GenotypeSourceFormat::Bam),
+            input_index: Some(input_index),
+            reference_file: Some(reference),
+            reference_index: Some(reference_index),
+            ..GenotypeLoadOptions::default()
+        };
+        let options = ReportAnalysisOptions {
+            runtime_root: &dir,
+            input_file: &input,
+            participant_id: "sample",
+            loader: &loader,
+            output_dir: &output,
+            observation_rows: &[],
+            max_duration_ms: 1000,
+        };
+
+        let outputs =
+            run_interpretations_for_report(&manifest, "assay-one", &[interpretation], &options)
+                .unwrap();
+        let row = &outputs[0]["rows"][0];
+        assert_eq!(row["input_file"], "/input/genotypes.bam");
+        assert_eq!(row["input_index"], "/input/genotypes.bam.bai");
+        assert_eq!(row["input_bai"], "/input/genotypes.bam.bai");
+        assert_eq!(row["context_input_index"], "/input/genotypes.bam.bai");
+        assert_eq!(row["context_input_bai"], "/input/genotypes.bam.bai");
+        assert_eq!(row["input_files_index"], "/input/genotypes.bam.bai");
+        assert_eq!(row["reference_fasta"], "/input/reference.fa");
+        assert_eq!(row["alignment_reference_fasta"], "/input/reference.fa");
+        assert_eq!(row["reference_index"], "/input/reference.fa.fai");
+        assert_eq!(row["alignment_reference_index"], "/input/reference.fa.fai");
+        assert_eq!(row["input_files_reference"], "/input/reference.fa");
+        assert_eq!(row["input_files_reference_index"], "/input/reference.fa.fai");
 
         fs::remove_dir_all(dir).unwrap();
     }

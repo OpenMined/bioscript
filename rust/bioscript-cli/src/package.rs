@@ -362,6 +362,8 @@ fn is_allowed_package_file(path: &Path) -> bool {
                 matches!(
                     ext.to_ascii_lowercase().as_str(),
                     "yaml" | "yml" | "py" | "md" | "txt" | "tsv" | "json" | "jsonl"
+                        | "fa" | "fasta" | "fna" | "fai" | "vcf" | "tbi" | "bai"
+                        | "crai"
                 )
             })
 }
@@ -522,6 +524,8 @@ identifiers:
 
         assert!(is_allowed_package_file(Path::new("manifest.yaml")));
         assert!(is_allowed_package_file(Path::new("docs/readme.md")));
+        assert!(is_allowed_package_file(Path::new("assets/muc1_motifs.fa")));
+        assert!(is_allowed_package_file(Path::new("assets/reference.fa.fai")));
         assert!(!is_allowed_package_file(Path::new("bin/tool.sh")));
         assert!(is_package_url("https://example.test/pkg.zip"));
         assert!(is_package_url("http://example.test/pkg.zip"));

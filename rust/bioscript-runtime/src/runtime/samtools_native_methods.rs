@@ -15,9 +15,9 @@ impl BioscriptRuntime {
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
         reject_kwargs(kwargs, "samtools.view_region_native")?;
-        if args.len() != 4 && args.len() != 5 {
+        if args.len() != 4 && args.len() != 5 && args.len() != 6 && args.len() != 7 {
             return Err(RuntimeError::InvalidArguments(
-                "samtools.view_region_native expects bam, region, output_bam, and optional index"
+                "samtools.view_region_native expects bam, region, output_bam, optional index, optional reference FASTA, and optional reference index"
                     .to_owned(),
             ));
         }
@@ -34,8 +34,47 @@ impl BioscriptRuntime {
             "samtools.view_region_native",
         )?)?;
         let index = optional_existing_path(self, args, 4, "samtools.view_region_native")?;
-        let records = samtools::view_region_native(&bam, index.as_deref(), &region, &output)
-            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        let reference_fasta = optional_existing_path(self, args, 5, "samtools.view_region_native")?;
+        let reference_index = optional_existing_path(self, args, 6, "samtools.view_region_native")?;
+        #[cfg(target_arch = "wasm32")]
+        if self.uses_virtual_files()
+            && let (Some(bam_bytes), Some(index_bytes)) = (
+                self.read_virtual_binary_file(&bam),
+                index
+                    .as_ref()
+                    .and_then(|path| self.read_virtual_binary_file(path)),
+            )
+        {
+            let reference_fasta_bytes = reference_fasta
+                .as_ref()
+                .and_then(|path| self.read_virtual_binary_file(path));
+            let reference_index_bytes = reference_index
+                .as_ref()
+                .and_then(|path| self.read_virtual_binary_file(path));
+            let input_format = virtual_alignment_format(&bam);
+            let (output_bytes, records) =
+                samtools::view_region_native_bytes(
+                    &bam_bytes,
+                    &index_bytes,
+                    reference_fasta_bytes.as_deref(),
+                    reference_index_bytes.as_deref(),
+                    &region,
+                    input_format,
+                )
+                    .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+            self.write_virtual_binary_file(&output, output_bytes);
+            record_native_tool_call(self, "samtools.view_region_native", started);
+            return Ok(MontyObject::Int(records as i64));
+        }
+        let records = samtools::view_region_native(
+            &bam,
+            index.as_deref(),
+            reference_fasta.as_deref(),
+            reference_index.as_deref(),
+            &region,
+            &output,
+        )
+        .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
         record_native_tool_call(self, "samtools.view_region_native", started);
         Ok(MontyObject::Int(records as i64))
     }
@@ -46,9 +85,9 @@ impl BioscriptRuntime {
         kwargs: &[(MontyObject, MontyObject)],
     ) -> Result<MontyObject, RuntimeError> {
         reject_kwargs(kwargs, "samtools.fastq_native")?;
-        if args.len() != 5 && args.len() != 6 {
+        if args.len() != 5 && args.len() != 6 && args.len() != 7 && args.len() != 8 {
             return Err(RuntimeError::InvalidArguments(
-                "samtools.fastq_native expects bam, region, fastq_1, fastq_2, and optional index"
+                "samtools.fastq_native expects bam, region, fastq_1, fastq_2, optional index, optional reference FASTA, and optional reference index"
                     .to_owned(),
             ));
         }
@@ -61,9 +100,49 @@ impl BioscriptRuntime {
         let fastq_2 =
             self.resolve_user_write_path(&expect_string_arg(args, 4, "samtools.fastq_native")?)?;
         let index = optional_existing_path(self, args, 5, "samtools.fastq_native")?;
+        let reference_fasta = optional_existing_path(self, args, 6, "samtools.fastq_native")?;
+        let reference_index = optional_existing_path(self, args, 7, "samtools.fastq_native")?;
+        #[cfg(target_arch = "wasm32")]
+        if self.uses_virtual_files()
+            && let (Some(bam_bytes), Some(index_bytes)) = (
+                self.read_virtual_binary_file(&bam),
+                index
+                    .as_ref()
+                    .and_then(|path| self.read_virtual_binary_file(path)),
+            )
+        {
+            let gzip = fastq_1
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("gz"));
+            let reference_fasta_bytes = reference_fasta
+                .as_ref()
+                .and_then(|path| self.read_virtual_binary_file(path));
+            let reference_index_bytes = reference_index
+                .as_ref()
+                .and_then(|path| self.read_virtual_binary_file(path));
+            let input_format = virtual_alignment_format(&bam);
+            let (read1_bytes, read2_bytes, summary) =
+                samtools::fastq_native_bytes(
+                    &bam_bytes,
+                    &index_bytes,
+                    reference_fasta_bytes.as_deref(),
+                    reference_index_bytes.as_deref(),
+                    &region,
+                    gzip,
+                    input_format,
+                )
+                    .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+            self.write_virtual_binary_file(&fastq_1, read1_bytes);
+            self.write_virtual_binary_file(&fastq_2, read2_bytes);
+            record_native_tool_call(self, "samtools.fastq_native", started);
+            return Ok(fastq_summary_object(summary));
+        }
         let summary = samtools::fastq_native(
             &bam,
             index.as_deref(),
+            reference_fasta.as_deref(),
+            reference_index.as_deref(),
             &region,
             fastq_1.as_path(),
             fastq_2.as_path(),
@@ -277,6 +356,19 @@ fn optional_existing_path(
         Some(other) => Err(RuntimeError::InvalidArguments(format!(
             "{method} expected optional path string at position {index}, got {other:?}"
         ))),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn virtual_alignment_format(path: &std::path::Path) -> bioscript_formats::GenotypeSourceFormat {
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("cram"))
+    {
+        bioscript_formats::GenotypeSourceFormat::Cram
+    } else {
+        bioscript_formats::GenotypeSourceFormat::Bam
     }
 }
 

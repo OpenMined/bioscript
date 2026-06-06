@@ -5,37 +5,57 @@ pub(super) fn artifact(name: &str, mime_type: &str, text: String) -> ReportArtif
         name: name.to_owned(),
         path: name.to_owned(),
         mime_type: mime_type.to_owned(),
-        text,
+        text: Some(text),
+        bytes: None,
+        primary: false,
     }
 }
 
 pub(super) fn encode_report_run_output(
     started_ms: f64,
-    artifacts: bioscript_reporting::ReportArtifactTexts,
+    standard_artifacts: bioscript_reporting::ReportArtifactTexts,
+    mut extra_artifacts: Vec<ReportArtifactOutput>,
+    result_entrypoint: Option<&str>,
 ) -> Result<String, JsError> {
+    let mut artifacts = vec![
+        artifact(
+            "observations.tsv",
+            "text/tab-separated-values",
+            standard_artifacts.observations_tsv,
+        ),
+        artifact(
+            "analysis.jsonl",
+            "application/jsonl",
+            standard_artifacts.analysis_jsonl,
+        ),
+        artifact(
+            "reports.jsonl",
+            "application/jsonl",
+            standard_artifacts.reports_jsonl,
+        ),
+        artifact("index.html", "text/html", standard_artifacts.html),
+    ];
+    artifacts.append(&mut extra_artifacts);
+    if let Some(entrypoint) = result_entrypoint {
+        let normalized = normalize_artifact_path(entrypoint);
+        for artifact in &mut artifacts {
+            artifact.primary = normalize_artifact_path(&artifact.path) == normalized
+                || normalize_artifact_path(&artifact.name) == normalized;
+        }
+    }
     serde_json::to_string(&ReportRunOutput {
-        artifacts: vec![
-            artifact(
-                "observations.tsv",
-                "text/tab-separated-values",
-                artifacts.observations_tsv,
-            ),
-            artifact(
-                "analysis.jsonl",
-                "application/jsonl",
-                artifacts.analysis_jsonl,
-            ),
-            artifact(
-                "reports.jsonl",
-                "application/jsonl",
-                artifacts.reports_jsonl,
-            ),
-            artifact("index.html", "text/html", artifacts.html),
-        ],
+        artifacts,
         duration_ms: (js_sys::Date::now() - started_ms).max(0.0) as u128,
-        text_output: artifacts.text_output,
+        text_output: standard_artifacts.text_output,
     })
     .map_err(|err| JsError::new(&format!("failed to encode report output: {err}")))
+}
+
+pub(super) fn normalize_artifact_path(path: &str) -> String {
+    path.trim_start_matches("/output/")
+        .trim_start_matches("./")
+        .replace('\\', "/")
+        .to_ascii_lowercase()
 }
 
 pub(super) fn normalize_package_path(path: &str) -> Result<String, JsError> {

@@ -86,12 +86,21 @@ def plan_faidx(fasta: str) -> list[str]:
     return faidx(fasta)
 
 
-def view_region_native(bam: str, region: str, output_bam: str, index: str | None = None) -> int:
+def view_region_native(
+    bam: str,
+    region: str,
+    output_bam: str,
+    index: str | None = None,
+    reference_fasta: str | None = None,
+    reference_index: str | None = None,
+) -> int:
     native = _native()
     return int(
         native.samtools_view_region_native(
             _path_arg(bam),
             _optional_path(index),
+            _optional_path(reference_fasta),
+            _optional_path(reference_index),
             region,
             _path_arg(output_bam),
         )
@@ -109,6 +118,8 @@ def fastq_native(
     fastq_1: str,
     fastq_2: str,
     index: str | None = None,
+    reference_fasta: str | None = None,
+    reference_index: str | None = None,
 ) -> dict[str, int]:
     native = _native()
     return {
@@ -116,6 +127,8 @@ def fastq_native(
         for key, value in native.samtools_fastq_native(
             _path_arg(bam),
             _optional_path(index),
+            _optional_path(reference_fasta),
+            _optional_path(reference_index),
             region,
             _path_arg(fastq_1),
             _path_arg(fastq_2),

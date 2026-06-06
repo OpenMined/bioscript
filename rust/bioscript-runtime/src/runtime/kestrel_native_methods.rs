@@ -4,6 +4,10 @@ use bioscript_core::RuntimeError;
 use bioscript_libs::kestrel::native::{
     NativeKestrelRunOptions, call_fastq_paths_to_vcf_references, load_reference_regions,
 };
+#[cfg(target_arch = "wasm32")]
+use bioscript_libs::kestrel::native::{
+    call_fastq_bytes_to_vcf_references, load_reference_regions_from_str,
+};
 use monty::MontyObject;
 
 use super::{
@@ -152,6 +156,47 @@ impl BioscriptRuntime {
         }
         if let Some(v) = optional_int_kwarg(kwargs, "max_saved_states", "kestrel.run_native")? {
             options.max_saved_states = nonneg_usize(v, "max_saved_states")?;
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        if self.uses_virtual_files()
+            && let Some(reference_text) =
+                self.read_virtual_text_file(&reference_fasta).or_else(|| {
+                    self.read_virtual_binary_file(&reference_fasta)
+                        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                })
+        {
+            let references = load_reference_regions_from_str(&reference_text)
+                .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+            let fastq_inputs = fastq_paths
+                .iter()
+                .map(|path| {
+                    let bytes = self.read_virtual_binary_file(path).ok_or_else(|| {
+                        RuntimeError::Io(format!(
+                            "virtual FASTQ file does not exist: {}",
+                            path.display()
+                        ))
+                    })?;
+                    let name = path
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("reads.fastq")
+                        .to_owned();
+                    Ok::<_, RuntimeError>((name, bytes))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let vcf =
+                call_fastq_bytes_to_vcf_references(&references, &fastq_inputs, kmer_size, &options)
+                    .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+            self.write_virtual_text_file(&output_vcf, vcf);
+            self.record_timing(
+                "native_tool_call",
+                started.elapsed(),
+                "method=kestrel.run_native".to_owned(),
+            );
+            return Ok(MontyObject::String(
+                output_vcf.to_string_lossy().into_owned(),
+            ));
         }
 
         let references = load_reference_regions(&reference_fasta)

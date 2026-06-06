@@ -1,20 +1,26 @@
 use std::{
     collections::{BTreeMap, HashSet},
-    io::{Read, Seek},
+    io::{Cursor, Read, Seek},
 };
 
 use noodles::{
+    bam,
     core::{Position, Region, region::Interval},
     cram::{self, crai, io::reader::Container},
     sam::{
         self,
-        alignment::{Record as _, record::Cigar as _},
+        alignment::{Record as _, io::Write as _, record::Cigar as _},
     },
 };
 
 use bioscript_core::{GenomicLocus, RuntimeError};
 
-use super::{AlignmentOp, AlignmentOpKind, AlignmentRecord};
+use super::{
+    AlignmentOp, AlignmentOpKind, AlignmentRecord, FastqPairSummary,
+    bam_fastq::{MemoryFastqWriter, TemplateFastqRecords},
+    build_cram_indexed_reader_from_reader, build_reference_repository_from_readers,
+    parse_crai_bytes, parse_fai_bytes,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct SelectedContainer {
@@ -108,6 +114,158 @@ where
         allow_reference_md5_mismatch,
         &mut on_record,
     )
+}
+
+pub fn write_cram_region_as_bam_bytes(
+    input_bytes: &[u8],
+    index_bytes: &[u8],
+    reference_fasta_bytes: &[u8],
+    reference_index_bytes: &[u8],
+    locus: &GenomicLocus,
+) -> Result<(Vec<u8>, usize), RuntimeError> {
+    let mut reader = build_cram_reader_from_bytes(
+        input_bytes,
+        index_bytes,
+        reference_fasta_bytes,
+        reference_index_bytes,
+    )?;
+    reader
+        .get_mut()
+        .seek(std::io::SeekFrom::Start(0))
+        .map_err(|err| RuntimeError::Io(format!("failed to rewind CRAM: {err}")))?;
+    let header = reader
+        .read_header()
+        .map_err(|err| RuntimeError::Io(format!("failed to read CRAM header: {err}")))?;
+
+    let mut writer = bam::io::Writer::new(Vec::new());
+    writer
+        .write_header(&header)
+        .map_err(|err| RuntimeError::Io(format!("failed to write BAM header: {err}")))?;
+
+    let mut count = 0;
+    for_each_raw_cram_record_with_reader_inner(&mut reader, "virtual CRAM", locus, true, |record| {
+        let record_buf = sam::alignment::RecordBuf::try_from_alignment_record(&header, record)
+            .map_err(|err| RuntimeError::Io(format!("failed to convert CRAM record to SAM: {err}")))?;
+        writer
+            .write_alignment_record(&header, &record_buf)
+            .map_err(|err| RuntimeError::Io(format!("failed to write CRAM record as BAM: {err}")))?;
+        count += 1;
+        Ok(true)
+    })?;
+
+    writer
+        .try_finish()
+        .map_err(|err| RuntimeError::Io(format!("failed to finish BAM slice: {err}")))?;
+    Ok((writer.into_inner().into_inner(), count))
+}
+
+pub fn write_cram_region_fastq_pair_bytes(
+    input_bytes: &[u8],
+    index_bytes: &[u8],
+    reference_fasta_bytes: &[u8],
+    reference_index_bytes: &[u8],
+    locus: &GenomicLocus,
+    gzip: bool,
+) -> Result<(Vec<u8>, Vec<u8>, FastqPairSummary), RuntimeError> {
+    let mut region_reader = build_cram_reader_from_bytes(
+        input_bytes,
+        index_bytes,
+        reference_fasta_bytes,
+        reference_index_bytes,
+    )?;
+    let region_header = read_cram_header(&mut region_reader)?;
+    let mut target_names = HashSet::new();
+    for_each_raw_cram_record_with_reader_inner(
+        &mut region_reader,
+        "virtual CRAM",
+        locus,
+        true,
+        |record| {
+            let record_buf = sam::alignment::RecordBuf::try_from_alignment_record(&region_header, record)
+                .map_err(|err| RuntimeError::Io(format!("failed to convert CRAM record to SAM: {err}")))?;
+            if let Some(name) = record_buf.name() {
+                let bytes: &[u8] = name.as_ref();
+                target_names.insert(bytes.to_vec());
+            }
+            Ok(true)
+        },
+    )?;
+
+    let mut all_reader = build_cram_reader_from_bytes(
+        input_bytes,
+        index_bytes,
+        reference_fasta_bytes,
+        reference_index_bytes,
+    )?;
+    let all_header = read_cram_header(&mut all_reader)?;
+    let mut templates = TemplateFastqRecords::default();
+    for_each_raw_cram_record_with_reader_inner(
+        &mut all_reader,
+        "virtual CRAM",
+        &whole_header_locus(&all_header)?,
+        true,
+        |record| {
+            let record_buf = sam::alignment::RecordBuf::try_from_alignment_record(&all_header, record)
+                .map_err(|err| RuntimeError::Io(format!("failed to convert CRAM record to SAM: {err}")))?;
+            if record_buf
+                .name()
+                .is_some_and(|name| target_names.contains::<[u8]>(name.as_ref()))
+            {
+                templates.push(&record_buf)?;
+            }
+            Ok(true)
+        },
+    )?;
+
+    let mut read1 = MemoryFastqWriter::new(gzip);
+    let mut read2 = MemoryFastqWriter::new(gzip);
+    let summary = templates.write_paired_memory(&mut read1, &mut read2)?;
+    Ok((read1.finish()?, read2.finish()?, summary))
+}
+
+fn build_cram_reader_from_bytes(
+    input_bytes: &[u8],
+    index_bytes: &[u8],
+    reference_fasta_bytes: &[u8],
+    reference_index_bytes: &[u8],
+) -> Result<cram::io::indexed_reader::IndexedReader<Cursor<Vec<u8>>>, RuntimeError> {
+    let crai = parse_crai_bytes(index_bytes)?;
+    let fai = parse_fai_bytes(reference_index_bytes)?;
+    let repository = build_reference_repository_from_readers(
+        Cursor::new(reference_fasta_bytes.to_vec()),
+        fai,
+    );
+    build_cram_indexed_reader_from_reader(Cursor::new(input_bytes.to_vec()), crai, repository)
+}
+
+fn read_cram_header<R>(
+    reader: &mut cram::io::indexed_reader::IndexedReader<R>,
+) -> Result<sam::Header, RuntimeError>
+where
+    R: Read + Seek,
+{
+    reader
+        .get_mut()
+        .seek(std::io::SeekFrom::Start(0))
+        .map_err(|err| RuntimeError::Io(format!("failed to rewind CRAM: {err}")))?;
+    reader
+        .read_header()
+        .map_err(|err| RuntimeError::Io(format!("failed to read CRAM header: {err}")))
+}
+
+fn whole_header_locus(header: &sam::Header) -> Result<GenomicLocus, RuntimeError> {
+    let mut names = header.reference_sequences().keys();
+    let name = names
+        .next()
+        .ok_or_else(|| RuntimeError::Io("CRAM header has no reference sequences".to_owned()))?;
+    let len = header.reference_sequences()[name].length();
+    Ok(GenomicLocus {
+        chrom: name.to_string(),
+        start: 1,
+        end: i64::try_from(usize::from(len)).map_err(|_| {
+            RuntimeError::Unsupported("CRAM reference length exceeds i64 range".to_owned())
+        })?,
+    })
 }
 
 pub(crate) fn build_region(header: &sam::Header, locus: &GenomicLocus) -> Option<Region> {

@@ -4,9 +4,13 @@ pub(crate) struct WasmReportAnalysisRunner<'a> {
     pub(crate) workspace: &'a PackageWorkspace,
     pub(crate) input_name: &'a str,
     pub(crate) input_bytes: &'a [u8],
+    pub(crate) input_index_bytes: Option<&'a [u8]>,
+    pub(crate) reference_bytes: Option<&'a [u8]>,
+    pub(crate) reference_index_bytes: Option<&'a [u8]>,
     pub(crate) participant_id: &'a str,
     pub(crate) loader: &'a GenotypeLoadOptions,
     pub(crate) options: &'a ReportOptionsInput,
+    pub(crate) extra_artifacts: std::cell::RefCell<Vec<ReportArtifactOutput>>,
 }
 
 impl bioscript_reporting::ReportAnalysisRunner for WasmReportAnalysisRunner<'_> {
@@ -24,10 +28,14 @@ impl bioscript_reporting::ReportAnalysisRunner for WasmReportAnalysisRunner<'_> 
                 &task.interpretations,
                 self.input_name,
                 self.input_bytes,
+                self.input_index_bytes,
+                self.reference_bytes,
+                self.reference_index_bytes,
                 variant_observations,
                 self.participant_id,
                 self.loader,
                 self.options,
+                &self.extra_artifacts,
             )
             .map_err(|err| format!("{err:?}"))
     }
@@ -42,10 +50,14 @@ impl PackageWorkspace {
         interpretations: &[PanelInterpretation],
         _input_name: &str,
         input_bytes: &[u8],
+        input_index_bytes: Option<&[u8]>,
+        reference_bytes: Option<&[u8]>,
+        reference_index_bytes: Option<&[u8]>,
         preloaded_observations: &[VariantObservation],
         participant_id: &str,
         loader: &GenotypeLoadOptions,
         options: &ReportOptionsInput,
+        extra_artifacts: &std::cell::RefCell<Vec<ReportArtifactOutput>>,
     ) -> Result<Vec<serde_json::Value>, JsError> {
         let mut outputs = Vec::new();
         for interpretation in interpretations {
@@ -81,7 +93,12 @@ impl PackageWorkspace {
                 .extension()
                 .and_then(|value| value.to_str())
                 .unwrap_or(analysis_format.extension);
-            let virtual_input_file = "/input/genotypes".to_owned();
+            let virtual_input_file = virtual_genotype_input_path(loader);
+            let virtual_input_index =
+                input_index_bytes.map(|_| virtual_genotype_index_path(loader));
+            let virtual_reference_file = reference_bytes.map(|_| "/input/reference.fa".to_owned());
+            let virtual_reference_index =
+                reference_index_bytes.map(|_| "/input/reference.fa.fai".to_owned());
             let virtual_output_file = format!("/output/results.{output_extension}");
             let virtual_observations_file = "/work/observations.tsv".to_owned();
             let script_virtual_path = virtual_pipeline_path(&script_path, "analysis.py");
@@ -116,6 +133,19 @@ impl PackageWorkspace {
             };
             let mut virtual_binary_files = BTreeMap::new();
             virtual_binary_files.insert(virtual_input_file.clone(), input_bytes.to_vec());
+            if let (Some(path), Some(bytes)) = (&virtual_input_index, input_index_bytes) {
+                virtual_binary_files.insert(path.clone(), bytes.to_vec());
+            }
+            if let (Some(path), Some(bytes)) = (&virtual_reference_file, reference_bytes) {
+                virtual_binary_files.insert(path.clone(), bytes.to_vec());
+            }
+            if let (Some(path), Some(bytes)) = (&virtual_reference_index, reference_index_bytes) {
+                virtual_binary_files.insert(path.clone(), bytes.to_vec());
+            }
+            let mut runtime_loader = loader.clone();
+            runtime_loader.input_index = virtual_input_index.as_ref().map(PathBuf::from);
+            runtime_loader.reference_file = virtual_reference_file.as_ref().map(PathBuf::from);
+            runtime_loader.reference_index = virtual_reference_index.as_ref().map(PathBuf::from);
             let limits = ResourceLimits::new()
                 .max_duration(Duration::from_millis(options.analysis_max_duration_ms))
                 .max_memory(16 * 1024 * 1024)
@@ -126,10 +156,13 @@ impl PackageWorkspace {
                 PathBuf::new(),
                 RuntimeConfig {
                     limits,
-                    loader: loader.clone(),
+                    loader: runtime_loader,
                     context: analysis_context(
                         participant_id,
                         &virtual_input_file,
+                        virtual_input_index.as_deref(),
+                        virtual_reference_file.as_deref(),
+                        virtual_reference_index.as_deref(),
                         &script_virtual_path,
                         &manifest_virtual_path,
                         &asset_paths,
@@ -150,6 +183,30 @@ impl PackageWorkspace {
                         (
                             "input_file",
                             MontyObject::String(virtual_input_file.clone()),
+                        ),
+                        (
+                            "input_index",
+                            optional_string_object(virtual_input_index.as_deref()),
+                        ),
+                        (
+                            "input_bai",
+                            optional_string_object(virtual_input_index.as_deref()),
+                        ),
+                        (
+                            "reference_fasta",
+                            optional_string_object(virtual_reference_file.as_deref()),
+                        ),
+                        (
+                            "alignment_reference_fasta",
+                            optional_string_object(virtual_reference_file.as_deref()),
+                        ),
+                        (
+                            "reference_index",
+                            optional_string_object(virtual_reference_index.as_deref()),
+                        ),
+                        (
+                            "alignment_reference_index",
+                            optional_string_object(virtual_reference_index.as_deref()),
                         ),
                         (
                             "output_file",
@@ -176,6 +233,11 @@ impl PackageWorkspace {
                     interpretation.id
                 ))
             })?;
+            extra_artifacts.borrow_mut().extend(output_artifacts(
+                &written,
+                &runtime.virtual_written_binary_files(),
+                &virtual_output_file,
+            )?);
             let (rows, row_headers) = parse_analysis_output_text(text, analysis_format.format)?;
             outputs.push(bioscript_reporting::analysis_output_json(
                 bioscript_reporting::AnalysisOutputJsonInput {
@@ -196,6 +258,93 @@ impl PackageWorkspace {
     }
 }
 
+fn output_artifacts(
+    text_files: &BTreeMap<String, String>,
+    binary_files: &BTreeMap<String, Vec<u8>>,
+    primary_virtual_output_file: &str,
+) -> Result<Vec<ReportArtifactOutput>, JsError> {
+    let mut artifacts = Vec::new();
+    for (path, text) in text_files {
+        if path == primary_virtual_output_file {
+            continue;
+        }
+        let Some(relative) = safe_output_relative_path(path)? else {
+            continue;
+        };
+        artifacts.push(ReportArtifactOutput {
+            name: artifact_name(&relative),
+            path: relative.clone(),
+            mime_type: mime_type_for_path(&relative).to_owned(),
+            text: Some(text.clone()),
+            bytes: None,
+            primary: false,
+        });
+    }
+    for (path, bytes) in binary_files {
+        let Some(relative) = safe_output_relative_path(path)? else {
+            continue;
+        };
+        artifacts.push(ReportArtifactOutput {
+            name: artifact_name(&relative),
+            path: relative.clone(),
+            mime_type: mime_type_for_path(&relative).to_owned(),
+            text: None,
+            bytes: Some(bytes.clone()),
+            primary: false,
+        });
+    }
+    artifacts.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(artifacts)
+}
+
+fn safe_output_relative_path(path: &str) -> Result<Option<String>, JsError> {
+    let Some(relative) = path.strip_prefix("/output/") else {
+        return Ok(None);
+    };
+    let relative_path = Path::new(relative);
+    if relative_path
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(JsError::new(&format!(
+            "analysis wrote invalid output path {path}"
+        )));
+    }
+    Ok(Some(relative.replace('\\', "/")))
+}
+
+fn artifact_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(path)
+        .to_owned()
+}
+
+fn mime_type_for_path(path: &str) -> &'static str {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".html") {
+        "text/html"
+    } else if lower.ends_with(".tsv") {
+        "text/tab-separated-values"
+    } else if lower.ends_with(".json") || lower.ends_with(".jsonl") {
+        "application/json"
+    } else if lower.ends_with(".vcf") || lower.ends_with(".bed") || lower.ends_with(".log") {
+        "text/plain"
+    } else if lower.ends_with(".gz") {
+        "application/gzip"
+    } else if lower.ends_with(".bam")
+        || lower.ends_with(".bai")
+        || lower.ends_with(".cram")
+        || lower.ends_with(".crai")
+        || lower.ends_with(".csi")
+    {
+        "application/octet-stream"
+    } else {
+        "text/plain"
+    }
+}
+
 fn virtual_pipeline_path(path: &str, fallback: &str) -> String {
     let name = Path::new(path)
         .file_name()
@@ -204,9 +353,30 @@ fn virtual_pipeline_path(path: &str, fallback: &str) -> String {
     format!("/input/pipeline/{name}")
 }
 
+fn virtual_genotype_input_path(loader: &GenotypeLoadOptions) -> String {
+    match loader.format {
+        Some(bioscript_formats::GenotypeSourceFormat::Bam) => "/input/genotypes.bam",
+        Some(bioscript_formats::GenotypeSourceFormat::Cram) => "/input/genotypes.cram",
+        _ => "/input/genotypes",
+    }
+    .to_owned()
+}
+
+fn virtual_genotype_index_path(loader: &GenotypeLoadOptions) -> String {
+    match loader.format {
+        Some(bioscript_formats::GenotypeSourceFormat::Bam) => "/input/genotypes.bam.bai",
+        Some(bioscript_formats::GenotypeSourceFormat::Cram) => "/input/genotypes.cram.crai",
+        _ => "/input/input.index",
+    }
+    .to_owned()
+}
+
 fn analysis_context(
     participant_id: &str,
     input_file: &str,
+    input_index: Option<&str>,
+    reference_file: Option<&str>,
+    reference_index: Option<&str>,
     script_path: &str,
     manifest_path: &str,
     asset_paths: &BTreeMap<String, String>,
@@ -220,10 +390,12 @@ fn analysis_context(
         ),
         (
             "input_files".to_owned(),
-            monty_string_dict(&BTreeMap::from([(
-                "genotypes".to_owned(),
-                input_file.to_owned(),
-            )])),
+            monty_string_dict(&optional_input_files(
+                input_file,
+                input_index,
+                reference_file,
+                reference_index,
+            )),
         ),
         (
             "pipeline_files".to_owned(),
@@ -241,7 +413,54 @@ fn analysis_context(
             "output_file".to_owned(),
             MontyObject::String(output_file.to_owned()),
         ),
+        (
+            "input_index".to_owned(),
+            optional_string_object(input_index),
+        ),
+        ("input_bai".to_owned(), optional_string_object(input_index)),
+        (
+            "reference_fasta".to_owned(),
+            optional_string_object(reference_file),
+        ),
+        (
+            "alignment_reference_fasta".to_owned(),
+            optional_string_object(reference_file),
+        ),
+        (
+            "reference_index".to_owned(),
+            optional_string_object(reference_index),
+        ),
+        (
+            "alignment_reference_index".to_owned(),
+            optional_string_object(reference_index),
+        ),
     ])
+}
+
+fn optional_input_files(
+    input_file: &str,
+    input_index: Option<&str>,
+    reference_file: Option<&str>,
+    reference_index: Option<&str>,
+) -> BTreeMap<String, String> {
+    let mut files = BTreeMap::from([("genotypes".to_owned(), input_file.to_owned())]);
+    if let Some(path) = input_index {
+        files.insert("input_index".to_owned(), path.to_owned());
+        files.insert("bai".to_owned(), path.to_owned());
+    }
+    if let Some(path) = reference_file {
+        files.insert("reference_fasta".to_owned(), path.to_owned());
+    }
+    if let Some(path) = reference_index {
+        files.insert("reference_index".to_owned(), path.to_owned());
+    }
+    files
+}
+
+fn optional_string_object(value: Option<&str>) -> MontyObject {
+    value.map_or(MontyObject::None, |value| {
+        MontyObject::String(value.to_owned())
+    })
 }
 
 fn monty_string_dict(values: &BTreeMap<String, String>) -> MontyObject {

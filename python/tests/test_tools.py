@@ -313,14 +313,14 @@ class ToolCommandTests(unittest.TestCase):
     def test_samtools_native_wrappers_delegate_to_extension(self) -> None:
         calls = []
 
-        def view_region_native(bam, index, region, output):
-            calls.append((bam, index, region, output))
+        def view_region_native(bam, index, reference_fasta, reference_index, region, output):
+            calls.append((bam, index, reference_fasta, reference_index, region, output))
             return 7
 
         fake_native = SimpleNamespace(
             samtools_view_region_native=view_region_native,
             samtools_depth_native=lambda bam, index, region: {"mean": 2.5},
-            samtools_fastq_native=lambda bam, index, region, fastq_1, fastq_2: {
+            samtools_fastq_native=lambda bam, index, reference_fasta, reference_index, region, fastq_1, fastq_2: {
                 "read1_records": 3,
                 "read2_records": 3,
                 "skipped_records": 1,
@@ -338,7 +338,7 @@ class ToolCommandTests(unittest.TestCase):
             )
             self.assertEqual(
                 calls,
-                [("sample.bam", "sample.bam.bai", "chr1:1-10", "slice.bam")],
+                [("sample.bam", "sample.bam.bai", None, None, "chr1:1-10", "slice.bam")],
             )
             self.assertEqual(samtools.depth_native("slice.bam", "chr1:1-10"), {"mean": 2.5})
             self.assertEqual(

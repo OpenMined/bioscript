@@ -596,6 +596,37 @@ if __name__ == "__main__":
     assert_eq!(written, "hello nested output");
 }
 
+#[test]
+fn host_copy_file_copies_virtual_binary_outputs() {
+    let dir = temp_dir("copy-virtual-binary");
+    let script = dir.join("script.py");
+    fs::write(
+        &script,
+        r#"
+def main():
+    bioscript.copy_file("/work/source.bin", "/output/copied.bin")
+
+if __name__ == "__main__":
+    main()
+"#,
+    )
+    .unwrap();
+
+    let mut config = RuntimeConfig::default();
+    config
+        .virtual_binary_files
+        .insert("/work/source.bin".to_owned(), vec![0, 1, 2, 255]);
+    let runtime = BioscriptRuntime::with_config(&dir, config).unwrap();
+    runtime.run_file(&script, None, Vec::new()).unwrap();
+
+    assert_eq!(
+        runtime
+            .virtual_written_binary_files()
+            .get("/output/copied.bin"),
+        Some(&vec![0, 1, 2, 255])
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn host_read_text_rejects_symlink_escape() {

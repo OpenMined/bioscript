@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
-    io::{self, BufWriter, Write},
+    io::{self, BufWriter, Cursor, Write},
     path::Path,
 };
 
@@ -12,7 +12,10 @@ use bioscript_core::{GenomicLocus, RuntimeError};
 
 use crate::genotype::GenotypeLoadOptions;
 
-use super::bam_stream::{build_indexed_reader, build_region};
+use super::{
+    bam_stream::{build_indexed_reader, build_region},
+    build_bam_indexed_reader_from_reader, parse_bai_bytes,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FastqPairSummary {
@@ -54,12 +57,67 @@ pub fn write_bam_region_fastq_pair(
     Ok(summary)
 }
 
+pub fn write_bam_region_fastq_pair_bytes(
+    input_bytes: &[u8],
+    index_bytes: &[u8],
+    locus: &GenomicLocus,
+    gzip: bool,
+) -> Result<(Vec<u8>, Vec<u8>, FastqPairSummary), RuntimeError> {
+    let target_names = collect_region_template_names_bytes(input_bytes, index_bytes, locus)?;
+    let mut reader = bam::io::Reader::new(Cursor::new(input_bytes.to_vec()));
+    reader
+        .read_header()
+        .map_err(|err| RuntimeError::Io(format!("failed to read BAM header: {err}")))?;
+    let mut templates = TemplateFastqRecords::default();
+
+    for result in reader.records() {
+        let record =
+            result.map_err(|err| RuntimeError::Io(format!("failed to read BAM record: {err}")))?;
+        if !record_in_templates(&record, &target_names) {
+            continue;
+        }
+        templates.push(&record)?;
+    }
+
+    let mut read1 = MemoryFastqWriter::new(gzip);
+    let mut read2 = MemoryFastqWriter::new(gzip);
+    let summary = templates.write_paired_memory(&mut read1, &mut read2)?;
+    Ok((read1.finish()?, read2.finish()?, summary))
+}
+
 fn collect_region_template_names(
     input_path: &Path,
     options: &GenotypeLoadOptions,
     locus: &GenomicLocus,
 ) -> Result<HashSet<Vec<u8>>, RuntimeError> {
     let mut reader = build_indexed_reader(input_path, options)?;
+    let header = reader
+        .read_header()
+        .map_err(|err| RuntimeError::Io(format!("failed to read BAM header: {err}")))?;
+    let region = build_region(locus)?;
+    let query = reader
+        .query(&header, &region)
+        .map_err(|err| RuntimeError::Io(format!("failed to query BAM region {region}: {err}")))?;
+
+    let mut names = HashSet::new();
+    for result in query.records() {
+        let record =
+            result.map_err(|err| RuntimeError::Io(format!("failed to read BAM record: {err}")))?;
+        if let Some(name) = record.name() {
+            let bytes: &[u8] = name.as_ref();
+            names.insert(bytes.to_vec());
+        }
+    }
+    Ok(names)
+}
+
+fn collect_region_template_names_bytes(
+    input_bytes: &[u8],
+    index_bytes: &[u8],
+    locus: &GenomicLocus,
+) -> Result<HashSet<Vec<u8>>, RuntimeError> {
+    let bai = parse_bai_bytes(index_bytes)?;
+    let mut reader = build_bam_indexed_reader_from_reader(Cursor::new(input_bytes.to_vec()), bai)?;
     let header = reader
         .read_header()
         .map_err(|err| RuntimeError::Io(format!("failed to read BAM header: {err}")))?;
@@ -90,15 +148,20 @@ fn record_in_templates(record: &bam::Record, target_names: &HashSet<Vec<u8>>) ->
 }
 
 #[derive(Debug, Default)]
-struct TemplateFastqRecords {
+pub(crate) struct TemplateFastqRecords {
     order: Vec<Vec<u8>>,
     records: HashMap<Vec<u8>, TemplateFastqRecordPair>,
     skipped_records: usize,
 }
 
 impl TemplateFastqRecords {
-    fn push(&mut self, record: &bam::Record) -> Result<(), RuntimeError> {
-        let flags = record.flags();
+    pub(crate) fn push<R>(&mut self, record: &R) -> Result<(), RuntimeError>
+    where
+        R: noodles::sam::alignment::Record,
+    {
+        let flags = record
+            .flags()
+            .map_err(|err| RuntimeError::Io(format!("failed to read alignment record flags: {err}")))?;
         if flags.is_secondary() || flags.is_supplementary() {
             self.skipped_records += 1;
             return Ok(());
@@ -109,7 +172,7 @@ impl TemplateFastqRecords {
         };
         let bytes: &[u8] = name.as_ref();
         let key: Vec<u8> = bytes.to_vec();
-        let fastq_record = FastqRecord::try_from_bam(record)?;
+        let fastq_record = FastqRecord::try_from_alignment_record(record)?;
         if let Some(pair) = self.records.get_mut(&key) {
             pair.push(fastq_record, &mut self.skipped_records);
         } else {
@@ -125,6 +188,30 @@ impl TemplateFastqRecords {
         self,
         read1: &mut FastqWriter,
         read2: &mut FastqWriter,
+    ) -> Result<FastqPairSummary, RuntimeError> {
+        let mut summary = FastqPairSummary {
+            read1_records: 0,
+            read2_records: 0,
+            skipped_records: self.skipped_records,
+        };
+        for key in self.order {
+            let pair = self.records.get(&key).expect("template order key exists");
+            if let (Some(first), Some(last)) = (&pair.first, &pair.last) {
+                first.write(&mut *read1)?;
+                last.write(&mut *read2)?;
+                summary.read1_records += 1;
+                summary.read2_records += 1;
+            } else {
+                summary.skipped_records += pair.present_count();
+            }
+        }
+        Ok(summary)
+    }
+
+    pub(crate) fn write_paired_memory(
+        self,
+        read1: &mut MemoryFastqWriter,
+        read2: &mut MemoryFastqWriter,
     ) -> Result<FastqPairSummary, RuntimeError> {
         let mut summary = FastqPairSummary {
             read1_records: 0,
@@ -175,8 +262,13 @@ struct FastqRecord {
 }
 
 impl FastqRecord {
-    fn try_from_bam(record: &bam::Record) -> Result<Self, RuntimeError> {
-        let flags = record.flags();
+    fn try_from_alignment_record<R>(record: &R) -> Result<Self, RuntimeError>
+    where
+        R: noodles::sam::alignment::Record,
+    {
+        let flags = record
+            .flags()
+            .map_err(|err| RuntimeError::Io(format!("failed to read alignment record flags: {err}")))?;
         let segment = if flags.is_first_segment() {
             FastqSegment::First
         } else if flags.is_last_segment() {
@@ -268,7 +360,50 @@ impl Write for FastqWriter {
     }
 }
 
-fn fastq_qualities(record: &bam::Record, sequence_len: usize) -> Result<Vec<u8>, RuntimeError> {
+pub(crate) enum MemoryFastqWriter {
+    Plain(Vec<u8>),
+    Gzip(Box<GzEncoder<Vec<u8>>>),
+}
+
+impl MemoryFastqWriter {
+    pub(crate) fn new(gzip: bool) -> Self {
+        if gzip {
+            Self::Gzip(Box::new(GzEncoder::new(Vec::new(), Compression::default())))
+        } else {
+            Self::Plain(Vec::new())
+        }
+    }
+
+    pub(crate) fn finish(self) -> Result<Vec<u8>, RuntimeError> {
+        match self {
+            Self::Plain(bytes) => Ok(bytes),
+            Self::Gzip(writer) => (*writer)
+                .finish()
+                .map_err(|err| RuntimeError::Io(format!("failed to finish FASTQ gzip: {err}"))),
+        }
+    }
+}
+
+impl Write for MemoryFastqWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Plain(bytes) => bytes.write(buf),
+            Self::Gzip(writer) => writer.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Plain(bytes) => bytes.flush(),
+            Self::Gzip(writer) => writer.flush(),
+        }
+    }
+}
+
+fn fastq_qualities<R>(record: &R, sequence_len: usize) -> Result<Vec<u8>, RuntimeError>
+where
+    R: noodles::sam::alignment::Record,
+{
     let scores = record.quality_scores();
     if scores.is_empty() {
         return Ok(vec![b'I'; sequence_len]);
@@ -279,10 +414,14 @@ fn fastq_qualities(record: &bam::Record, sequence_len: usize) -> Result<Vec<u8>,
             scores.len()
         )));
     }
-    Ok(scores
+    scores
         .iter()
-        .map(|score| score.saturating_add(b'!'))
-        .collect())
+        .map(|result| {
+            result
+                .map(|score| score.saturating_add(b'!'))
+                .map_err(|err| RuntimeError::Io(format!("failed to read alignment record quality: {err}")))
+        })
+        .collect()
 }
 
 #[cfg(test)]

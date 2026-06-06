@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{io::Cursor, path::Path};
 
 use noodles::{
     bam,
@@ -10,7 +10,10 @@ use bioscript_core::{GenomicLocus, RuntimeError};
 
 use crate::genotype::GenotypeLoadOptions;
 
-use super::{AlignmentOp, AlignmentOpKind, AlignmentRecord};
+use super::{
+    AlignmentOp, AlignmentOpKind, AlignmentRecord, build_bam_indexed_reader_from_reader,
+    parse_bai_bytes,
+};
 
 pub fn query_bam_records(
     path: &Path,
@@ -86,16 +89,51 @@ pub fn write_bam_region(
     Ok(count)
 }
 
+pub fn write_bam_region_bytes(
+    input_bytes: &[u8],
+    index_bytes: &[u8],
+    locus: &GenomicLocus,
+) -> Result<(Vec<u8>, usize), RuntimeError> {
+    let bai = parse_bai_bytes(index_bytes)?;
+    let mut reader = build_bam_indexed_reader_from_reader(Cursor::new(input_bytes.to_vec()), bai)?;
+    let header = reader
+        .read_header()
+        .map_err(|err| RuntimeError::Io(format!("failed to read BAM header: {err}")))?;
+    let region = build_region(locus)?;
+    let query = reader
+        .query(&header, &region)
+        .map_err(|err| RuntimeError::Io(format!("failed to query BAM region {region}: {err}")))?;
+
+    let mut writer = bam::io::Writer::new(Vec::new());
+    writer
+        .write_header(&header)
+        .map_err(|err| RuntimeError::Io(format!("failed to write BAM header: {err}")))?;
+
+    let mut count = 0;
+    for result in query.records() {
+        let record =
+            result.map_err(|err| RuntimeError::Io(format!("failed to read BAM record: {err}")))?;
+        writer
+            .write_record(&header, &record)
+            .map_err(|err| RuntimeError::Io(format!("failed to write BAM record: {err}")))?;
+        count += 1;
+    }
+    writer
+        .try_finish()
+        .map_err(|err| RuntimeError::Io(format!("failed to finish BAM slice: {err}")))?;
+    Ok((writer.into_inner().into_inner(), count))
+}
+
 pub(crate) fn build_indexed_reader(
     path: &Path,
     options: &GenotypeLoadOptions,
 ) -> Result<bam::io::IndexedReader<noodles::bgzf::io::Reader<std::fs::File>>, RuntimeError> {
     let builder = if let Some(index) = options.input_index.as_deref() {
         match index.extension().and_then(|ext| ext.to_str()) {
-            Some("bai") => bam::io::indexed_reader::Builder::default().set_index(
-                bam::bai::fs::read(index)
-                    .map_err(|err| RuntimeError::Io(format!("failed to read BAM index: {err}")))?,
-            ),
+            Some("bai") => bam::io::indexed_reader::Builder::default()
+                .set_index(parse_bai_bytes(&std::fs::read(index).map_err(|err| {
+                    RuntimeError::Io(format!("failed to read BAM index: {err}"))
+                })?)?),
             Some("csi") => bam::io::indexed_reader::Builder::default().set_index(
                 csi::fs::read(index)
                     .map_err(|err| RuntimeError::Io(format!("failed to read CSI index: {err}")))?,

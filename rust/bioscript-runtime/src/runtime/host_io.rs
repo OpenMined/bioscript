@@ -50,6 +50,50 @@ pub(crate) fn host_write_text(
     Ok(MontyObject::None)
 }
 
+pub(crate) fn host_copy_file(
+    runtime: &BioscriptRuntime,
+    args: &[MontyObject],
+    kwargs: &[(MontyObject, MontyObject)],
+) -> Result<MontyObject, RuntimeError> {
+    reject_kwargs(kwargs, "copy_file")?;
+    let source = runtime.resolve_existing_user_path(&expect_string_arg(args, 0, "copy_file")?)?;
+    let dest = runtime.resolve_user_write_path(&expect_string_arg(args, 1, "copy_file")?)?;
+    if let Some(text) = runtime.read_virtual_text_file(&source) {
+        if runtime.write_virtual_text_file(&dest, text) {
+            return Ok(MontyObject::None);
+        }
+    }
+    if let Some(bytes) = runtime.read_virtual_binary_file(&source) {
+        if runtime.write_virtual_binary_file(&dest, bytes) {
+            return Ok(MontyObject::None);
+        }
+    }
+    if runtime.uses_virtual_files() && source.exists() {
+        let bytes = fs::read(&source).map_err(|err| {
+            RuntimeError::Io(format!("failed to read {}: {err}", source.display()))
+        })?;
+        if runtime.write_virtual_binary_file(&dest, bytes) {
+            return Ok(MontyObject::None);
+        }
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            RuntimeError::Io(format!(
+                "failed to create parent dir {}: {err}",
+                parent.display()
+            ))
+        })?;
+    }
+    fs::copy(&source, &dest).map_err(|err| {
+        RuntimeError::Io(format!(
+            "failed to copy {} to {}: {err}",
+            source.display(),
+            dest.display()
+        ))
+    })?;
+    Ok(MontyObject::None)
+}
+
 pub(crate) fn deepest_existing_ancestor(path: &Path) -> &Path {
     let mut current = path;
     while !current.exists() {

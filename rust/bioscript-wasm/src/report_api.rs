@@ -86,7 +86,12 @@ struct ReportArtifactOutput {
     name: String,
     path: String,
     mime_type: String,
-    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bytes: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "is_false")]
+    primary: bool,
 }
 
 #[derive(Serialize)]
@@ -95,6 +100,10 @@ struct ReportRunOutput {
     artifacts: Vec<ReportArtifactOutput>,
     duration_ms: u128,
     text_output: String,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[wasm_bindgen(js_name = runPackageReportBytes)]
@@ -114,6 +123,7 @@ pub fn run_package_report_bytes(
         _ => ReportOptionsInput::default(),
     };
     let workspace = PackageWorkspace::new(package_files)?;
+    let result_entrypoint = workspace.package_result_entrypoint()?;
     let participant_id = participant_id_from_name(input_name);
     let input_file_path = options.input_file_path.as_deref().unwrap_or(input_name);
     let inspect_options = options.inspect_options(options.detect_sex);
@@ -133,9 +143,13 @@ pub fn run_package_report_bytes(
         workspace: &workspace,
         input_name,
         input_bytes,
+        input_index_bytes: None,
+        reference_bytes: None,
+        reference_index_bytes: None,
         participant_id: &participant_id,
         loader: &loader,
         options: &options,
+        extra_artifacts: std::cell::RefCell::new(Vec::new()),
     };
     let run = bioscript_reporting::run_report(
         &workspace,
@@ -153,7 +167,12 @@ pub fn run_package_report_bytes(
         },
     )
     .map_err(|err| JsError::new(&err))?;
-    encode_report_run_output(started_ms, run.artifacts)
+    encode_report_run_output(
+        started_ms,
+        run.artifacts,
+        analysis_runner.extra_artifacts.into_inner(),
+        result_entrypoint.as_deref(),
+    )
 }
 
 /// Mirrors `runPackageReportBytes` but for CRAM input. The CRAM body and
@@ -173,9 +192,11 @@ pub fn run_package_report_from_cram(
     input_name: &str,
     cram_read_at: js_sys::Function,
     cram_len: f64,
+    cram_bytes: &[u8],
     crai_bytes: &[u8],
     fasta_read_at: js_sys::Function,
     fasta_len: f64,
+    fasta_bytes: &[u8],
     fai_bytes: &[u8],
     options_json: Option<String>,
 ) -> Result<String, JsError> {
@@ -190,6 +211,7 @@ pub fn run_package_report_from_cram(
         _ => ReportOptionsInput::default(),
     };
     let workspace = PackageWorkspace::new(package_files)?;
+    let result_entrypoint = workspace.package_result_entrypoint()?;
     let participant_id = participant_id_from_name(input_name);
     let input_file_path = options.input_file_path.as_deref().unwrap_or(input_name);
     let mut head_inspection = inspect_head_via_js_reader(
@@ -250,10 +272,14 @@ pub fn run_package_report_from_cram(
     let analysis_runner = report_workspace::WasmReportAnalysisRunner {
         workspace: &workspace,
         input_name,
-        input_bytes: &[],
+        input_bytes: cram_bytes,
+        input_index_bytes: Some(crai_bytes),
+        reference_bytes: Some(fasta_bytes),
+        reference_index_bytes: Some(fai_bytes),
         participant_id: &participant_id,
         loader: &loader,
         options: &options,
+        extra_artifacts: std::cell::RefCell::new(Vec::new()),
     };
     let run = bioscript_reporting::run_report(
         &workspace,
@@ -271,7 +297,12 @@ pub fn run_package_report_from_cram(
         },
     )
     .map_err(|err| JsError::new(&err))?;
-    encode_report_run_output(started_ms, run.artifacts)
+    encode_report_run_output(
+        started_ms,
+        run.artifacts,
+        analysis_runner.extra_artifacts.into_inner(),
+        result_entrypoint.as_deref(),
+    )
 }
 
 /// Mirrors `runPackageReportBytes` but for BAM input. The BAM body is streamed
@@ -284,6 +315,7 @@ pub fn run_package_report_from_bam(
     input_name: &str,
     bam_read_at: js_sys::Function,
     bam_len: f64,
+    bam_bytes: &[u8],
     bai_bytes: &[u8],
     options_json: Option<String>,
 ) -> Result<String, JsError> {
@@ -297,6 +329,7 @@ pub fn run_package_report_from_bam(
         _ => ReportOptionsInput::default(),
     };
     let workspace = PackageWorkspace::new(package_files)?;
+    let result_entrypoint = workspace.package_result_entrypoint()?;
     let participant_id = participant_id_from_name(input_name);
     let input_file_path = options.input_file_path.as_deref().unwrap_or(input_name);
     let mut head_inspection = inspect_head_via_js_reader(
@@ -330,10 +363,14 @@ pub fn run_package_report_from_bam(
     let analysis_runner = report_workspace::WasmReportAnalysisRunner {
         workspace: &workspace,
         input_name,
-        input_bytes: &[],
+        input_bytes: bam_bytes,
+        input_index_bytes: Some(bai_bytes),
+        reference_bytes: None,
+        reference_index_bytes: None,
         participant_id: &participant_id,
         loader: &loader,
         options: &options,
+        extra_artifacts: std::cell::RefCell::new(Vec::new()),
     };
     let run = bioscript_reporting::run_report(
         &workspace,
@@ -351,7 +388,12 @@ pub fn run_package_report_from_bam(
         },
     )
     .map_err(|err| JsError::new(&err))?;
-    encode_report_run_output(started_ms, run.artifacts)
+    encode_report_run_output(
+        started_ms,
+        run.artifacts,
+        analysis_runner.extra_artifacts.into_inner(),
+        result_entrypoint.as_deref(),
+    )
 }
 
 /// Mirrors `runPackageReportBytes` but for a bgzipped, tabix-indexed VCF
@@ -377,6 +419,7 @@ pub fn run_package_report_from_vcf(
         _ => ReportOptionsInput::default(),
     };
     let workspace = PackageWorkspace::new(package_files)?;
+    let result_entrypoint = workspace.package_result_entrypoint()?;
     let participant_id = participant_id_from_name(input_name);
     let input_file_path = options.input_file_path.as_deref().unwrap_or(input_name);
     // Inspect format/source/assembly from the head, but skip the byte-stream
@@ -420,9 +463,13 @@ pub fn run_package_report_from_vcf(
         workspace: &workspace,
         input_name,
         input_bytes: &[],
+        input_index_bytes: Some(tbi_bytes),
+        reference_bytes: None,
+        reference_index_bytes: None,
         participant_id: &participant_id,
         loader: &loader,
         options: &options,
+        extra_artifacts: std::cell::RefCell::new(Vec::new()),
     };
     let run = bioscript_reporting::run_report(
         &workspace,
@@ -440,5 +487,10 @@ pub fn run_package_report_from_vcf(
         },
     )
     .map_err(|err| JsError::new(&err))?;
-    encode_report_run_output(started_ms, run.artifacts)
+    encode_report_run_output(
+        started_ms,
+        run.artifacts,
+        analysis_runner.extra_artifacts.into_inner(),
+        result_entrypoint.as_deref(),
+    )
 }

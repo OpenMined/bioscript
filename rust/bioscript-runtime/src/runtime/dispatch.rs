@@ -23,6 +23,7 @@ impl BioscriptRuntime {
             ("Bioscript", "read_tsv") => self.method_read_tsv(args, kwargs),
             ("Bioscript", "read_text") => self.method_read_text(args, kwargs),
             ("Bioscript", "write_text") => self.method_write_text(args, kwargs),
+            ("Bioscript", "copy_file") => self.method_copy_file(args, kwargs),
             ("Bioscript", "exists") => self.method_exists(args, kwargs),
             ("PysamModule", "AlignmentFile") => self.method_pysam_alignment_file(args, kwargs),
             ("PysamAlignmentFile", "fetch") => self.method_pysam_alignment_file_fetch(args, kwargs),

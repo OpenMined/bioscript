@@ -91,13 +91,148 @@ fn vntyper_bioscript_program_runs_through_runtime() {
         .unwrap();
 
     let summary = fs::read_to_string(&output_path).unwrap();
-    assert!(summary.contains("sliced_bam"));
-    assert!(summary.contains("fastq_read1_records"));
-    assert!(summary.contains("report_json"));
-    assert!(output_dir.join("main-bam_kestrel_result.tsv").exists());
-    assert!(output_dir.join("main-bam_report.json").exists());
+    assert!(summary.contains("samtools_view_command"));
+    assert!(summary.contains("samtools_fastq_command"));
+    assert!(summary.contains("kestrel_command"));
     fs::remove_file(output_path).unwrap();
     fs::remove_dir_all(fixture_dir).unwrap();
+}
+
+#[test]
+fn vntyper_app_example_runs_with_virtual_report_paths() {
+    let root = repo_root();
+    let alignment_source =
+        root.join("vendor/rust/samtools-rs/repos/samtools/test/stat/11_target.bam");
+    let mut config = RuntimeConfig::default();
+    config.virtual_binary_files.insert(
+        "/input/input.bam".to_owned(),
+        fs::read(alignment_source).unwrap(),
+    );
+    config.virtual_text_files.insert(
+        "/input/assets/ref.fa".to_owned(),
+        ">ref1\nAAAACCCCGGGGTTTT\n".to_owned(),
+    );
+    config.context.insert(
+        "vntyper_bam_region".to_owned(),
+        MontyObject::String("ref1:1-10".to_owned()),
+    );
+    let runtime = BioscriptRuntime::with_config(&root, config).unwrap();
+
+    runtime
+        .run_file(
+            root.join("bioscripts/examples/vntyper/vntyper.py"),
+            None,
+            vec![
+                (
+                    "input_file",
+                    MontyObject::String("/input/input.bam".to_owned()),
+                ),
+                (
+                    "output_file",
+                    MontyObject::String("/output/result.tsv".to_owned()),
+                ),
+                (
+                    "participant_id",
+                    MontyObject::String("example-bam".to_owned()),
+                ),
+                (
+                    "asset_paths",
+                    MontyObject::dict(vec![(
+                        MontyObject::String("muc1_reference".to_owned()),
+                        MontyObject::String("/input/assets/ref.fa".to_owned()),
+                    )]),
+                ),
+            ],
+        )
+        .unwrap();
+
+    let written = runtime.virtual_written_text_files();
+    let summary = written.get("/output/result.tsv").unwrap();
+    assert!(summary.contains("participant_id"));
+    assert!(summary.contains("vntyper_outcome"));
+    assert!(summary.contains("example-bam"));
+}
+
+#[test]
+fn vntyper_app_example_runs_with_virtual_cram_report_paths() {
+    let root = repo_root();
+    let fixture_dir = root.join("rust/bioscript-formats/tests/fixtures");
+    let mut config = RuntimeConfig::default();
+    config.virtual_binary_files.insert(
+        "/input/input.cram".to_owned(),
+        fs::read(fixture_dir.join("mini.cram")).unwrap(),
+    );
+    config.virtual_binary_files.insert(
+        "/input/input.index".to_owned(),
+        fs::read(fixture_dir.join("mini.cram.crai")).unwrap(),
+    );
+    config.virtual_text_files.insert(
+        "/input/reference.fa".to_owned(),
+        fs::read_to_string(fixture_dir.join("mini.fa")).unwrap(),
+    );
+    config.virtual_text_files.insert(
+        "/input/reference.fa.fai".to_owned(),
+        fs::read_to_string(fixture_dir.join("mini.fa.fai")).unwrap(),
+    );
+    config.virtual_text_files.insert(
+        "/input/assets/ref.fa".to_owned(),
+        fs::read_to_string(fixture_dir.join("mini.fa")).unwrap(),
+    );
+    config.context.insert(
+        "vntyper_bam_region".to_owned(),
+        MontyObject::String("chr_test:1000-1000".to_owned()),
+    );
+    config.context.insert(
+        "input_index".to_owned(),
+        MontyObject::String("/input/input.index".to_owned()),
+    );
+    config.context.insert(
+        "alignment_reference_fasta".to_owned(),
+        MontyObject::String("/input/reference.fa".to_owned()),
+    );
+    config.context.insert(
+        "alignment_reference_index".to_owned(),
+        MontyObject::String("/input/reference.fa.fai".to_owned()),
+    );
+    config.loader.format = Some(bioscript_formats::GenotypeSourceFormat::Cram);
+    config.loader.input_index = Some(PathBuf::from("/input/input.index"));
+    config.loader.reference_file = Some(PathBuf::from("/input/reference.fa"));
+    config.loader.reference_index = Some(PathBuf::from("/input/reference.fa.fai"));
+    let runtime = BioscriptRuntime::with_config(&root, config).unwrap();
+
+    runtime
+        .run_file(
+            root.join("bioscripts/examples/vntyper/vntyper.py"),
+            None,
+            vec![
+                (
+                    "input_file",
+                    MontyObject::String("/input/input.cram".to_owned()),
+                ),
+                (
+                    "output_file",
+                    MontyObject::String("/output/result.tsv".to_owned()),
+                ),
+                (
+                    "participant_id",
+                    MontyObject::String("example-cram".to_owned()),
+                ),
+                (
+                    "asset_paths",
+                    MontyObject::dict(vec![(
+                        MontyObject::String("muc1_reference".to_owned()),
+                        MontyObject::String("/input/assets/ref.fa".to_owned()),
+                    )]),
+                ),
+            ],
+        )
+        .unwrap();
+
+    let written = runtime.virtual_written_text_files();
+    let summary = written.get("/output/result.tsv").unwrap();
+    assert!(summary.contains("participant_id"));
+    assert!(summary.contains("vntyper_outcome"));
+    assert!(summary.contains("example-cram"));
 }
 
 #[test]

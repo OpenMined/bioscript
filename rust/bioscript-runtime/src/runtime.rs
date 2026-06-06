@@ -30,7 +30,7 @@ mod vcf_methods;
 
 #[cfg(test)]
 use bioscript_core::VariantSpec;
-use host_io::{deepest_existing_ancestor, host_read_text, host_write_text};
+use host_io::{deepest_existing_ancestor, host_copy_file, host_read_text, host_write_text};
 use imports::rewrite_bioscript_imports;
 use lib_methods::host_bioscript_import;
 use objects::bioscript_object;
@@ -92,6 +92,7 @@ impl BioscriptRuntime {
         let mut functions = BTreeMap::new();
         functions.insert("read_text", host_read_text as HostFunction);
         functions.insert("write_text", host_write_text as HostFunction);
+        functions.insert("copy_file", host_copy_file as HostFunction);
         functions.insert("__bioscript_trace__", host_trace as HostFunction);
         functions.insert(
             "__bioscript_import__",
@@ -279,6 +280,15 @@ impl BioscriptRuntime {
             .clone()
     }
 
+    #[must_use]
+    pub fn virtual_written_binary_files(&self) -> BTreeMap<String, Vec<u8>> {
+        self.state
+            .virtual_written_binary_files
+            .lock()
+            .expect("virtual binary file mutex poisoned")
+            .clone()
+    }
+
     pub(crate) fn read_virtual_text_file(&self, path: &Path) -> Option<String> {
         let key = self.virtual_key(path);
         self.config
@@ -308,9 +318,34 @@ impl BioscriptRuntime {
         true
     }
 
-    pub(crate) fn read_virtual_binary_file(&self, path: &Path) -> Option<Vec<u8>> {
+    pub fn read_virtual_binary_file(&self, path: &Path) -> Option<Vec<u8>> {
         let key = self.virtual_key(path);
-        self.config.virtual_binary_files.get(&key).cloned()
+        self.config
+            .virtual_binary_files
+            .get(&key)
+            .cloned()
+            .or_else(|| {
+                self.state
+                    .virtual_written_binary_files
+                    .lock()
+                    .expect("virtual binary file mutex poisoned")
+                    .get(&key)
+                    .cloned()
+            })
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn write_virtual_binary_file(&self, path: &Path, contents: Vec<u8>) -> bool {
+        if !self.uses_virtual_files() {
+            return false;
+        }
+        let key = self.virtual_key(path);
+        self.state
+            .virtual_written_binary_files
+            .lock()
+            .expect("virtual binary file mutex poisoned")
+            .insert(key, contents);
+        true
     }
 
     fn write_trace_report(

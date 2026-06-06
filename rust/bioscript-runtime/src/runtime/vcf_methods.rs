@@ -20,9 +20,14 @@ impl BioscriptRuntime {
             ));
         }
         let raw_path = expect_string_arg(args, 1, "vcf.read_vntyper_kestrel")?;
-        let path = self.resolve_existing_user_path(&raw_path)?;
-        let records = vcf::read_vntyper_kestrel_rows(&path)
-            .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
+        let raw_path_buf = std::path::PathBuf::from(&raw_path);
+        let records = if let Some(contents) = self.read_virtual_text_file(&raw_path_buf) {
+            vcf::read_vntyper_kestrel_rows_from_str(&contents)
+        } else {
+            let path = self.resolve_existing_user_path(&raw_path)?;
+            vcf::read_vntyper_kestrel_rows(&path)
+        }
+        .map_err(|err| RuntimeError::Unsupported(err.to_string()))?;
         Ok(MontyObject::List(
             records
                 .into_iter()

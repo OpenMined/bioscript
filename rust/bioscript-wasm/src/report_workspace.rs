@@ -40,6 +40,32 @@ impl PackageWorkspace {
         load_variant_manifest_text(path, self.text(path)?)
             .map_err(|err| JsError::new(&format!("load variant {path}: {err}")))
     }
+
+    pub(super) fn package_result_entrypoint(&self) -> Result<Option<String>, JsError> {
+        let Some(text) = self.files.get("manifest.yaml") else {
+            return Ok(None);
+        };
+        let value: serde_yaml::Value = serde_yaml::from_str(text)
+            .map_err(|err| JsError::new(&format!("failed to parse package manifest.yaml: {err}")))?;
+        let Some(result) = value
+            .as_mapping()
+            .and_then(|mapping| mapping.get(serde_yaml::Value::String("result".to_owned())))
+        else {
+            return Ok(None);
+        };
+        let path = result.as_mapping().and_then(|mapping| {
+            mapping
+                .get(serde_yaml::Value::String("entrypoint".to_owned()))
+                .and_then(serde_yaml::Value::as_str)
+                .or_else(|| {
+                    mapping
+                        .get(serde_yaml::Value::String("primary_html".to_owned()))
+                        .and_then(serde_yaml::Value::as_str)
+                })
+        });
+        let path = path.or_else(|| result.as_str());
+        path.map(normalize_package_path).transpose()
+    }
 }
 
 impl bioscript_reporting::ManifestWorkspace for PackageWorkspace {

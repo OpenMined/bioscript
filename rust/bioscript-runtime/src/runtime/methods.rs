@@ -6,7 +6,7 @@ use monty::MontyObject;
 use super::{
     BioscriptRuntime,
     args::{expect_rows, expect_string_arg, reject_kwargs},
-    host_io::{host_read_text, host_write_text},
+    host_io::{host_copy_file, host_read_text, host_write_text},
     objects::{variant_object, variant_observation_object, variant_plan_object},
     timing::RuntimeInstant,
     variants::{
@@ -356,6 +356,19 @@ impl BioscriptRuntime {
             ));
         }
         host_write_text(self, &args[1..], kwargs)
+    }
+
+    pub(super) fn method_copy_file(
+        &self,
+        args: &[MontyObject],
+        kwargs: &[(MontyObject, MontyObject)],
+    ) -> Result<MontyObject, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::InvalidArguments(
+                "bioscript.copy_file expects self, source, dest".to_owned(),
+            ));
+        }
+        host_copy_file(self, &args[1..], kwargs)
     }
 }
 fn tsv_rows_object(text: &str) -> MontyObject {

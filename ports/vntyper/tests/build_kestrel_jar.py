@@ -114,10 +114,11 @@ def manifest_attribute(name: str, value: str) -> str:
 
 
 def manifest_classpath(output: Path) -> str:
+    output_parent = output.parent.resolve()
     try:
-        relative_lib = (KESTREL_ROOT / "lib").relative_to(output.parent.resolve())
+        relative_lib = (KESTREL_ROOT / "lib").resolve().relative_to(output_parent)
     except ValueError:
-        relative_lib = KESTREL_ROOT / "lib"
+        relative_lib = Path(os.path.relpath((KESTREL_ROOT / "lib").resolve(), output_parent))
     return " ".join(str(relative_lib / name) for name in DEPENDENCY_JARS)
 
 

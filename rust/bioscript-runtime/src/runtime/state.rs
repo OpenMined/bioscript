@@ -64,6 +64,7 @@ pub(crate) struct RuntimeState {
     pub(crate) trace_lines: Mutex<Vec<usize>>,
     pub(crate) timings: Mutex<Vec<StageTiming>>,
     pub(crate) virtual_written_text_files: Mutex<BTreeMap<String, String>>,
+    pub(crate) virtual_written_binary_files: Mutex<BTreeMap<String, Vec<u8>>>,
     /// Real on-disk temp directory that mirrors the virtual filesystem so
     /// native tool facades (samtools/kestrel/bcftools) can operate on real
     /// files. Created lazily the first time a native path is resolved while
@@ -79,6 +80,7 @@ impl RuntimeState {
             trace_lines: Mutex::new(Vec::new()),
             timings: Mutex::new(Vec::new()),
             virtual_written_text_files: Mutex::new(BTreeMap::new()),
+            virtual_written_binary_files: Mutex::new(BTreeMap::new()),
             materialized_root: Mutex::new(None),
         }
     }

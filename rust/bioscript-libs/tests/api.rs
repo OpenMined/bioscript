@@ -575,7 +575,8 @@ fn samtools_native_adapter_handles_tiny_indexed_bam() {
     .unwrap();
     samtools_rs::native::index(&bam, Option::<&PathBuf>::None, Some(1)).unwrap();
 
-    let records_written = samtools::view_region_native(&bam, None, "chr1:1-4", &slice).unwrap();
+    let records_written =
+        samtools::view_region_native(&bam, None, None, None, "chr1:1-4", &slice).unwrap();
     assert_eq!(records_written, 0);
     assert!(std::fs::metadata(&slice).unwrap().len() > 0);
 
@@ -587,7 +588,7 @@ fn samtools_native_adapter_handles_tiny_indexed_bam() {
     assert_eq!(depth.mean, 1.0);
     assert_eq!(depth.median, 1.0);
 
-    let fastq = samtools::fastq_native(&bam, None, "chr1:1-4", &r1, &r2).unwrap();
+    let fastq = samtools::fastq_native(&bam, None, None, None, "chr1:1-4", &r1, &r2).unwrap();
     assert_eq!(fastq.read1_records, 1);
     assert_eq!(fastq.read2_records, 1);
     assert_eq!(fastq.skipped_records, 0);

@@ -28,7 +28,8 @@ fn native_vntyper_facades_can_extract_fastq_call_and_sort_vcf() {
     .unwrap();
     samtools_rs::native::index(&bam, Option::<&std::path::Path>::None, Some(1)).unwrap();
 
-    let fastq = samtools::fastq_native(&bam, None, "chr1:1-16", &fastq_1, &fastq_2).unwrap();
+    let fastq =
+        samtools::fastq_native(&bam, None, None, None, "chr1:1-16", &fastq_1, &fastq_2).unwrap();
     assert_eq!(fastq.read1_records, 5);
     assert_eq!(fastq.read2_records, 5);
 

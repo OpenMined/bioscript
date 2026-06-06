@@ -34,6 +34,15 @@ pub fn read_kestrel_vcf(path: &Path) -> LibResult<Vec<VcfRecord>> {
 
 pub fn read_vntyper_kestrel_rows(path: &Path) -> LibResult<Vec<VcfRecord>> {
     let records = read_kestrel_vcf(path)?;
+    vntyper_kestrel_rows_from_records(records)
+}
+
+pub fn read_vntyper_kestrel_rows_from_str(contents: &str) -> LibResult<Vec<VcfRecord>> {
+    let records = parse_kestrel_vcf(contents)?;
+    vntyper_kestrel_rows_from_records(records)
+}
+
+fn vntyper_kestrel_rows_from_records(records: Vec<VcfRecord>) -> LibResult<Vec<VcfRecord>> {
     Ok(vntyper::vntyper_kestrel_rows(&records))
 }
 

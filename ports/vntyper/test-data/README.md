@@ -61,6 +61,32 @@ tests/data/
 
 ## Usage
 
+### BioVault BioScript app harness
+
+`/Users/madhavajay/dev/biovault-app/workspace1/test-vntyper.sh` uses these
+aliases when the large data drop is present:
+
+| Harness case | BAM fixture | CRAM fixture expectation |
+|--------------|-------------|--------------------------|
+| `--case positive` | `example_6449_hg19_subset.bam` + `.bam.bai` | `example_6449_hg19_subset.cram` + `.cram.crai` + reference `.fa` + `.fa.fai` |
+| `--case negative` | `example_7a61_hg19_subset.bam` + `.bam.bai` | `example_7a61_hg19_subset.cram` + `.cram.crai` + reference `.fa` + `.fa.fai` |
+
+The committed test-data README describes the expected large data layout, but the
+large BAM/CRAM payloads are intentionally not tracked in this workspace.
+`test-vntyper.sh` searches this directory first, then `repos/vntyper/tests/data`
+if the upstream VNtyper data was downloaded with:
+
+```bash
+cd repos/vntyper
+make download-test-data
+```
+
+If CRAM fixtures are generated from the BAMs, keep the same basename so the app
+E2E harness can auto-discover them, or set `VNTYPER_CRAM`, `VNTYPER_CRAI`,
+`VNTYPER_FASTA`, and `VNTYPER_FAI` explicitly. For hg19 CRAM fixtures, the
+harness falls back to `repos/vntyper/reference/muc1_region_hg19.fa` when a
+same-basename `.fa` file is not present.
+
 ### With Original BAMs (hg19)
 ```bash
 vntyper pipeline --bam tests/data_anonymized/example_6449_hg19_subset.bam \
