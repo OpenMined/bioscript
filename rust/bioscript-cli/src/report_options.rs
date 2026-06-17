@@ -247,7 +247,7 @@ fn generate_app_report(options: &AppReportOptions) -> Result<(), String> {
             input_index: options.loader.input_index.clone(),
             reference_file: options.loader.reference_file.clone(),
             reference_index: options.loader.reference_index.clone(),
-            detect_sex: options.detect_sex,
+            detect_sex: should_detect_sex(options),
         };
         let mut input_inspection =
             inspect_file(input_file, &inspect_options).map_err(|err| err.to_string())?;
@@ -367,6 +367,10 @@ fn loader_with_inspection(
         .map(|inference| inference.sex)
         .or(loader.inferred_sex);
     loader
+}
+
+fn should_detect_sex(options: &AppReportOptions) -> bool {
+    options.detect_sex && options.sample_sex.is_none()
 }
 
 fn open_app_html_report_if_requested(options: &AppReportOptions) {
@@ -538,6 +542,7 @@ mod app_report_option_tests {
         assert_eq!(options.analysis_max_duration_ms, 2500);
         assert!(options.detect_sex);
         assert_eq!(options.sample_sex, Some(InferredSex::Female));
+        assert!(!should_detect_sex(&options));
         assert_eq!(options.loader.format, Some(GenotypeSourceFormat::Vcf));
         assert_eq!(
             options.loader.input_index,

@@ -936,8 +936,16 @@ mod tests {
             kind: Some(VariantKind::Insertion),
             ..VariantSpec::default()
         };
-        assert!(vcf_row_matches_variant(
+        assert!(!vcf_row_matches_variant(
             &deletion_row,
+            &insertion,
+            Some(Assembly::Grch38)
+        ));
+        let insertion_row = parse_vcf_record("1\t10\trsins\tT\tTC\t.\tPASS\t.\tGT\t0/1")
+            .unwrap()
+            .unwrap();
+        assert!(vcf_row_matches_variant(
+            &insertion_row,
             &insertion,
             Some(Assembly::Grch38)
         ));

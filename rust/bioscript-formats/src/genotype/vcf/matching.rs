@@ -135,9 +135,8 @@ pub(crate) fn vcf_row_matches_variant(
                         && alternate.len() < row.reference.len()
                 })
         }
-        VariantKind::Insertion | VariantKind::Indel => {
-            row.position == locus.start.saturating_sub(1)
-        }
+        VariantKind::Insertion => insertion_row_matches_variant(row, variant, &locus),
+        VariantKind::Indel => indel_row_matches_variant(row, variant, &locus),
         VariantKind::Other => row.position == locus.start,
     }
 }
@@ -203,4 +202,63 @@ fn snp_row_has_catalog_allele(row: &ParsedVcfRow, variant: &VariantSpec) -> bool
             .iter()
             .any(|candidate| candidate.eq_ignore_ascii_case(reference))
     })
+}
+
+fn insertion_row_matches_variant(
+    row: &ParsedVcfRow,
+    variant: &VariantSpec,
+    locus: &GenomicLocus,
+) -> bool {
+    indel_position_matches(row.position, locus)
+        && row.alternates.iter().any(|alternate| {
+            alternate.len() > row.reference.len()
+                && row_matches_catalog_alleles(row, alternate, variant)
+        })
+}
+
+fn indel_row_matches_variant(
+    row: &ParsedVcfRow,
+    variant: &VariantSpec,
+    locus: &GenomicLocus,
+) -> bool {
+    indel_position_matches(row.position, locus)
+        && row.alternates.iter().any(|alternate| {
+            alternate.len() != row.reference.len()
+                && row_matches_catalog_alleles(row, alternate, variant)
+        })
+}
+
+fn indel_position_matches(row_position: i64, locus: &GenomicLocus) -> bool {
+    row_position == locus.start || row_position == locus.start.saturating_sub(1)
+}
+
+fn row_matches_catalog_alleles(row: &ParsedVcfRow, alternate: &str, variant: &VariantSpec) -> bool {
+    let reference_matches = variant
+        .reference
+        .as_ref()
+        .is_none_or(|reference| reference.eq_ignore_ascii_case(&row.reference));
+    let alternate_matches = variant
+        .alternate
+        .as_ref()
+        .is_none_or(|expected| expected.eq_ignore_ascii_case(alternate));
+
+    if reference_matches && alternate_matches {
+        return true;
+    }
+
+    let Some(expected_reference) = variant.reference.as_ref() else {
+        return false;
+    };
+    let Some(expected_alternate) = variant.alternate.as_ref() else {
+        return reference_matches;
+    };
+
+    indel_delta(expected_reference, expected_alternate) == indel_delta(&row.reference, alternate)
+}
+
+fn indel_delta(reference: &str, alternate: &str) -> Option<isize> {
+    let alternate_len = isize::try_from(alternate.len()).ok()?;
+    let reference_len = isize::try_from(reference.len()).ok()?;
+    let delta = alternate_len - reference_len;
+    (delta != 0).then_some(delta)
 }

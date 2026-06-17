@@ -55,6 +55,9 @@ pub(crate) fn dataclass_to_variant_spec(obj: &MontyObject) -> Result<VariantSpec
             }
             "reference" => spec.reference = string_from_optional(value)?,
             "alternate" => spec.alternate = string_from_optional(value)?,
+            "observed_alts" | "observed_alternates" => {
+                spec.observed_alternates = string_list_from_object(value)?
+            }
             "kind" => {
                 spec.kind = string_from_optional(value)?
                     .as_deref()
@@ -113,7 +116,14 @@ pub(crate) fn variant_spec_from_kwargs(
                     .transpose()?
             }
             "ref" | "reference" => spec.reference = string_from_optional(value)?,
-            "alt" | "alternate" => spec.alternate = string_from_optional(value)?,
+            "alt" | "alternate" => {
+                let alternates = string_or_list(value)?;
+                spec.alternate = alternates.first().cloned();
+                spec.observed_alternates = alternates;
+            }
+            "observed_alts" | "observed_alternates" => {
+                spec.observed_alternates = string_or_list(value)?;
+            }
             "kind" => {
                 spec.kind = string_from_optional(value)?
                     .as_deref()
@@ -221,5 +231,46 @@ pub(crate) fn int_from_optional(value: &MontyObject) -> Result<Option<i64>, Runt
         other => Err(RuntimeError::InvalidArguments(format!(
             "expected optional int, got {other:?}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{dataclass_to_variant_spec, variant_spec_from_kwargs};
+    use crate::runtime::objects::variant_object;
+    use monty::MontyObject;
+
+    #[test]
+    fn variant_kwargs_accept_alt_lists_as_observed_alternates() {
+        let spec = variant_spec_from_kwargs(&[(
+            MontyObject::String("alt".to_owned()),
+            MontyObject::List(vec![
+                MontyObject::String("C".to_owned()),
+                MontyObject::String("T".to_owned()),
+            ]),
+        )])
+        .unwrap();
+
+        assert_eq!(spec.alternate.as_deref(), Some("C"));
+        assert_eq!(spec.observed_alternates, vec!["C", "T"]);
+    }
+
+    #[test]
+    fn variant_dataclass_round_trips_observed_alternates() {
+        let spec = variant_spec_from_kwargs(&[(
+            MontyObject::String("alt".to_owned()),
+            MontyObject::List(vec![
+                MontyObject::String("A".to_owned()),
+                MontyObject::String("C".to_owned()),
+                MontyObject::String("T".to_owned()),
+            ]),
+        )])
+        .unwrap();
+
+        let object = variant_object(&spec);
+        let round_tripped = dataclass_to_variant_spec(&object).unwrap();
+
+        assert_eq!(round_tripped.alternate.as_deref(), Some("A"));
+        assert_eq!(round_tripped.observed_alternates, vec!["A", "C", "T"]);
     }
 }

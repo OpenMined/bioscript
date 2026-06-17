@@ -264,7 +264,8 @@ fn vcf_locus_lookup_handles_deletion_insertion_and_unresolved_evidence() {
          ##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n\
          #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
          1\t99\t.\tAT\tA\t.\tPASS\t.\tGT\t0/1\n\
-         chr1\t199\t.\tA\tATG\t.\tPASS\t.\tGT\t0/1\n",
+         chr1\t199\t.\tA\tATG\t.\tPASS\t.\tGT\t0/1\n\
+         chr1\t250\trs8176719\tT\tTC\t.\tPASS\t.\tGT\t0/1\n",
     )
     .unwrap();
 
@@ -311,6 +312,27 @@ fn vcf_locus_lookup_handles_deletion_insertion_and_unresolved_evidence() {
         insertion.evidence[1].contains("source line: chr1  199"),
         "{:?}",
         insertion.evidence
+    );
+
+    let anchored_insertion = store
+        .lookup_variant(&VariantSpec {
+            grch37: Some(bioscript_core::GenomicLocus {
+                chrom: "1".to_owned(),
+                start: 250,
+                end: 250,
+            }),
+            reference: Some("T".to_owned()),
+            alternate: Some("TC".to_owned()),
+            kind: Some(VariantKind::Insertion),
+            ..VariantSpec::default()
+        })
+        .unwrap();
+    assert_eq!(anchored_insertion.genotype.as_deref(), Some("DI"));
+    assert_eq!(anchored_insertion.evidence[0], "resolved by locus chr1:250");
+    assert!(
+        anchored_insertion.evidence[1].contains("source line: chr1  250"),
+        "{:?}",
+        anchored_insertion.evidence
     );
 
     let unresolved = store

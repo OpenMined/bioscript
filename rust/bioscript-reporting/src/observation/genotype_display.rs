@@ -115,12 +115,16 @@ pub(super) fn normalize_app_genotype(
 fn indel_display_tokens(
     display: &str,
     ref_allele: &str,
-    _alt_allele: &str,
+    alt_allele: &str,
     kind: Option<VariantKind>,
 ) -> Option<(String, String)> {
-    if ref_allele.len() <= 1
-        || !matches!(kind, Some(VariantKind::Deletion | VariantKind::Insertion))
-    {
+    if !matches!(kind, Some(VariantKind::Deletion | VariantKind::Insertion)) {
+        return None;
+    }
+    if matches!(kind, Some(VariantKind::Deletion)) && ref_allele.len() <= 1 {
+        return None;
+    }
+    if matches!(kind, Some(VariantKind::Insertion)) && alt_allele.len() <= ref_allele.len() {
         return None;
     }
     if !display
