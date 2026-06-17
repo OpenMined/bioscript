@@ -224,7 +224,7 @@ impl CramBackend {
     }
 }
 
-const DEFAULT_MAX_CRAM_WORKERS: usize = 2;
+const DEFAULT_MAX_CRAM_WORKERS: usize = 1;
 
 fn cram_lookup_worker_count(job_count: usize) -> usize {
     if job_count <= 1 {
@@ -328,8 +328,12 @@ mod tests {
 
     #[test]
     fn cram_lookup_worker_count_bounds_requested_and_available_workers() {
+        unsafe {
+            env::remove_var("BIOSCRIPT_CRAM_THREADS");
+        }
         assert_eq!(cram_lookup_worker_count(0), 1);
         assert_eq!(cram_lookup_worker_count(1), 1);
+        assert_eq!(cram_lookup_worker_count(8), 1);
 
         unsafe {
             env::set_var("BIOSCRIPT_CRAM_THREADS", "2");

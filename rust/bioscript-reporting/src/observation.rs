@@ -454,6 +454,30 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_anchored_insertion_deletion_tokens() {
+        assert_eq!(
+            normalize_app_genotype("DD", "T", "TC", Some(VariantKind::Insertion), "9", None,),
+            ("0/0".to_owned(), "hom_ref".to_owned())
+        );
+        assert_eq!(
+            normalize_app_genotype("DI", "T", "TC", Some(VariantKind::Insertion), "9", None,),
+            ("0/1".to_owned(), "het".to_owned())
+        );
+        assert_eq!(
+            normalize_app_genotype("II", "T", "TC", Some(VariantKind::Insertion), "9", None,),
+            ("1/1".to_owned(), "hom_alt".to_owned())
+        );
+    }
+
+    #[test]
+    fn symbolic_insertion_deletion_tokens_require_an_inserted_alt() {
+        assert_eq!(
+            normalize_app_genotype("DI", "A", "G", Some(VariantKind::Insertion), "9", None,),
+            ("DI".to_owned(), "unknown".to_owned())
+        );
+    }
+
+    #[test]
     fn repeat_indel_insertion_deletion_tokens_remain_ambiguous_without_sequence_alleles() {
         assert_eq!(
             normalize_app_genotype(
