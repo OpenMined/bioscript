@@ -215,6 +215,18 @@ pub(crate) fn variant_object(spec: &VariantSpec) -> MontyObject {
             MontyObject::String(alternate.clone()),
         ));
     }
+    if !spec.observed_alternates.is_empty() {
+        attrs.push((
+            MontyObject::String("observed_alternates".to_owned()),
+            MontyObject::List(
+                spec.observed_alternates
+                    .iter()
+                    .cloned()
+                    .map(MontyObject::String)
+                    .collect(),
+            ),
+        ));
+    }
     if let Some(kind) = spec.kind {
         attrs.push((
             MontyObject::String("kind".to_owned()),
@@ -249,6 +261,7 @@ pub(crate) fn variant_object(spec: &VariantSpec) -> MontyObject {
             "grch38".to_owned(),
             "reference".to_owned(),
             "alternate".to_owned(),
+            "observed_alternates".to_owned(),
             "kind".to_owned(),
             "deletion_length".to_owned(),
             "motifs".to_owned(),
