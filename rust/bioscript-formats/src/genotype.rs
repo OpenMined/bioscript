@@ -8,6 +8,7 @@ use std::{
 use zip::ZipArchive;
 
 use bioscript_core::{RuntimeError, VariantObservation};
+use noodles::bgzf;
 
 mod alignment_bytes;
 mod backends;
@@ -141,6 +142,31 @@ impl GenotypeStore {
     }
 
     pub fn from_bytes(name: &str, bytes: &[u8]) -> Result<Self, RuntimeError> {
+        Self::from_bytes_with_options(name, bytes, &GenotypeLoadOptions::default())
+    }
+
+    pub fn from_bytes_with_options(
+        name: &str,
+        bytes: &[u8],
+        options: &GenotypeLoadOptions,
+    ) -> Result<Self, RuntimeError> {
+        if let Some(format) = options.format {
+            return match format {
+                GenotypeSourceFormat::Text => {
+                    let reader = BufReader::new(Cursor::new(bytes));
+                    Self::from_delimited_reader(GenotypeSourceFormat::Text, reader, name)
+                }
+                GenotypeSourceFormat::Zip => Self::from_zip_bytes(name, bytes),
+                GenotypeSourceFormat::Vcf => Self::from_vcf_bytes(name, bytes),
+                GenotypeSourceFormat::Bcf => Ok(Self::from_bcf_bytes(name, bytes, options)),
+                GenotypeSourceFormat::Cram | GenotypeSourceFormat::Bam => {
+                    Err(RuntimeError::Unsupported(format!(
+                        "{format:?} input requires alignment byte loading"
+                    )))
+                }
+            };
+        }
+
         // The report pipeline hands us a fixed virtual path (`/input/genotypes`)
         // with no extension, so we cannot rely on `name` alone for format
         // detection the way `from_file_with_options` can. Sniff the leading
@@ -156,10 +182,10 @@ impl GenotypeStore {
                 &GenotypeLoadOptions::default(),
             ));
         }
-        let reader = BufReader::new(Cursor::new(bytes));
-        if lower.ends_with(".vcf") || bytes_look_like_vcf(bytes) {
-            return Self::from_vcf_reader(reader, name);
+        if lower.ends_with(".vcf") || lower.ends_with(".vcf.gz") || bytes_look_like_vcf(bytes) {
+            return Self::from_vcf_bytes(name, bytes);
         }
+        let reader = BufReader::new(Cursor::new(bytes));
         Self::from_delimited_reader(GenotypeSourceFormat::Text, reader, name)
     }
 
@@ -205,6 +231,7 @@ impl GenotypeStore {
             let entry_name = entry.name().to_owned();
             let lower = entry_name.to_ascii_lowercase();
             if lower.ends_with(".vcf")
+                || lower.ends_with(".vcf.gz")
                 || lower.ends_with(".bcf")
                 || lower.ends_with(".txt")
                 || lower.ends_with(".tsv")
@@ -230,6 +257,9 @@ impl GenotypeStore {
         // exports decompress to >128MB which used to trip the old
         // `read_zip_entry_limited` cap; the cap is gone because the streaming
         // parser keeps memory bounded to the rsid map itself.
+        if selected.to_ascii_lowercase().ends_with(".vcf.gz") {
+            return Self::from_vcf_reader(BufReader::new(bgzf::io::Reader::new(entry)), &label);
+        }
         let reader = BufReader::new(entry);
         if selected.to_ascii_lowercase().ends_with(".vcf") {
             return Self::from_vcf_reader(reader, &label);
@@ -279,6 +309,17 @@ impl GenotypeStore {
                 options: options.clone(),
             }),
         }
+    }
+
+    fn from_vcf_bytes(name: &str, bytes: &[u8]) -> Result<Self, RuntimeError> {
+        let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".vcf.gz") || bytes_look_like_gzip(bytes) {
+            return Self::from_vcf_reader(
+                BufReader::new(bgzf::io::Reader::new(Cursor::new(bytes))),
+                name,
+            );
+        }
+        Self::from_vcf_reader(BufReader::new(Cursor::new(bytes)), name)
     }
 
     fn from_zip_file(path: &Path, options: &GenotypeLoadOptions) -> Result<Self, RuntimeError> {
@@ -443,6 +484,10 @@ fn bytes_look_like_zip(bytes: &[u8]) -> bool {
     bytes.starts_with(b"PK\x03\x04")
         || bytes.starts_with(b"PK\x05\x06")
         || bytes.starts_with(b"PK\x07\x08")
+}
+
+fn bytes_look_like_gzip(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0x1f, 0x8b])
 }
 
 fn bytes_look_like_vcf(bytes: &[u8]) -> bool {
@@ -1304,6 +1349,26 @@ mod tests {
         .unwrap();
         assert_eq!(vcf_store.backend_name(), "vcf");
         assert_eq!(vcf_store.get("rs10").unwrap().as_deref(), Some("AG"));
+
+        let mut bgzf_writer = bgzf::io::Writer::new(Vec::new());
+        bgzf_writer
+            .write_all(
+                b"##fileformat=VCFv4.3\n\
+                  #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n\
+                  1\t10\trs10\tA\tG\t.\tPASS\t.\tGT\t0/1\n",
+            )
+            .unwrap();
+        let bgzf_vcf = bgzf_writer.finish().unwrap();
+        let mut forced_vcf_options = GenotypeLoadOptions::default();
+        forced_vcf_options.format = Some(GenotypeSourceFormat::Vcf);
+        let virtual_vcf_store =
+            GenotypeStore::from_bytes_with_options("genotypes", &bgzf_vcf, &forced_vcf_options)
+                .unwrap();
+        assert_eq!(virtual_vcf_store.backend_name(), "vcf");
+        assert_eq!(
+            virtual_vcf_store.get("rs10").unwrap().as_deref(),
+            Some("AG")
+        );
 
         let cursor = std::io::Cursor::new(Vec::new());
         let mut writer = zip::ZipWriter::new(cursor);

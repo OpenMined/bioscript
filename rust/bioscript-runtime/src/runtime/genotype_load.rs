@@ -69,11 +69,12 @@ impl BioscriptRuntime {
                             &loader,
                         )
                     }
-                    None => GenotypeStore::from_bytes(
+                    None => GenotypeStore::from_bytes_with_options(
                         path.file_name()
                             .and_then(|value| value.to_str())
                             .unwrap_or("input"),
                         &bytes,
+                        &loader,
                     )?,
                 }
             }
