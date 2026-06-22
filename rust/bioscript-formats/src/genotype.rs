@@ -1359,8 +1359,10 @@ mod tests {
             )
             .unwrap();
         let bgzf_vcf = bgzf_writer.finish().unwrap();
-        let mut forced_vcf_options = GenotypeLoadOptions::default();
-        forced_vcf_options.format = Some(GenotypeSourceFormat::Vcf);
+        let forced_vcf_options = GenotypeLoadOptions {
+            format: Some(GenotypeSourceFormat::Vcf),
+            ..GenotypeLoadOptions::default()
+        };
         let virtual_vcf_store =
             GenotypeStore::from_bytes_with_options("genotypes", &bgzf_vcf, &forced_vcf_options)
                 .unwrap();
