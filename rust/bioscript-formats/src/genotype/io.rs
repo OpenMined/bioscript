@@ -4,6 +4,7 @@ use std::{
     path::Path,
 };
 
+use flate2::read::MultiGzDecoder;
 use zip::ZipArchive;
 
 use bioscript_core::RuntimeError;
@@ -23,6 +24,10 @@ pub(crate) fn read_plain_lines(path: &Path) -> Result<Vec<String>, RuntimeError>
             path.display()
         ))
     })?;
+    let lower = path.to_string_lossy().to_ascii_lowercase();
+    if lower.ends_with(".gz") || lower.ends_with(".bgz") {
+        return read_lines_from_reader(BufReader::new(MultiGzDecoder::new(file)), path);
+    }
     read_lines_from_reader(BufReader::new(file), path)
 }
 
@@ -54,8 +59,14 @@ pub(crate) fn select_zip_entry(path: &Path) -> Result<String, RuntimeError> {
         let name = entry.name().to_owned();
         let lower = name.to_ascii_lowercase();
         if lower.ends_with(".txt")
+            || lower.ends_with(".txt.gz")
+            || lower.ends_with(".txt.bgz")
             || lower.ends_with(".csv")
+            || lower.ends_with(".csv.gz")
+            || lower.ends_with(".csv.bgz")
             || lower.ends_with(".tsv")
+            || lower.ends_with(".tsv.gz")
+            || lower.ends_with(".tsv.bgz")
             || lower.ends_with(".vcf")
             || lower.ends_with(".vcf.gz")
             || lower.ends_with(".bcf")

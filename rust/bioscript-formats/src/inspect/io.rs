@@ -5,6 +5,7 @@ use std::{
 };
 
 use bioscript_core::RuntimeError;
+use flate2::read::MultiGzDecoder;
 use noodles::bgzf;
 use zip::ZipArchive;
 
@@ -16,6 +17,11 @@ pub(crate) fn read_plain_sample_lines_from_bytes(
 ) -> Result<Vec<String>, RuntimeError> {
     if lower_name.ends_with(".vcf.gz") {
         return read_sample_lines_from_reader(BufReader::new(bgzf::io::Reader::new(Cursor::new(
+            bytes,
+        ))));
+    }
+    if is_gzip_text_name(lower_name) {
+        return read_sample_lines_from_reader(BufReader::new(MultiGzDecoder::new(Cursor::new(
             bytes,
         ))));
     }
@@ -42,6 +48,15 @@ pub(crate) fn read_zip_sample_lines_from_bytes(
         let reader = bgzf::io::Reader::new(Cursor::new(inner));
         return read_sample_lines_from_reader(BufReader::new(reader));
     }
+    if is_gzip_text_name(&selected_entry.to_ascii_lowercase()) {
+        let inner = read_entry_limited(
+            &mut entry,
+            MAX_ZIP_SAMPLE_ENTRY_BYTES,
+            &format!("compressed zip entry {selected_entry}"),
+        )?;
+        let reader = MultiGzDecoder::new(Cursor::new(inner));
+        return read_sample_lines_from_reader(BufReader::new(reader));
+    }
     read_sample_lines_from_reader(BufReader::new(entry))
 }
 
@@ -65,8 +80,11 @@ pub(crate) fn select_zip_entry_from_bytes(bytes: &[u8]) -> Result<String, Runtim
             || lower.ends_with(".vcf.gz")
             || lower.ends_with(".bcf")
             || lower.ends_with(".txt")
+            || lower.ends_with(".txt.gz")
             || lower.ends_with(".tsv")
+            || lower.ends_with(".tsv.gz")
             || lower.ends_with(".csv")
+            || lower.ends_with(".csv.gz")
         {
             return Ok(name);
         }
@@ -85,6 +103,9 @@ pub(crate) fn read_plain_sample_lines(path: &Path) -> Result<Vec<String>, Runtim
         .map_err(|err| RuntimeError::Io(format!("failed to open {}: {err}", path.display())))?;
     if lower.ends_with(".vcf.gz") {
         return read_sample_lines_from_reader(BufReader::new(bgzf::io::Reader::new(file)));
+    }
+    if is_gzip_text_name(&lower) {
+        return read_sample_lines_from_reader(BufReader::new(MultiGzDecoder::new(file)));
     }
     read_sample_lines_from_reader(BufReader::new(file))
 }
@@ -116,8 +137,31 @@ pub(crate) fn read_zip_sample_lines(
         let reader = bgzf::io::Reader::new(Cursor::new(bytes));
         return read_sample_lines_from_reader(BufReader::new(reader));
     }
+    if is_gzip_text_name(&selected_entry.to_ascii_lowercase()) {
+        let bytes = read_entry_limited(
+            &mut entry,
+            MAX_ZIP_SAMPLE_ENTRY_BYTES,
+            &format!(
+                "compressed zip entry {selected_entry} in {}",
+                path.display()
+            ),
+        )?;
+        let reader = MultiGzDecoder::new(Cursor::new(bytes));
+        return read_sample_lines_from_reader(BufReader::new(reader));
+    }
 
     read_sample_lines_from_reader(BufReader::new(entry))
+}
+
+fn is_gzip_text_name(lower_name: &str) -> bool {
+    lower_name.ends_with(".txt.gz")
+        || lower_name.ends_with(".txt.bgz")
+        || lower_name.ends_with(".tsv.gz")
+        || lower_name.ends_with(".tsv.bgz")
+        || lower_name.ends_with(".csv.gz")
+        || lower_name.ends_with(".csv.bgz")
+        || (lower_name.ends_with(".gz") && !lower_name.ends_with(".vcf.gz"))
+        || (lower_name.ends_with(".bgz") && !lower_name.ends_with(".vcf.bgz"))
 }
 
 pub(crate) fn read_entry_limited<R: Read>(
@@ -176,8 +220,11 @@ pub(crate) fn select_zip_entry(path: &Path) -> Result<String, RuntimeError> {
             || lower.ends_with(".vcf.gz")
             || lower.ends_with(".bcf")
             || lower.ends_with(".txt")
+            || lower.ends_with(".txt.gz")
             || lower.ends_with(".tsv")
+            || lower.ends_with(".tsv.gz")
             || lower.ends_with(".csv")
+            || lower.ends_with(".csv.gz")
         {
             return Ok(name);
         }
