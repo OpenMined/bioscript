@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "bioscript-cli"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "bioscript-core",
  "bioscript-formats",
@@ -198,11 +198,11 @@ dependencies = [
 
 [[package]]
 name = "bioscript-core"
-version = "0.2.9"
+version = "0.2.10"
 
 [[package]]
 name = "bioscript-ffi"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "bioscript-core",
  "bioscript-formats",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "bioscript-formats"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "bioscript-core",
  "flate2",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "bioscript-runtime"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "bioscript-core",
  "bioscript-formats",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "bioscript-schema"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "bioscript-core",
  "serde",
@@ -283,7 +283,7 @@ dependencies = [
 
 [[package]]
 name = "bioscript-wasm"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "bioscript-core",
  "bioscript-formats",
