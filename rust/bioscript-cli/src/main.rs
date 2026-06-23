@@ -6,6 +6,7 @@ include!("cli_commands.rs");
 include!("report_options.rs");
 include!("package.rs");
 include!("report_review.rs");
+include!("report_analysis_runtime.rs");
 include!("report_execution.rs");
 include!("report_output.rs");
 include!("manifest_runner.rs");
