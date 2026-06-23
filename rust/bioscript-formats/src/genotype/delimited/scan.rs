@@ -4,6 +4,7 @@ use std::{
     io::{BufRead, BufReader},
 };
 
+use flate2::read::MultiGzDecoder;
 use zip::ZipArchive;
 
 use crate::inspect::{AssemblyAnchorScorer, detect_assembly};
@@ -127,15 +128,7 @@ fn prescan_assembly_anchors(
     }
 
     match backend.format {
-        GenotypeSourceFormat::Text => {
-            let file = File::open(&backend.path).map_err(|err| {
-                RuntimeError::Io(format!(
-                    "failed to open genotype file {}: {err}",
-                    backend.path.display()
-                ))
-            })?;
-            vote(BufReader::new(file), is_gsgt)
-        }
+        GenotypeSourceFormat::Text => vote(open_text_reader(backend)?, is_gsgt),
         GenotypeSourceFormat::Zip => {
             let entry_name = backend.zip_entry_name.as_ref().ok_or_else(|| {
                 RuntimeError::Unsupported(format!(
@@ -161,7 +154,11 @@ fn prescan_assembly_anchors(
                     backend.path.display()
                 ))
             })?;
-            vote(BufReader::new(entry), is_gsgt)
+            if is_gzip_text_name(&entry_name.to_ascii_lowercase()) {
+                vote(BufReader::new(MultiGzDecoder::new(entry)), is_gsgt)
+            } else {
+                vote(BufReader::new(entry), is_gsgt)
+            }
         }
         _ => Ok(None),
     }
@@ -337,13 +334,7 @@ pub(crate) fn scan_delimited_variants(
 
     match backend.format {
         GenotypeSourceFormat::Text => {
-            let file = File::open(&backend.path).map_err(|err| {
-                RuntimeError::Io(format!(
-                    "failed to open genotype file {}: {err}",
-                    backend.path.display()
-                ))
-            })?;
-            let mut reader = BufReader::new(file);
+            let mut reader = open_text_reader(backend)?;
             scan_reader(&mut reader)?;
         }
         GenotypeSourceFormat::Zip => {
@@ -371,7 +362,12 @@ pub(crate) fn scan_delimited_variants(
                     backend.path.display()
                 ))
             })?;
-            let mut reader = BufReader::new(entry);
+            let mut reader: Box<dyn BufRead> =
+                if is_gzip_text_name(&entry_name.to_ascii_lowercase()) {
+                    Box::new(BufReader::new(MultiGzDecoder::new(entry)))
+                } else {
+                    Box::new(BufReader::new(entry))
+                };
             scan_reader(&mut reader)?;
         }
         _ => {
@@ -400,4 +396,27 @@ pub(crate) fn scan_delimited_variants(
     }
 
     Ok(results)
+}
+
+fn open_text_reader(backend: &DelimitedBackend) -> Result<Box<dyn BufRead>, RuntimeError> {
+    let file = File::open(&backend.path).map_err(|err| {
+        RuntimeError::Io(format!(
+            "failed to open genotype file {}: {err}",
+            backend.path.display()
+        ))
+    })?;
+    let lower = backend.path.to_string_lossy().to_ascii_lowercase();
+    if lower.ends_with(".gz") || lower.ends_with(".bgz") {
+        return Ok(Box::new(BufReader::new(MultiGzDecoder::new(file))));
+    }
+    Ok(Box::new(BufReader::new(file)))
+}
+
+fn is_gzip_text_name(lower_name: &str) -> bool {
+    lower_name.ends_with(".txt.gz")
+        || lower_name.ends_with(".txt.bgz")
+        || lower_name.ends_with(".tsv.gz")
+        || lower_name.ends_with(".tsv.bgz")
+        || lower_name.ends_with(".csv.gz")
+        || lower_name.ends_with(".csv.bgz")
 }
