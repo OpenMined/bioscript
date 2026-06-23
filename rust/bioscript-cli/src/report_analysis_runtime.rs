@@ -11,6 +11,16 @@ struct BioscriptAnalysisScriptInput<'a> {
     analysis_max_duration_ms: u64,
 }
 
+struct AnalysisRuntimeInputs {
+    analysis_input_file: String,
+    script_virtual_path: String,
+    virtual_observations_file: String,
+    virtual_output_file: String,
+    virtual_binary_files: BTreeMap<String, Vec<u8>>,
+    virtual_text_files: BTreeMap<String, String>,
+    asset_paths: BTreeMap<String, String>,
+}
+
 fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Result<(), String> {
     let limits = ResourceLimits::new()
         .max_duration(Duration::from_millis(input.analysis_max_duration_ms))
@@ -18,6 +28,64 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
         .max_allocations(400_000)
         .gc_interval(1000)
         .max_recursion_depth(Some(200));
+    let runtime_inputs = collect_analysis_runtime_inputs(input)?;
+    let context = analysis_context(
+        input.participant_id,
+        &runtime_inputs.analysis_input_file,
+        &runtime_inputs.script_virtual_path,
+        input.manifest_path,
+        &runtime_inputs.asset_paths,
+        &runtime_inputs.virtual_observations_file,
+        &runtime_inputs.virtual_output_file,
+    );
+    let runtime = BioscriptRuntime::with_config(
+        input.runtime_root.to_path_buf(),
+        RuntimeConfig {
+            limits,
+            loader: input.loader.clone(),
+            context,
+            virtual_binary_files: runtime_inputs.virtual_binary_files,
+            virtual_text_files: runtime_inputs.virtual_text_files,
+            ..RuntimeConfig::default()
+        },
+    )
+    .map_err(|err| err.to_string())?;
+    runtime
+        .run_file(
+            &runtime_inputs.script_virtual_path,
+            None,
+            vec![
+                (
+                    "input_file",
+                    monty::MontyObject::String(runtime_inputs.analysis_input_file),
+                ),
+                (
+                    "output_file",
+                    monty::MontyObject::String(runtime_inputs.virtual_output_file.clone()),
+                ),
+                (
+                    "observations_file",
+                    monty::MontyObject::String(runtime_inputs.virtual_observations_file),
+                ),
+                (
+                    "asset_paths",
+                    monty_string_dict(&runtime_inputs.asset_paths),
+                ),
+                (
+                    "participant_id",
+                    monty::MontyObject::String(input.participant_id.to_owned()),
+                ),
+            ],
+        )
+        .map_err(|err| err.to_string())?;
+    let written = runtime.virtual_written_text_files();
+    write_primary_analysis_output(input.output_file, &written, &runtime_inputs.virtual_output_file)?;
+    persist_virtual_output_files(&written, &runtime_inputs.virtual_output_file, input.output_file)
+}
+
+fn collect_analysis_runtime_inputs(
+    input: &BioscriptAnalysisScriptInput<'_>,
+) -> Result<AnalysisRuntimeInputs, String> {
     let observations_text = fs::read_to_string(input.observations_file).map_err(|err| {
         format!(
             "failed to read analysis observations {}: {err}",
@@ -57,54 +125,27 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
     if let Some(input_bytes) = virtual_input_bytes {
         virtual_binary_files.insert(virtual_input_file.clone(), input_bytes);
     }
-    let context = analysis_context(
-        input.participant_id,
-        &analysis_input_file,
-        &script_virtual_path,
-        &manifest_virtual_path,
-        &asset_paths,
-        &virtual_observations_file,
-        &virtual_output_file,
-    );
-    let runtime = BioscriptRuntime::with_config(
-        input.runtime_root.to_path_buf(),
-        RuntimeConfig {
-            limits,
-            loader: input.loader.clone(),
-            context,
-            virtual_binary_files,
-            virtual_text_files,
-            ..RuntimeConfig::default()
-        },
-    )
-    .map_err(|err| err.to_string())?;
-    runtime
-        .run_file(
-            &script_virtual_path,
-            None,
-            vec![
-                ("input_file", monty::MontyObject::String(analysis_input_file)),
-                (
-                    "output_file",
-                    monty::MontyObject::String(virtual_output_file.clone()),
-                ),
-                (
-                    "observations_file",
-                    monty::MontyObject::String(virtual_observations_file),
-                ),
-                ("asset_paths", monty_string_dict(&asset_paths)),
-                (
-                    "participant_id",
-                    monty::MontyObject::String(input.participant_id.to_owned()),
-                ),
-            ],
-        )
-        .map_err(|err| err.to_string())?;
-    let written = runtime.virtual_written_text_files();
+
+    Ok(AnalysisRuntimeInputs {
+        analysis_input_file,
+        script_virtual_path,
+        virtual_observations_file,
+        virtual_output_file,
+        virtual_binary_files,
+        virtual_text_files,
+        asset_paths,
+    })
+}
+
+fn write_primary_analysis_output(
+    output_file: &Path,
+    written: &BTreeMap<String, String>,
+    virtual_output_file: &str,
+) -> Result<(), String> {
     let output_text = written
-        .get(&virtual_output_file)
+        .get(virtual_output_file)
         .ok_or_else(|| format!("analysis did not write {virtual_output_file}"))?;
-    if let Some(parent) = input.output_file.parent() {
+    if let Some(parent) = output_file.parent() {
         fs::create_dir_all(parent).map_err(|err| {
             format!(
                 "failed to create analysis output dir {}: {err}",
@@ -112,13 +153,12 @@ fn run_bioscript_analysis_script(input: &BioscriptAnalysisScriptInput<'_>) -> Re
             )
         })?;
     }
-    fs::write(input.output_file, output_text).map_err(|err| {
+    fs::write(output_file, output_text).map_err(|err| {
         format!(
             "failed to write analysis output {}: {err}",
-            input.output_file.display()
+            output_file.display()
         )
-    })?;
-    persist_virtual_output_files(&written, &virtual_output_file, input.output_file)
+    })
 }
 
 fn analysis_input_file_arg(
@@ -248,7 +288,7 @@ fn analysis_context(
     participant_id: &str,
     input_file: &str,
     script_path: &str,
-    manifest_path: &str,
+    manifest_path: &Path,
     asset_paths: &BTreeMap<String, String>,
     observations_file: &str,
     output_file: &str,
@@ -268,7 +308,10 @@ fn analysis_context(
         (
             "pipeline_files".to_owned(),
             monty_string_dict(&BTreeMap::from([
-                ("manifest".to_owned(), manifest_path.to_owned()),
+                (
+                    "manifest".to_owned(),
+                    virtual_pipeline_path(manifest_path, "manifest.yaml"),
+                ),
                 ("analysis".to_owned(), script_path.to_owned()),
             ])),
         ),
